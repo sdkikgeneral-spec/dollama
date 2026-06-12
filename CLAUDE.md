@@ -17,11 +17,19 @@ NPU (Intel AI Boost) で LLM 推論、RTX5080 で拡散モデルを動かし、
 
 ## 確定済みアーキテクチャ決定
 
-### CPU 経由パイプライン (ゼロコピーは採用しない)
+### CPU 経由パイプライン (ゼロコピーは採用しない) ← 全ルート調査済み・確定
 
-- NPU→GPU ゼロコピーは API レベルで不可
-  - CUDA Virtual Memory API + Win32ハンドルは GPU 側で確保可能
-  - OpenVINO NPU 側に CUDA ハンドルをインポートする API が存在しない
+調査したゼロコピーの全ルートと結果:
+
+| ルート | 結果 | 理由 |
+|---|---|---|
+| CUDA Virtual Memory + Win32ハンドル → NPU | ❌ | OpenVINO NPU に CUDA ハンドル import API なし |
+| D3D12 クロスアダプター (RTX5080 → iGPU → NPU) | ❌ | Intel iGPU が DXGI に非表示 (BIOS でコンピュート専用) |
+| CPU pinned memory | ✅ | 3.4% オーバーヘッド・マルチスレッドで隠蔽可能 |
+
+Intel iGPU は Level Zero / OpenCL 経由でのみアクセス可能。
+IDXGIFactory6 の MINIMUM_POWER 列挙でも DXGI に出てこない。
+
 - 計測済み転送オーバーヘッド: 3.4% → 問題なし
 - GPU 拡散処理 >> NPU 推論 なので、マルチスレッドで完全に隠蔽可能
 
