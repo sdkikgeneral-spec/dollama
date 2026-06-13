@@ -1,0 +1,31 @@
+# モデルファイル (大容量バイナリ)
+models/
+
+# 実行ログ・出力画像
+logs/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# C++ ビルド成果物 (Meson)
+build/
+builddir/
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+
+# IDE
+.vscode/
+.idea/
+*.user
+
+# Windows
+Thumbs.db
+desktop.ini

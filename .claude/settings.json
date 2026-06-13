@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python dollma_convert.py)",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_convert.py 2>&1)",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_probe6.py 2>&1)",
+      "PowerShell(pip install openvino-genai 2>&1)",
+      "PowerShell($env:PYTHONUTF8 = '1'; cd \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_convert2.py qwen2 2>&1 | Select-Object -First 20)",
+      "PowerShell($env:PYTHONUTF8 = '1'; cd \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_convert2.py qwen2 > logs\\\\convert2_qwen2.log 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"e:\\\\Develop\\\\Projects\\\\dollama\\\\logs\" | Out-Null; Get-ChildItem \"e:\\\\Develop\\\\Projects\\\\dollama\\\\models\\\\qwen2-1.5b-int4-npu\" -ErrorAction SilentlyContinue | Select-Object Name, @{N='MB';E={[math]::Round\\($_.Length/1MB,1\\)}})",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_convert2.py qwen2 > \"logs\\\\convert2_qwen2.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_probe7.py qwen2 > \"logs\\\\probe7_qwen2.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python dollma_probe7b.py > \"logs\\\\probe7b.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "Bash(grep -v \"^\\\\[ERROR\\\\]\\\\|^\\\\[31;1m\\\\|^$\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python scripts/archives/dollma_probe8_wd14.py > \"logs\\\\probe8_wd14.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell(Move-Item \"e:\\\\Develop\\\\Projects\\\\dollama\\\\scripts\\\\archives\\\\dollma_probe8_wd14.py\" \"e:\\\\Develop\\\\Projects\\\\dollama\\\\scripts\\\\dollma_probe8_wd14.py\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python scripts/dollma_probe9_clip.py > \"logs\\\\probe9_clip.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "Bash(grep -v \"^\\\\[31;1m\\\\|^\\\\[0m\\\\|^$\" \"e:/Develop/Projects/dollama/logs/probe9_clip.log\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; python scripts/dollma_probe10_sdxl.py > \"logs\\\\probe10_sdxl.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell($env:PYTHONUTF8 = '1'; Set-Location \"e:\\\\Develop\\\\Projects\\\\dollama\"; pip install diffusers accelerate > \"logs\\\\pip_diffusers.log\" 2>&1; Write-Host \"DONE exit=$LASTEXITCODE\")",
+      "Bash(grep -v \"^$\")"
+    ],
+    "additionalDirectories": [
+      "e:\\Develop\\Projects\\dollama"
+    ]
+  }
+}

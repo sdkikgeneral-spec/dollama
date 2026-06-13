@@ -79,8 +79,55 @@ pip install diffusers transformers accelerate
 
 ```
 dollama/
-  dollma_probe.py   # NPU/GPU 環境調査 (STEP1-4)
-  dollma_probe2.py  # Win32ハンドル + NPUパイプライン調査 (STEP5-7)
+  agents/
+    base.py            # BaseAgent / GenerationRequest / GenerationResult
+    director.py        # Claude API でユーザー意図を解析 (claude-opus-4-8)
+    prompt_builder.py  # NPU (OpenVINO GenAI / Phi-3 mini INT4) → SD プロンプト生成
+    style_selector.py  # アートスタイル・品質タグ・LoRA のルールベース選択
+    image_generator.py # RTX5080 で SDXL を動かし画像を生成 (diffusers)
+    quality_checker.py # CLIP で画像とプロンプトの一致度をスコアリング
+  models/              # ローカルモデル置き場 (Git 管理外)
+  outputs/             # 生成画像の出力先
+  dollama_pipeline.py  # NPU/GPU 二スレッドパイプラインのエントリポイント
+  dollma_probe.py      # 環境調査 STEP1-4
+  dollma_probe2.py     # Win32ハンドル + NPU パイプライン調査 STEP5-7
+  dollma_probe3.py     # D3D12 クロスアダプター調査 (不可と確認)
   README.md
   CLAUDE.md
+```
+
+## エージェント構成
+
+```
+ユーザー入力 (日本語/英語)
+    │
+    ├─ Thread-A (Claude API + NPU)
+    │    DirectorAgent  ─ Claude claude-opus-4-8 で意図を構造化抽出
+    │         ↓
+    │    PromptBuilderAgent ─ NPU 上の Phi-3 mini INT4 で SD プロンプト生成
+    │         ↓ queue.Queue(maxsize=2)
+    │
+    └─ Thread-B (CPU → GPU)
+         StyleSelectorAgent  ─ 品質タグ・LoRA をルールで選択
+              ↓
+         ImageGeneratorAgent ─ RTX5080 で SDXL 推論 (fp16)
+              ↓
+         QualityCheckerAgent ─ CLIP スコアで品質判定
+              ↓
+         outputs/*.png
+```
+
+## 実行
+
+```bash
+# 環境変数
+set ANTHROPIC_API_KEY=sk-ant-...
+
+# モデルのダウンロード (初回)
+optimum-cli export openvino \
+    --model microsoft/Phi-3-mini-4k-instruct \
+    --weight-format int4 models/phi3-mini-int4-npu
+
+# 単発生成
+python dollama_pipeline.py "ツインテールの魔法少女、夕焼けの中で戦っている"
 ```
