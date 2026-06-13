@@ -16,24 +16,35 @@
 | **RTX5080** | SDXL UNet + VAE decode | ✅ **3.80s/image** (1024×1024, 20steps, 5.3 it/s) |
 
 **パイプライン (確定構成)**
+
+txt2img:
 ```
 CPU: Qwen2-1.5B (暫定) / 将来: 自作 BitNet b1.58 on NPU
   自然文 → danbooru タグ列 (~2s / 将来 <10ms)
     │
     ▼
-NPU: CLIP-L text encoder (7.85ms, CPU比 2.5倍速)
+NPU: CLIP-L text encoder (7.85ms)
   テキスト → embedding [1, 77, 768]
     │
     ▼
 RTX5080: SDXL UNet × 20steps + VAE decode (3.80s / 1024×1024)
     │
-    ├─ CPU: WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列実行
-    │     生成画像 → danbooru タグ → LLM フィードバックループ
-    └─ 出力
-
-[img2img 追加パス]
-入力画像 → iGPU: VAE encode (79ms) ← CPU LLM と並列
+    ├─ CPU: WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列
+    │       → danbooru タグ → LLM フィードバックループ
+    └─ 出力画像
 ```
+
+img2img (追加パス):
+```
+入力画像
+  ├─→ iGPU: VAE encode (79ms)  → latent ─┐
+  └─→ CPU:  LLM (~2s)          ──────────┤ (並列)
+                                          ▼
+                               NPU: CLIP (7.85ms)
+                                          ▼
+                               RTX5080: SDXL UNet + VAE decode (3.80s)
+```
+iGPU の VAE encode は CPU LLM と並列に走るため待ち時間ゼロ。
 
 **デバイス選定根拠 (probe 実測)**
 - CLIP: NPU 7.85ms < iGPU 14ms < CPU 20ms → **NPU 採用**

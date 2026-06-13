@@ -42,6 +42,8 @@ ML フレームワークに頼らず C++ でフルスクラッチ実装を目指
 
 ## パイプライン構想
 
+### txt2img
+
 ```
 [CPU] Qwen2-1.5B (暫定) / 将来: 自作 BitNet b1.58 on NPU
   自然文 → danbooru タグ列 (~2s / 将来 <10ms)
@@ -54,12 +56,26 @@ ML フレームワークに頼らず C++ でフルスクラッチ実装を目指
 [RTX5080] SDXL UNet × 20steps + VAE decode (3.80s / 1024×1024)
     │
     ├─ [CPU] WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列実行
-    │       生成画像 → danbooru タグ → LLM フィードバックループ
-    └─ 出力
-
-[img2img 追加パス]
-入力画像 ──→ [iGPU] VAE encode (79ms) ← CPU LLM と並列
+    │         生成画像 → danbooru タグ → LLM フィードバックループ
+    └─ 出力画像
 ```
+
+### img2img (追加パス)
+
+```
+入力画像
+    ├─→ [iGPU] VAE encode (79ms)   ─→ latent ─┐
+    │                                           │
+    └─→ [CPU]  LLM テキスト生成 (~2s) ─────────┤ (並列)
+                                               │
+                                    [NPU] CLIP (7.85ms)
+                                               │
+                                    [RTX5080] SDXL UNet + VAE decode (3.80s)
+                                               │
+                                           出力画像
+```
+
+iGPU の VAE encode (79ms) は CPU の LLM 生成 (~2s) と並列に走るため、待ち時間ゼロ。
 
 ### デバイス選定根拠
 
