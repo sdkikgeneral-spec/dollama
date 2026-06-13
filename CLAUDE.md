@@ -15,22 +15,31 @@
 | iGPU (Intel Xe) | VAE encode (img2img、79ms) | ✅ CPU 117ms より速い |
 | **RTX5080** | SDXL UNet + VAE decode | ✅ **3.80s/image** (1024×1024, 20steps, 5.3 it/s) |
 
-**パイプライン構想**
+**パイプライン (確定構成)**
 ```
-User
- ↓
-CPU: Qwen2-1.5B ─────────────────────────── text prompt
-                                                │
-iGPU: CLIP text encode ←───────────────────────┘
-                                                │
-RTX5080: SDXL UNet × steps ─────────────────── latent
-       └── VAE decode ───────────────────────── image
-                                                │
-NPU: WD14 tagger ────────────── tags ──────────┤
-   └── Aesthetic scorer ─────── score ─────────┘
-                                                │
-              (tags → CPU/LLM フィードバックループ)
+CPU: Qwen2-1.5B (暫定) / 将来: 自作 BitNet b1.58 on NPU
+  自然文 → danbooru タグ列 (~2s / 将来 <10ms)
+    │
+    ▼
+NPU: CLIP-L text encoder (7.85ms, CPU比 2.5倍速)
+  テキスト → embedding [1, 77, 768]
+    │
+    ▼
+RTX5080: SDXL UNet × 20steps + VAE decode (3.80s / 1024×1024)
+    │
+    ├─ CPU: WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列実行
+    │     生成画像 → danbooru タグ → LLM フィードバックループ
+    └─ 出力
+
+[img2img 追加パス]
+入力画像 → iGPU: VAE encode (79ms) ← CPU LLM と並列
 ```
+
+**デバイス選定根拠 (probe 実測)**
+- CLIP: NPU 7.85ms < iGPU 14ms < CPU 20ms → **NPU 採用**
+- WD14: CPU 101ms < iGPU 104ms < NPU 268ms → **CPU 採用** (Window Attention が NPU に不向き)
+- VAE decode: CPU 126ms << iGPU 995ms → **RTX5080 採用**
+- VAE encode: iGPU 79ms < CPU 117ms → **iGPU 採用** (img2img パスのみ)
 
 ## 環境
 
@@ -128,33 +137,35 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | CPU→VRAM (10MB) | 0.76ms | probe2 |
 | CPU→VRAM (100MB) | 3.46ms / 30.3 GB/s | probe2 |
 | NPU推論 (512dim MLP, 静的形状) | 0.88ms | probe2 |
-| NPU出力 (2048B) → GPU | 0.031ms | probe2 |
-| 転送オーバーヘッド | 3.4% | probe2 |
-| iGPU VAE decode stub (Conv 4→512→...→3, 128→1024) | 995ms | probe4 |
-| CPU VAE decode stub (同上) | 126ms | probe4 |
-| NPU→iGPU ゼロコピー差分 (231KB) | 0.158ms (誤差) | probe4 |
+| NPU出力 (2048B) → GPU | 0.031ms (3.4%) | probe2 |
+| iGPU VAE decode stub | 995ms (CPU 126ms → RTX5080 採用) | probe4 |
+| NPU→iGPU ゼロコピー差分 (231KB) | 0.158ms (誤差範囲) | probe4 |
 | system RAM → RTX5080 latent (256KB) | 0.030ms / 8.7 GB/s | probe4 |
 | system RAM → RTX5080 image (12MB) | 0.254ms / 49.6 GB/s | probe4 |
+| iGPU VAE encode (1024→128, img2img) | **79ms** (CPU 117ms → iGPU 採用) | probe5 |
+| Qwen2-1.5B INT4 CPU tok/s | 64-71 tok/s | probe7 |
+| Qwen2-1.5B INT4 ロード時間 | 1.1s | probe7 |
+| WD14 SwinV2 (448×448): CPU / iGPU / NPU | 101ms / 104ms / 268ms → **CPU 採用** | probe8 |
+| CLIP-L text encoder (77token): CPU / iGPU / NPU | 20ms / 14ms / **7.85ms** → **NPU 採用** | probe9 |
+| SDXL 20steps 1024×1024 RTX5080 | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
 
-## 計測ベースライン (追加)
+## 次のタスク
 
-| 指標 | 値 | probe |
-|---|---|---|
-| Qwen2-1.5B INT4 CPU tok/s (英語) | 64-71 tok/s | probe7 |
-| Qwen2-1.5B INT4 CPU ロード時間 | 1.1s | probe7 |
-| Phi-3 mini INT4 CPU tok/s | 13-29 tok/s | probe6 |
+**調査フェーズ (残り)**
+1. threading + queue でパイプラインを接続して Python で動作確認
+   (CPU LLM → NPU CLIP → GPU SDXL → CPU WD14)
 
-## 次のタスク (C++ 実装フェーズ)
-
-1. `src/` + `meson.build` 構築
-2. `src/core/tensor.hpp` — 独自 Tensor クラス (STL ベース)
-3. `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
-4. `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
-5. 自作 BitNet モデルの訓練データ収集
+**C++ 実装フェーズ**
+2. `src/` + `meson.build` 構築 (Windows / Linux 両対応)
+3. `src/core/tensor.hpp` — 独自 Tensor クラス (STL ベース)
+4. `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
+5. `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
+6. 自作 BitNet b1.58 の訓練データ収集・学習
 
 ## コーディング規約
 
 - ファイル名プレフィックス: `dollma_` (dollama のプロジェクト内ファイル)
-- プローブスクリプトは `dollma_probe*.py`
-- 本実装は `dollma_pipeline.py` 等に分離予定
+- プローブスクリプトは `scripts/dollma_probe*.py`
+- 本実装は `src/` 以下に C++ で記述
+- ビルド: Meson (`meson setup build && meson compile -C build`)
 - コメントは日本語で書く
