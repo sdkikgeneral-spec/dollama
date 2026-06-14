@@ -554,3 +554,71 @@ NPU: WD14 feedback tag                                           |268ms|
    - 実効スループット vs 各 HW 単体の測定
 3. OpenCLIP-bigG (SDXL 2本目 encoder) も NPU で計測
 4. `torch.compile` で SDXL UNet を高速化 (5.3 → 目標 8+ steps/s)
+
+---
+
+## C++ コアコンポーネント 単体テスト計測 (meson test)
+
+**実行環境**: Intel Core Ultra 9 285 / Windows 11 / MSVC 19.51 / Release ビルド  
+**実行**: `meson test -C build -v` — 全 3 テストスイート OK / Fail 0
+
+---
+
+### SPSCQueue (src/core/queue.hpp)
+
+| 計測 | 値 |
+|---|---|
+| push_wait タイムアウト精度 | 20ms (target 5ms, overhead 15ms) — OS スケジューラ依存 |
+| マルチスレッド 10K items | 13,237 ms — 0.00075 Mops/s |
+| シングルスレッド push+pop | **1.914 ns/roundtrip** (1M 回) |
+
+**解釈**:
+- シングルスレッドのキャッシュヒット時は 2ns 以下 = L1 キャッシュ内に収まっている
+- マルチスレッドは OS スレッドスイッチ (100µs ポーリング) が支配し遅く見えるが、実パイプラインでは GPU の 3.80s が律速なため問題なし
+
+---
+
+### Tensor (src/core/tensor.hpp)
+
+| 計測 | 値 |
+|---|---|
+| Tensor({1024,1024},CPU) 生成 × 10K | total 9,365ms / **937 µs/create** |
+| CPU float RW スループット (1M要素 × 100回) | **58.8 GB/s** |
+
+**解釈**:
+- 937 µs は 4MB (1024×1024×float) の `malloc + memset` が支配。実パイプラインの Tensor サイズは最大でも 2.3MB (WD14 入力) なので生成コストは約 540 µs 以下
+- ただし C++ パイプラインでは起動時に1回確保して使い回す設計のため、生成コストは推論ループに乗らない
+- 58.8 GB/s は CPU メモリ帯域の実効値。BitNet b1.58 重み (~20MB) を読み切るコストは **0.34ms** — 将来の 1000+ tok/s の理論根拠
+
+**パイプライン実サイズでの推定生成コスト**:
+
+| バッファ | サイズ | 推定コスト |
+|---|---|---|
+| CLIP embedding [1,77,768] | 231 KB | ~55 µs |
+| SDXL latent [1,4,128,128] | 1 MB | ~234 µs |
+| WD14 入力 [1,3,448,448] | 2.3 MB | ~540 µs |
+
+---
+
+### Allocator (src/core/allocator.hpp)
+
+| 計測 | 値 |
+|---|---|
+| PinnedAllocator alloc/free 1MB × 1000 | total 5.05ms / **207 GB/s** |
+| UniqueBuffer(4KB) 生成 × 10K | 0.032 µs/op |
+| UniqueBuffer(1MB) 生成 × 10K | **5.12 µs/op** |
+
+**注意**: 現環境は `HAVE_CUDA=false` のため `PinnedAllocator` は `::operator new/delete` にフォールバック。  
+`HAVE_CUDA=true` 時の `cudaMallocHost` はドライバー登録コストで **初回数 ms** かかる場合がある。  
+→ PinnedBuffer はパイプライン起動時に静的確保・使い回しで対処確定。
+
+---
+
+### 設計への影響
+
+| 観点 | 結論 |
+|---|---|
+| Tensor/Allocator 生成コスト | 起動時コスト。推論ループに影響しない ✅ |
+| CPU メモリ帯域 58.8 GB/s | BitNet b1.58 の tok/s 見積もりが 1000+ tok/s レンジで現実的 ✅ |
+| PinnedBuffer の cudaMallocHost コスト | 起動時1回確保で吸収。ループ内生成禁止の設計を守る ✅ |
+| パイプラインのボトルネック | 引き続き **SDXL 3.80s** が圧倒的支配項。その他はノイズ ✅ |

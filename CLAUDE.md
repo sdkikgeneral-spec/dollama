@@ -162,17 +162,22 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 
 ## 次のタスク
 
-**調査フェーズ (残り)**
-1. threading + queue でパイプラインを接続して Python で動作確認
-   (CPU LLM → NPU CLIP → GPU SDXL → CPU WD14)
+**C++ 実装フェーズ (Phase 1 — パイプライン骨格)**
 
-**C++ 実装フェーズ**
-2. `src/` + `meson.build` 構築 (Windows / Linux 両対応)
-3. `src/core/tensor.hpp` — 独自 Tensor クラス (STL ベース)
-3.5. `src/core/queue.hpp` ✅ 完了 — SPSC ロックフリーキュー (Capacity 2の冪強制, push/pop/push_wait/pop_wait)
-4. `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
-5. `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
-6. 自作 BitNet b1.58 の訓練データ収集・学習
+| # | 実装物 | ファイル | 状態 |
+|---|---|---|---|
+| 1 | Meson ビルド + src/ 構造 | `meson.build`, `src/` | ✅ 完了 |
+| 2 | Tensor クラス + テスト | `src/core/tensor.hpp`, `test_tensor.cpp` | ✅ 完了 |
+| 3 | Allocator + テスト | `src/core/allocator.hpp`, `test_allocator.cpp` | ✅ 完了 |
+| 4 | SPSC キュー + テスト | `src/core/queue.hpp`, `test_queue.cpp` | ✅ 完了 |
+| **5** | **CLIP NPU 推論 + テスト** | **`src/infer/clip.hpp`, `test_clip.cpp`** | **⏳ 次** |
+| 6 | WD14 CPU 推論 + テスト | `src/infer/wd14.hpp`, `test_wd14.cpp` | ⏳ 未着手 |
+| 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` 拡張 | ⏳ 未着手 |
+
+**Phase 2 以降 (詳細は `docs/roadmap.md` 参照)**
+- `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
+- `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
+- 自作 BitNet b1.58 の訓練データ収集・学習
 
 ## 実装作業のルール
 

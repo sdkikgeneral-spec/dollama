@@ -37,6 +37,45 @@ cat build/meson-logs/testlog.txt
 | `test_single_fifo` | シングルスレッド | push/pop の FIFO 動作、満杯時 false、空時 false |
 | `test_push_wait_timeout` | シングルスレッド | push_wait が満杯時に ~5ms でタイムアウトすること |
 | `test_multithread_producer_consumer` | マルチスレッド | 2スレッドで 10,000 件を送受信し、欠損・順序崩れがないこと |
+| `bench_single_thread_latency` | ベンチ | 1M 回 push+pop のラウンドトリップ ns/op (実績: 1.914 ns) |
+
+---
+
+### `src/tests/test_tensor.cpp` — Tensor
+
+`meson test` 名: `tensor`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_default_ctor` | 機能 | デフォルト構築: numel==0, ndim==0 |
+| `test_shape_cpu` | 機能 | {2,3,4} の ndim/dim/numel/nbytes/device が正しい |
+| `test_data_zero_init` | 機能 | CPU Tensor が 0 初期化され、書き込み後に読み戻せる |
+| `test_pinned_device` | 機能 | PINNED デバイスで data() が例外を投げない |
+| `test_cuda_data_throws` | エラー | Device::CUDA で data() が std::logic_error |
+| `test_npu_data_throws` | エラー | Device::NPU で data() が std::logic_error |
+| `test_set_data_ptr` | 機能 | set_data_ptr() 後に data_ptr() が同じポインタを返す |
+| `test_data_ptr_cuda_no_ptr_throws` | エラー | CUDA Tensor で set_data_ptr() 未呼び出し → data_ptr() が logic_error |
+| `test_data_ptr_cpu_returns_buf` | 機能 | CPU Tensor で data_ptr() == data() |
+| `bench_tensor_create` | ベンチ | Tensor({1024,1024},CPU) × 10K 生成コスト (実績: 937 µs/create) |
+| `bench_data_access` | ベンチ | 1M 要素 float RW × 100 回スループット (実績: 58.8 GB/s) |
+
+---
+
+### `src/tests/test_allocator.cpp` — Allocator / UniqueBuffer
+
+`meson test` 名: `allocator`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_pinned_alloc_free` | 機能 | PinnedAllocator::alloc/free が非 null を返しクラッシュなし |
+| `test_unique_buffer_basic` | 機能 | get() 非 null・size() が要求バイト数と一致 |
+| `test_unique_buffer_move_ctor` | 機能 | ムーブ後: 新側が ptr、旧側が nullptr/size==0 |
+| `test_unique_buffer_move_assign` | 機能 | ムーブ代入: 旧バッファ解放、新側が ptr |
+| `test_unique_buffer_self_assign` | エラー | 自己代入でクラッシュなし |
+| `test_cuda_alloc_no_cuda_throws` | エラー | HAVE_CUDA 未定義時に CudaAllocator::alloc が runtime_error |
+| `test_pinned_buffer_alias` | 機能 | PinnedBuffer エイリアスが正常動作 |
+| `bench_pinned_alloc_free` | ベンチ | 1MB alloc/free × 1K 回スループット (実績: 207 GB/s ※operator new) |
+| `bench_unique_buffer_create` | ベンチ | UniqueBuffer 4KB/1MB 生成コスト (実績: 0.032 / 5.12 µs/op) |
 
 ---
 
@@ -101,8 +140,8 @@ test('<component>', test_<component>_exe)
 | コンポーネント | テストファイル | 状態 | 主な検証内容 |
 |---|---|---|---|
 | `SPSCQueue` | `test_queue.cpp` | ✅ 完了 | FIFO、満杯、タイムアウト、マルチスレッド |
-| `Tensor` | `test_tensor.cpp` | ⏳ 未着手 | 形状・要素数・デバイスガード・nbytes |
-| `UniqueBuffer` (allocator) | `test_allocator.cpp` | ⏳ 未着手 | RAII 解放・ムーブ後の状態 |
+| `Tensor` | `test_tensor.cpp` | ✅ 完了 | 形状・要素数・デバイスガード・nbytes・ベンチ |
+| `UniqueBuffer` (allocator) | `test_allocator.cpp` | ✅ 完了 | RAII 解放・ムーブ後の状態・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ⏳ 未着手 | 出力テンソルの shape・L2 norm が probe9 と一致 |
 | WD14 CPU 推論 | `test_wd14.cpp` | ⏳ 未着手 | 上位タグが probe8 と一致 |
 

@@ -30,6 +30,24 @@ test_queue_exe = executable('test_queue',
 )
 test('spsc_queue', test_queue_exe)
 
+# Tensor 単体テスト
+test_tensor_exe = executable('test_tensor',
+  sources             : files('tests/test_tensor.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('tensor', test_tensor_exe)
+
+# Allocator 単体テスト
+test_allocator_exe = executable('test_allocator',
+  sources             : files('tests/test_allocator.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('allocator', test_allocator_exe)
+
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
 if ov_dll_dir != ''
   custom_target('copy_openvino_dlls',
