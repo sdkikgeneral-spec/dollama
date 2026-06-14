@@ -48,6 +48,15 @@ test_allocator_exe = executable('test_allocator',
 )
 test('allocator', test_allocator_exe)
 
+# CLIP NPU 推論テスト
+test_clip_exe = executable('test_clip',
+  sources             : files('tests/test_clip.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('clip', test_clip_exe)
+
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
 if ov_dll_dir != ''
   custom_target('copy_openvino_dlls',

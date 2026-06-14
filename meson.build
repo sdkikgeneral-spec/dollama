@@ -12,6 +12,11 @@ host_os  = host_machine.system()
 is_win   = host_os == 'windows'
 is_linux = host_os == 'linux'
 
+# MSVC: ソース/実行文字セットを UTF-8 に統一 (文字化け防止)
+if cpp.get_id() == 'msvc'
+  add_project_arguments('/utf-8', language: 'cpp')
+endif
+
 # ----------------------------------------------------------------
 # OpenVINO (NPU / iGPU)
 # ----------------------------------------------------------------
