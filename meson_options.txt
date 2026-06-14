@@ -1,0 +1,11 @@
+option('gpu_sdk_root', type: 'string', value: '',
+  description: 'CUDA toolkit root (例: C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8)')
+
+option('npu_sdk_root', type: 'string', value: '',
+  description: 'OpenVINO runtime root (例: C:/Program Files (x86)/Intel/openvino_2024)')
+
+option('with_cuda', type: 'boolean', value: true,
+  description: 'CUDA サポートを有効化 (RTX5080)')
+
+option('with_openvino', type: 'boolean', value: true,
+  description: 'OpenVINO サポートを有効化 (NPU / iGPU)')

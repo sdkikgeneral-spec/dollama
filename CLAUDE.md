@@ -169,9 +169,17 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 **C++ 実装フェーズ**
 2. `src/` + `meson.build` 構築 (Windows / Linux 両対応)
 3. `src/core/tensor.hpp` — 独自 Tensor クラス (STL ベース)
+3.5. `src/core/queue.hpp` ✅ 完了 — SPSC ロックフリーキュー (Capacity 2の冪強制, push/pop/push_wait/pop_wait)
 4. `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
 5. `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
 6. 自作 BitNet b1.58 の訓練データ収集・学習
+
+## 実装作業のルール
+
+1. **プランモードで設計を提示し、ユーザーのレビューと承認を得てから着手する。** 承認なしに勝手にコードを書き始めない。
+2. **承認後は必ず `project-leader` エージェントを呼び出し、作業を担当エージェントに振り分けてもらう。** Claude 自身が直接実装せず、PL の指示のもと専門エージェントが実装する。
+3. **ゴールが設定された場合、承認作業は `project-leader` が行う。** ユーザーへの判断依頼は PL が迷ったときのみ。
+4. **コンポーネントを実装したら、必ずテストも実装する。** `src/tests/test_<component>.cpp` を作成し、`meson test -C build` が通ることを確認してから完了とする。テスト規約は `docs/testing.md` 参照。
 
 ## コーディング規約
 
@@ -180,3 +188,25 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - 本実装は `src/` 以下に C++ で記述
 - ビルド: Meson (`meson setup build && meson compile -C build`)
 - コメントは日本語で書く
+
+### C++ スタイル
+
+開き波括弧 `{` は必ず改行して次の行に置く (Allman スタイル):
+
+```cpp
+void abc()
+{
+    // ...
+}
+```
+
+`switch` 文の `case` ラベルは `switch` と同じタブ位置に揃える:
+
+```cpp
+switch (x)
+{
+case 1:
+    break;
+case 2:
+    break;
+}
