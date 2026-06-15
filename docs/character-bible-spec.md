@@ -295,7 +295,7 @@ inline std::vector<std::string> default_quality_negatives()
 - 将来: 背景・合成のプラグイン化。透過PNG境界を交換物として、背景生成は差し替え可能な
   外部バックエンド (Grok/Gemini/SD 等) に委譲し自動合成する任意パス。コアの芯 (ローカルHWで
   キャラ) は不変、手動 CLIP Studio 合成と排他でなく選択肢。宿主は Phase2+ の HTTP サーバ
-  (src/server/http.cpp)。合成品質 (ライティング/パース馴染ませ) は別課題。character.hpp 非影響。
+  (src/server/api.cpp, cpp-httplib)。合成品質 (ライティング/パース馴染ませ) は別課題。character.hpp 非影響。
 
 ## 10. 手指問題 (ハード要件)
 

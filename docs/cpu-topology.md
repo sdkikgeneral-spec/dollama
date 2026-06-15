@@ -68,3 +68,29 @@ pin_thread(wd14_thread, E_CORE_MASK);
 
 > **注意**: マスク値はこのマシン固有。他環境では `GetLogicalProcessorInformationEx` で動的取得が必要。
 > probe11 の `analyze_cores()` がその実装例。
+
+## スレッド実装方針 (task 7)
+
+- **スレッド/同期は STL**: `std::jthread` (C++20, 自動 join + `stop_token` でパイプライン停止)、
+  `condition_variable`、自作 SPSC キュー。これらは標準でクロスプラットフォーム。
+- **CPU アフィニティだけが OS 依存** → 薄い `#ifdef` ラッパーに集約する:
+
+```cpp
+// src/core/affinity.hpp — OS 依存はここだけ
+inline void set_thread_affinity(std::jthread& t, uint64_t mask)
+{
+#ifdef _WIN32
+    SetThreadAffinityMask(t.native_handle(), static_cast<DWORD_PTR>(mask));
+#elif defined(__linux__)
+    cpu_set_t cs; CPU_ZERO(&cs);
+    for (int i = 0; i < 64; ++i)
+        if (mask & (1ULL << i)) CPU_SET(i, &cs);
+    pthread_setaffinity_np(t.native_handle(), sizeof(cs), &cs);
+#endif
+}
+```
+
+- **Boost は不採用**: スレッド本体は STL で足り、肝心のアフィニティを Boost が綺麗に
+  抽象化するわけでもない (Boost.Thread の affinity 対応は限定的)。結局 OS コールの
+  `#ifdef` ラップが要るため、重量級依存を増やす価値がない。「単一バイナリ・重量級
+  フレームワーク不使用」の方針 (CLAUDE.md「実装方針」) とも一貫。

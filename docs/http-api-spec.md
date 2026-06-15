@@ -2,8 +2,11 @@
 
 ## 概要
 
-Winsock2 を直接使った OpenAI Images API 互換 HTTP サーバー。
-フレームワーク不使用、`src/server/http.cpp` にスクラッチ実装する。
+OpenAI Images API 互換 HTTP サーバー。**配管は自作しない** — HTTP は
+**cpp-httplib** (単一ヘッダ・Winsock2/POSIX を内部吸収)、JSON は **nlohmann/json**
+(ヘッダオンリー) を使う。重量級フレームワークは不使用・単一バイナリの方針は
+ヘッダオンリー採用で維持。自作は HW 研究コアに限定 (CLAUDE.md「実装方針」参照)。
+エンドポイント実装は `src/server/api.cpp`。
 
 ## エンドポイント
 
@@ -111,28 +114,27 @@ img2img 生成 (入力画像を latent encode して編集)。
 - プロトコル: HTTP/1.1 (HTTPS 非対応)
 - バインド: `127.0.0.1` のみ (LAN 公開しない)
 
-### Winsock2 実装方針
+### 実装方針 (cpp-httplib + nlohmann/json)
 
 ```cpp
-// src/server/http.hpp
-class HttpServer
-{
-public:
-    explicit HttpServer(uint16_t port = 8080);
-    void start();   // ブロッキング; 内部でスレッドプールを回す
-    void stop();
+// src/server/api.cpp — cpp-httplib でルーティング、nlohmann/json で入出力
+#include <httplib.h>
+#include <nlohmann/json.hpp>
 
-private:
-    SOCKET listen_sock_;
-    std::atomic<bool> running_{false};
-    void handle_client(SOCKET client);
-    std::string dispatch(const HttpRequest& req);
-};
+httplib::Server svr;
+svr.Post("/v1/images/generations",
+    [&](const httplib::Request& req, httplib::Response& res)
+    {
+        auto body = nlohmann::json::parse(req.body);
+        // body から prompt/steps/size を取り出しパイプラインへ
+        // 結果 PNG を base64 化して JSON で返す
+    });
+svr.listen("127.0.0.1", 8080);
 ```
 
-- `accept()` ループ → 1接続 = 1スレッド (同時接続数が少ないため)
-- リクエストボディは `Content-Length` で読み切る (チャンク転送非対応)
-- JSON は手書きパース (`sscanf` + 文字列検索) または minijson (ヘッダオンリー)
+- ルーティング・ソケット・スレッド処理は cpp-httplib に委譲 (accept ループ・
+  Content-Length 読み切りも内部処理)。手書き Winsock2 は不要。
+- リクエスト/レスポンス JSON は nlohmann/json でパース・生成 (手書きパーサ不使用)。
 
 ### レスポンスヘッダ
 
@@ -145,13 +147,14 @@ Connection: close
 
 ### Base64 エンコード
 
-PNG → base64 は STL のみで実装 (`src/server/base64.hpp`)。
+PNG → base64 は cpp-httplib 付属のヘルパ、または数十行の小物で済ます
+(自作する価値が薄い配管)。
 
 ### パイプラインとの接続
 
 ```
-HttpServer::handle_client()
-  ↓ リクエスト解析
+httplib ハンドラ (Post コールバック)
+  ↓ nlohmann/json でリクエスト解析
   ↓ パイプラインキューに push (llm_to_clip_queue の手前)
   ↓ 結果キューを pop_wait (タイムアウト 60s)
   ↓ PNG エンコード → base64 → JSON レスポンス返却
