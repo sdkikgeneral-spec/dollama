@@ -3,8 +3,13 @@
 ## プロジェクト概要
 
 **芯**: CPU / NPU / iGPU / RTX5080 — 搭載する全 HW を使い切りながら、
-2D イラスト生成にたどり着くことを研究する。最短実装ではなく、
+2D イラスト/漫画の**キャラクター描画**生成にたどり着くことを研究する。最短実装ではなく、
 各 HW をどう活かし、どう協調させるかがこのプロジェクトの本質。
+
+**スコープ (確定)**: 生成対象は**キャラクターのみ**。背景は生成しない
+(Grok / Gemini / Stable Diffusion + CLIP Studio Paint で合成)。出力は
+**切り抜き済み透過 PNG**。マッティング (α 抽出) も HW 協調パイプラインの一段とする。
+キャラ設定の管理構造は `docs/character-bible-spec.md` 参照 (同一性層/シーン層/出力層)。
 
 **HW 役割分担 (研究中・随時更新)**
 
@@ -167,6 +172,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | CLIP-L text encoder (77token): CPU / iGPU / NPU | 20ms / 14ms / **7.85ms** → **NPU 採用** | probe9 |
 | CLIP-L NPU (C++ ClipEncoder, 中央値/N=100) | **7.82ms** (min 7.61 / max 12.15) | test_clip |
 | SDXL 20steps 1024×1024 RTX5080 | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
+| compose_prompt (C++ CharacterBible, 1M iters) | **242 ns/op** | test_character |
+| CharacterBible::find (10,000体, 1M lookups) | **10.5 ns/op** | test_character |
 
 ## 次のタスク
 
@@ -179,6 +186,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 3 | Allocator + テスト | `src/core/allocator.hpp`, `test_allocator.cpp` | ✅ 完了 |
 | 4 | SPSC キュー + テスト | `src/core/queue.hpp`, `test_queue.cpp` | ✅ 完了 |
 | 5 | CLIP NPU 推論 + テスト | `src/infer/clip.hpp`, `test_clip.cpp` | ✅ 完了 (NPU 7.82ms) |
+| 5.5 | キャラ台帳 character.hpp + テスト | `src/core/character.hpp`, `test_character.cpp` | ✅ 完了 |
 | **6** | **WD14 CPU 推論 + テスト** | **`src/infer/wd14.hpp`, `test_wd14.cpp`** | **⏳ 次** |
 | 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` 拡張 | ⏳ 未着手 |
 

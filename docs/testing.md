@@ -79,6 +79,26 @@ cat build/meson-logs/testlog.txt
 
 ---
 
+### `src/tests/test_character.cpp` — CharacterBible / プロンプト合成
+
+`meson test` 名: `character`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_bible_put_find` | 機能 | put 後 find が同じ name を返す / 未登録 name は nullptr |
+| `test_bible_overwrite` | 機能 | 同名 put で上書きされ size が増えない |
+| `test_compose_order` | 機能 | positive[0] が canonical_tags 先頭、pose→expression→composition→isolation の順 |
+| `test_compose_negative` | 機能 | forbidden_tags が negative に入る |
+| `test_compose_seed` | 機能 | identity.seed!=0 はそれを採用、0 なら scene.scene_seed |
+| `test_isolation_tag` | 機能 | isolation_tag が positive 末尾に入る (空文字なら入らない) |
+| `test_compose_empty_skip` | 機能 | composition / isolation_tag が空文字のとき positive に空要素が入らない |
+| `test_quality_negatives` | 機能 | quality_negatives=true で default_quality_negatives() が negative に合流 / false で入らない |
+| `test_digits_default` | 機能 | digits_per_hand のデフォルトが 5、DIGITS_UNCOUNTABLE==0 |
+| `bench_compose_prompt` | ベンチ | 代表 Identity/Scene/Output で compose_prompt × 1M 回 (実績: 242 ns/op) |
+| `bench_bible_find` | ベンチ | 10,000 体登録し find × 1M 回ルックアップ (実績: 10.5 ns/op) |
+
+---
+
 ## テストファイルの追加方法
 
 ### 1. テストファイルを作成
@@ -142,6 +162,7 @@ test('<component>', test_<component>_exe)
 | `SPSCQueue` | `test_queue.cpp` | ✅ 完了 | FIFO、満杯、タイムアウト、マルチスレッド |
 | `Tensor` | `test_tensor.cpp` | ✅ 完了 | 形状・要素数・デバイスガード・nbytes・ベンチ |
 | `UniqueBuffer` (allocator) | `test_allocator.cpp` | ✅ 完了 | RAII 解放・ムーブ後の状態・ベンチ |
+| `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ⏳ 未着手 | 出力テンソルの shape・L2 norm が probe9 と一致 |
 | WD14 CPU 推論 | `test_wd14.cpp` | ⏳ 未着手 | 上位タグが probe8 と一致 |
 

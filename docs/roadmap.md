@@ -1,5 +1,9 @@
 # dollama 実装ロードマップ
 
+**スコープ (確定)**: 生成対象は**キャラクターのみ**。背景は外部 (Grok/Gemini/SD) +
+CLIP Studio で合成し、出力は**切り抜き済み透過 PNG**。キャラ設定構造・切り抜き・
+手指品質・学習ループの設計は `docs/character-bible-spec.md` を参照。
+
 ## Phase 1 — パイプライン骨格 (現在)
 
 OpenVINO C++ API で動くパーツから順に実装し、スレッド骨格を完成させる。
@@ -10,9 +14,10 @@ SDXL / BitNet は含まない。
 | 1 | Tensor クラス | `src/core/tensor.hpp` | ✅ 完了 |
 | 2 | メモリアロケーター | `src/core/allocator.hpp` | ✅ 完了 |
 | 3 | SPSC キュー | `src/core/queue.hpp` | ✅ 完了 |
-| 4 | CLIP NPU 推論 | `src/infer/clip.hpp` | ⏳ 未着手 |
-| 5 | WD14 CPU 推論 | `src/infer/wd14.hpp` | ⏳ 未着手 |
-| 6 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` 拡張 | ⏳ 未着手 |
+| 4 | CLIP NPU 推論 | `src/infer/clip.hpp` | ✅ 完了 (NPU 7.82ms) |
+| 5 | キャラ台帳 (CharacterBible, authored 層) | `src/core/character.hpp` | ✅ 完了 |
+| 6 | WD14 CPU 推論 | `src/infer/wd14.hpp` | ⏳ 次 |
+| 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` 拡張 | ⏳ 未着手 |
 
 **Phase 1 完了の定義**: stub (LLM なし) → CLIP(NPU) → queue → WD14(CPU) のループが
 マルチスレッドで回り、タグ文字列が出力されること。
@@ -68,6 +73,22 @@ API 仕様: `docs/http-api-spec.md` 参照。
 
 **Phase 4 完了の定義**: user text → danbooru タグ変換が C++ で動き、
 Qwen2 Python に対して遜色ない品質であること。目標レイテンシ: <10ms (BitNet b1.58)。
+
+---
+
+## キャラクター品質・一貫性 (画像生成後の段、Phase 2+ で並行)
+
+キャラを「コマ間でブレさせない」「手指を崩さない」ための段。設計は
+`docs/character-bible-spec.md` 参照。authored 層 (character.hpp) は完了済みで、
+以下は learned 層・後処理段として段階的に実装する。
+
+| 項目 | 内容 | spec | 時期 |
+|---|---|---|---|
+| 切り抜き (マッティング) | 透過 PNG 出力。anime-segmentation (isnet 系)。乗せる HW は probe 比較 | §3, §9 | Phase 2 |
+| 手指 L1 (予防) | 品質ネガティブ注入 (`default_quality_negatives`) | §10 | ✅ 完了 (器) |
+| 手指 L2/L3 (修復・検査) | 手検出→インペイント再生成 / 指数を `digits_per_hand` と照合し再生成 | §10 | Phase 2 |
+| 学習層 `CharacterMemory` | 生成→学習→FB ループ。記憶層 (seed/pose 蓄積・重心) → 蒸留 QA スコアラ (NPU) → fine-tune | §11 | Phase 2/3 |
+| 背景プラグイン | 外部背景生成 (Grok/Gemini/SD) + 自動合成。宿主は HTTP サーバ層 | §9 | Phase 3 |
 
 ---
 

@@ -57,6 +57,15 @@ test_clip_exe = executable('test_clip',
 )
 test('clip', test_clip_exe)
 
+# CharacterBible / プロンプト合成テスト
+test_character_exe = executable('test_character',
+  sources             : files('tests/test_character.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('character', test_character_exe)
+
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
 if ov_dll_dir != ''
   custom_target('copy_openvino_dlls',
