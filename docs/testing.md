@@ -97,6 +97,22 @@ cat build/meson-logs/testlog.txt
 | `bench_compose_prompt` | ベンチ | 代表 Identity/Scene/Output で compose_prompt × 1M 回 (実績: 242 ns/op) |
 | `bench_bible_find` | ベンチ | 10,000 体登録し find × 1M 回ルックアップ (実績: 10.5 ns/op) |
 
+
+### `src/tests/test_wd14.cpp` — Wd14Tagger
+
+`meson test` 名: `wd14`
+
+入力前処理は probe8 (`dollma_probe8_wd14.py`) 準拠: uint8 (0-255) → float32 キャストのみ・正規化なし。合成入力も 0-255 レンジの float を用いる。HAVE_OPENVINO 未定義・モデル不在は [SKIP]。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_output_shape` | 機能 | 出力 size がモデル出力実 size (= N_TAGS = 10861) と一致 |
+| `test_scores_range` | 機能 | 全スコアが [0,1] (sigmoid 済み出力) |
+| `test_determinism` | 機能 | 同一入力 2 回で出力が完全一致 |
+| `test_input_size_guard` | エラー | 不正サイズ入力で `std::invalid_argument` が飛ぶ |
+| `bench_infer_latency` | ベンチ | warmup5 + 100回中央値/min/max (実測: 中央値 105.3ms / min 99.1 / max 132.8 / N=100, CPU) |
+| `info_top_tags` | 情報 | selected_tags.csv があれば top-10 タグ名を出力 (assert 外) |
+
 ---
 
 ## テストファイルの追加方法
@@ -164,7 +180,7 @@ test('<component>', test_<component>_exe)
 | `UniqueBuffer` (allocator) | `test_allocator.cpp` | ✅ 完了 | RAII 解放・ムーブ後の状態・ベンチ |
 | `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ⏳ 未着手 | 出力テンソルの shape・L2 norm が probe9 と一致 |
-| WD14 CPU 推論 | `test_wd14.cpp` | ⏳ 未着手 | 上位タグが probe8 と一致 |
+| WD14 CPU 推論 | `test_wd14.cpp` | ✅ 完了 | 出力 shape・スコア値域 [0,1]・決定性・サイズガード・ベンチ |
 
 ### Phase 2 以降
 

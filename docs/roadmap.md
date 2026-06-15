@@ -45,14 +45,18 @@ SDXL / BitNet は含まない。
 ## Phase 3 — HTTP サーバー
 
 外部クライアント (WebUI 等) から呼べるようにする。
+**配管は自作しない**: HTTP/JSON は定番のヘッダオンリーライブラリを使う
+(自作は HW 研究コアに限定、CLAUDE.md「実装方針」参照)。
 
-| # | 実装物 | ファイル | 状態 |
+| # | 実装物 | ライブラリ / ファイル | 状態 |
 |---|---|---|---|
-| 1 | Winsock2 HTTP サーバー | `src/server/http.cpp` | ⏳ 未着手 |
-| 2 | Base64 エンコーダ | `src/server/base64.hpp` | ⏳ 未着手 |
-| 3 | JSON パーサー (最小実装) | `src/server/json.hpp` | ⏳ 未着手 |
+| 1 | HTTP サーバー | **cpp-httplib** (単一ヘッダ・Winsock2/POSIX 吸収) | ⏳ 未着手 |
+| 2 | JSON 入出力 | **nlohmann/json** (ヘッダオンリー) | ⏳ 未着手 |
+| 3 | エンドポイント実装 | `src/server/api.cpp` (上記2ライブラリを使用) | ⏳ 未着手 |
+| 4 | Base64 (PNG 返却用) | httplib 付属 or 数十行の小物 | ⏳ 未着手 |
 
-API 仕様: `docs/http-api-spec.md` 参照。
+依存はヘッダオンリーのみ採用 → 単一バイナリ・重量級フレームワーク不使用の方針は維持。
+meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` 参照。
 `POST /v1/images/generations` で OpenAI Images API 互換。
 
 **Phase 3 完了の定義**: `curl` で叩いて PNG (base64) が返ってくること。
@@ -110,7 +114,7 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 | SDXL UNet 自作カーネル | 実装規模が最大・デバッグが困難 | 小さいモデル (64×64 latent) で動作確認してからスケール |
 | BitNet b1.58 訓練データ | quality / quantity が未確定 | Danbooru + Qwen2 蒸留で初期データを確保 |
 | safetensors パーサー | バイナリ仕様の正確な実装が必要 | 既存仕様書とテストファイルで検証 |
-| Linux 対応 (Winsock2 → POSIX) | 二重実装が必要 | `#ifdef _WIN32` 分岐で吸収 |
+| Linux 対応 (HTTP) | ~~Winsock2/POSIX 二重実装~~ | cpp-httplib がクロスプラットフォーム吸収 → 解消 |
 
 ---
 

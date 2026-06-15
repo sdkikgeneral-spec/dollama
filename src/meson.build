@@ -57,6 +57,15 @@ test_clip_exe = executable('test_clip',
 )
 test('clip', test_clip_exe)
 
+# WD14 CPU 推論テスト
+test_wd14_exe = executable('test_wd14',
+  sources             : files('tests/test_wd14.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('wd14', test_wd14_exe)
+
 # CharacterBible / プロンプト合成テスト
 test_character_exe = executable('test_character',
   sources             : files('tests/test_character.cpp'),

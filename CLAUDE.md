@@ -140,12 +140,19 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 
 ### 実装方針
 
+**自作は HW を叩く研究コアに限定し、配管 (HTTP/JSON/Base64) は定番のヘッダオンリー
+ライブラリを使う。** 配管を自作してもバグ表面と保守コストが増えるだけで研究価値がない。
+「重量級フレームワークを使わない・単一バイナリ」の美学はヘッダオンリー採用で維持する。
+
 | 使う | 使わない |
 |---|---|
 | STL 全般 | PyTorch / LibTorch |
 | CUDA Runtime API | diffusers / stable-diffusion.cpp |
-| Winsock2 (HTTP server) | llama.cpp / OpenVINO (probe のみ) |
-| 自作 Tensor / GEMM / Attention | Drogon 等 HTTP フレームワーク |
+| 自作 Tensor / GEMM / Attention | llama.cpp / OpenVINO (probe のみ) |
+| 自作 CUDA カーネル / BitNet / OV 推論グルー | Drogon 等 **重量級** HTTP フレームワーク |
+| **cpp-httplib** (HTTP, 単一ヘッダ・Winsock2/POSIX 吸収) | 手書き Winsock2 ボイラープレート |
+| **nlohmann/json** (JSON, ヘッダオンリー) | 手書き JSON パーサ |
+| Base64: httplib 付属 or 数十行の小物 | — |
 
 ### LLM の将来像
 
@@ -171,6 +178,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | WD14 SwinV2 (448×448): CPU / iGPU / NPU | 101ms / 104ms / 268ms → **CPU 採用** | probe8 |
 | CLIP-L text encoder (77token): CPU / iGPU / NPU | 20ms / 14ms / **7.85ms** → **NPU 採用** | probe9 |
 | CLIP-L NPU (C++ ClipEncoder, 中央値/N=100) | **7.82ms** (min 7.61 / max 12.15) | test_clip |
+| WD14 (C++ CPU Wd14Tagger, 中央値/N=100) | **105.3ms** (min 99.1 / max 132.8) | test_wd14 |
 | SDXL 20steps 1024×1024 RTX5080 | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
 | compose_prompt (C++ CharacterBible, 1M iters) | **242 ns/op** | test_character |
 | CharacterBible::find (10,000体, 1M lookups) | **10.5 ns/op** | test_character |
@@ -187,8 +195,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 4 | SPSC キュー + テスト | `src/core/queue.hpp`, `test_queue.cpp` | ✅ 完了 |
 | 5 | CLIP NPU 推論 + テスト | `src/infer/clip.hpp`, `test_clip.cpp` | ✅ 完了 (NPU 7.82ms) |
 | 5.5 | キャラ台帳 character.hpp + テスト | `src/core/character.hpp`, `test_character.cpp` | ✅ 完了 |
-| **6** | **WD14 CPU 推論 + テスト** | **`src/infer/wd14.hpp`, `test_wd14.cpp`** | **⏳ 次** |
-| 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` 拡張 | ⏳ 未着手 |
+| 6 | WD14 CPU 推論 + テスト | `src/infer/wd14.hpp`, `test_wd14.cpp` | ✅ 完了 (CPU 105.3ms) |
+| **7** | **スレッド骨格 + CPU アフィニティ** | **`src/main.cpp` 拡張** | **⏳ 次** |
 
 **Phase 2 以降 (詳細は `docs/roadmap.md` 参照)**
 - `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
