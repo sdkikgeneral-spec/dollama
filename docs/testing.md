@@ -98,6 +98,20 @@ cat build/meson-logs/testlog.txt
 | `bench_bible_find` | ベンチ | 10,000 体登録し find × 1M 回ルックアップ (実績: 10.5 ns/op) |
 
 
+### `src/tests/test_clip.cpp` — ClipEncoder (NPU)
+
+`meson test` 名: `clip`
+
+HAVE_OPENVINO 未定義・モデル不在は [SKIP]。BOS(49406)+anime(2368)+EOS(49407) の固定トークン列を入力に使う。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_output_shape` | 機能 | 出力サイズが SEQ_LEN*HIDDEN = 77*768 = 59136 と一致 |
+| `test_output_l2_norm` | 機能 | 出力 L2 norm が 0 < norm < 10000 |
+| `test_zero_input` | 機能 | 全 0 トークン入力でクラッシュなく所定 shape を返す |
+| `bench_infer_latency` | ベンチ | warmup + N=100 中央値 (実測: 中央値 7.82ms / min 7.61 / max 12.15, NPU) |
+
+
 ### `src/tests/test_wd14.cpp` — Wd14Tagger
 
 `meson test` 名: `wd14`
@@ -137,6 +151,64 @@ stub(LLM) → CLIP(NPU) → stub(SDXL) → WD14(CPU) → feedback の縦通し�
 |---|---|---|
 | `test_run_frames` | 機能 | 5 フレーム実行で各フレーム非空タグ・デッドロックなし・クリーン join |
 | `bench_pipeline` | ベンチ | 定常スループット frames/s と 1 フレームレイテンシ中央値 (実測: 9.13 frames/s / per_frame 109ms / 単発レイテンシ中央値 157ms。WD14 CPU ~105ms 律速) |
+
+---
+
+## CUDA カーネルテスト (Phase 2、`.cu`)
+
+`with_cuda=true` (nvcc 検出) のときのみビルド・登録される。HAVE_CUDA 未定義時は各テストが `[SKIP]` で return 0。入力は FP32 乱数 → FP16 丸め → そのデコード値を CPU 参照入力にも使い (ビット一致)、カーネル誤差のみを計測する。ベンチは cudaEvent 中央値 (warmup 5 / iters 50〜100)。tol は FP16 相応 (固定 or K スケーリング)。
+
+### `src/tests/test_cuda_smoke.cu` — CUDA 疎通 (2-0/2-1)
+
+`meson test` 名: `cuda_smoke`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_ceil_div` | 機能 | ceil_div の境界 (0/1/256/257) |
+| `test_vector_add` | 機能 | H2D→vector_add→D2H で a[i]+b[i] 一致 |
+| `bench_vector_add` | ベンチ | N=16.7M H2D×2+D2H (実測: 中央値 14.9ms / 13.5 GB/s, pageable) |
+
+### `src/tests/test_gemm.cu` — dense FP16 GEMM (2-2-1)
+
+`meson test` 名: `gemm`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_identity` | 機能 | B=単位行列で C==A |
+| `test_small_square` | 機能 | M=N=K=8、CPU FP32 参照と tol 比較 |
+| `test_rectangular` | 機能 | M≠N≠K で添字検証 |
+| `test_transB` | 機能 | transB=true (SDXL Linear x@W^T) |
+| `test_alpha_beta` | 機能 | alpha≠1, beta≠0, C 初期値ありで alpha*AB+beta*C |
+| `bench_gemm` | ベンチ | 1024³ / SDXL Linear (実測: 4730 / 4208 GFLOPS) |
+
+### `src/tests/test_activation.cu` — SiLU / GeLU (2-2-2)
+
+`meson test` 名: `activation`
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_silu_known` | 機能 | x=0→0・大正→≈x・大負→≈0・±20 極値 |
+| `test_silu_random` | 機能 | 端数 n を CPU FP32 SiLU 参照と比較 |
+| `test_gelu_known` | 機能 | x=0→0・x=1→≈0.8413 (erf 既知値) |
+| `test_gelu_random` | 機能 | CPU erf 版参照と比較 |
+| `test_gelu_tanh_random` | 機能 | tanh 近似版を別の CPU 参照式と比較 |
+| `test_inplace` | 機能 | d_in==d_out が out-of-place と一致 |
+| `bench` | ベンチ | FFN/UNet FM の GB/s (実測: FFN SiLU 526 / GeLU 544 GB/s) |
+
+### `src/tests/test_groupnorm.cu` — GroupNorm (2-2-3)
+
+`meson test` 名: `groupnorm`
+
+affine gamma/beta はチャネルごと [C] (PyTorch 仕様)。1 グループ=1 ブロック、1 パスで sum/sum-sq を FP32 蓄積。tol は K=cpg*H*W スケーリング。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_groupnorm_known` | 機能 | 小 shape の手計算 mean/var/出力一致 (平均≈0・分散≈1) |
+| `test_groupnorm_random` | 機能 | SDXL 代表 shape を CPU FP32 参照と比較 |
+| `test_groupnorm_affine` | 機能 | gamma/beta 非自明値で affine 検証 |
+| `test_groupnorm_inplace` | 機能 | d_in==d_out が out-of-place と一致 |
+| edge (G==C / G==1) | 機能 | InstanceNorm 相当 / LayerNorm 相当 |
+| `bench` | ベンチ | UNet/VAE FM の GB/s (実測: UNet 73-75 / VAE FM 48 GB/s) |
 
 ---
 
@@ -192,6 +264,27 @@ test_<component>_exe = executable('test_<component>',
 test('<component>', test_<component>_exe)
 ```
 
+### CUDA (`.cu`) テストの登録
+
+`.cu` テストは `if cuda_enabled` ブロック内に置き、カーネル本体 `.cu` を sources に同梱し、
+`cuda_args` に既存の `cuda_test_args` (`-Xcompiler /utf-8` + `-Xcompiler /std:c++14`) を渡す。
+この cuda_args は CUDA 13.3 + MSVC のクラッシュ (0xC0000409 / C1070) 回避に**必須**。
+
+```meson
+if cuda_enabled
+  test_<comp>_exe = executable('test_<comp>',
+    sources             : files('tests/test_<comp>.cu', 'kernels/<comp>.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('<comp>', test_<comp>_exe)
+endif
+```
+
+ビルド/テストは `meson setup build --wipe -Dwith_cuda=true` 後、nvcc を PATH に通して実行する。
+
 ---
 
 ## 各コンポーネントのテスト計画
@@ -204,18 +297,22 @@ test('<component>', test_<component>_exe)
 | `Tensor` | `test_tensor.cpp` | ✅ 完了 | 形状・要素数・デバイスガード・nbytes・ベンチ |
 | `UniqueBuffer` (allocator) | `test_allocator.cpp` | ✅ 完了 | RAII 解放・ムーブ後の状態・ベンチ |
 | `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・ベンチ |
-| CLIP NPU 推論 | `test_clip.cpp` | ⏳ 未着手 | 出力テンソルの shape・L2 norm が probe9 と一致 |
+| CLIP NPU 推論 | `test_clip.cpp` | ✅ 完了 | 出力 shape・L2 norm・全0入力・ベンチ (NPU 7.82ms) |
 | WD14 CPU 推論 | `test_wd14.cpp` | ✅ 完了 | 出力 shape・スコア値域 [0,1]・決定性・サイズガード・ベンチ |
 | アフィニティ | `test_affinity.cpp` | ✅ 完了 | 有効マスク true・mask=0 false・no-crash |
 | Pipeline 骨格 | `test_pipeline.cpp` | ✅ 完了 | 縦通し・非空タグ・デッドロックなし・クリーン join・スループット/レイテンシ |
 
-### Phase 2 以降
+### Phase 2 (CUDA カーネル)
 
-| コンポーネント | テストファイル | 主な検証内容 |
-|---|---|---|
-| ternary GEMM | `test_ternary_gemm.cpp` | 小行列で float GEMM と結果比較 |
-| Attention カーネル | `test_attention.cpp` | known input → expected output |
-| VAE decode | `test_vae_decode.cpp` | latent → image が probe10 出力と SSIM ≥ 0.99 |
+| 段 | コンポーネント | テストファイル | 状態 | 主な検証内容 |
+|---|---|---|---|---|
+| 2-0/2-1 | CUDA 疎通・基盤 | `test_cuda_smoke.cu` | ✅ 完了 | ceil_div・vector_add 一致・転送ベンチ |
+| 2-2-1 | dense FP16 GEMM | `test_gemm.cu` | ✅ 完了 | identity/square/rect/transB/alpha_beta・GFLOPS |
+| 2-2-2 | SiLU / GeLU | `test_activation.cu` | ✅ 完了 | known/random/tanh別参照/in-place・GB/s |
+| 2-2-3 | GroupNorm | `test_groupnorm.cu` | ✅ 完了 | known/random/affine/inplace/エッジ・GB/s |
+| 2-2-4 | Conv2d | `test_conv2d.cu` | ⏳ 未着手 | im2col/直接畳み込みを CPU 参照と比較 |
+| 2-2-5 | Attention (self/cross) | `test_attention.cu` | ⏳ 未着手 | known input → expected output |
+| 2-4 | VAE decode | `test_vae_decode.cu` | ⏳ 未着手 | latent → image が probe10 出力と SSIM ≥ 0.99 |
 
 ---
 
