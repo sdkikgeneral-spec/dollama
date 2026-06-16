@@ -93,6 +93,35 @@ test_character_exe = executable('test_character',
 )
 test('character', test_character_exe)
 
+# CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
+# .cu を含むため CUDA 言語が有効なときのみビルドする。
+if cuda_enabled
+  # cpp_args は cpp ソース用なので、.cu には cuda_args で -DHAVE_CUDA を渡す。
+  cuda_test_args = ['-DHAVE_CUDA']
+
+  # MSVC ホストコンパイラ (cl) 固有の対処:
+  # - /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (未指定だと C1070)。
+  if cpp.get_id() == 'msvc'
+    # /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (未指定だと C1070)。
+    cuda_test_args += ['-Xcompiler', '/utf-8']
+    # CUDA 13.3 の cudafe++ は VS18 (MSVC 14.51) の c++17/20 標準ライブラリヘッダを
+    # 複数組み合わせるとスタックオーバーラン (0xC0000409) でクラッシュする。
+    # カーネル側は新しい言語機能を必要としないため、meson が注入する /std:c++20 の
+    # 後ろに /std:c++14 を付与して CUDA TU のホストコンパイルだけ c++14 へ落とす
+    # (後勝ちで c++14 が有効。cpp 側は c++20 のまま)。
+    cuda_test_args += ['-Xcompiler', '/std:c++14']
+  endif
+
+  test_cuda_smoke_exe = executable('test_cuda_smoke',
+    sources             : files('tests/test_cuda_smoke.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('cuda_smoke', test_cuda_smoke_exe)
+endif
+
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
 if ov_dll_dir != ''
   custom_target('copy_openvino_dlls',

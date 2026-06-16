@@ -43,8 +43,8 @@ cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な�
 
 | 段 | 実装物 | ファイル | 検証 | 状態 |
 |---|---|---|---|---|
-| 2-0 | Toolkit + meson CUDA 言語 + 疎通 (vector add) | `meson.build`, `src/kernels/utils.cuh` | test_cuda_smoke | ⏳ |
-| 2-1 | エラーチェック + カーネル基盤 | `src/kernels/utils.cuh` | — | ⏳ |
+| 2-0 | Toolkit + meson CUDA 言語 + 疎通 (vector add) | `meson.build`, `src/kernels/utils.cuh` | test_cuda_smoke | ✅ 完了 (CUDA 13.3 / sm_120) |
+| 2-1 | エラーチェック + カーネル基盤 (CUDA_CHECK/CUDA_CHECK_KERNEL/ceil_div) | `src/kernels/utils.cuh` | test_cuda_smoke (マクロ経由) | ✅ 完了 |
 | 2-2 | primitives: dense FP16 GEMM / Conv2d / GroupNorm / SiLU・GeLU / Attention | `src/kernels/*.cu` | 各 test、CPU 参照と tol 比較 | ⏳ |
 | 2-3 | safetensors 重みローダー | `src/io/safetensors.hpp` | test、既知ファイル突合 | ⏳ |
 | 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ⏳ |

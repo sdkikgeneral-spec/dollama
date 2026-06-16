@@ -183,6 +183,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | Pipeline 縦通し (stub→CLIP NPU→queue→WD14 CPU, C++ jthread) | **9.13 frames/s** / per_frame 109ms / 単発レイテンシ中央値 157ms (WD14 CPU 律速) | test_pipeline |
 | compose_prompt (C++ CharacterBible, 1M iters) | **242 ns/op** | test_character |
 | CharacterBible::find (10,000体, 1M lookups) | **10.5 ns/op** | test_character |
+| vector_add 疎通ベンチ (N=16.7M, H2D×2+D2H, pageable, RTX5080) | **14.9ms 中央値 / 13.5 GB/s** (pinned 化で probe2 30GB/s 帯に上がる余地) | test_cuda_smoke |
 
 ## 次のタスク
 

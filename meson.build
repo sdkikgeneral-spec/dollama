@@ -59,12 +59,16 @@ endif
 # ----------------------------------------------------------------
 # CUDA (RTX5080 / Blackwell / sm_120)
 # ----------------------------------------------------------------
-cuda_dep = dependency('', required: false)
+# CUDA 言語は with_cuda が true のときだけ有効化する。
+# project() に 'cuda' を常時含めると nvcc 不在環境で setup が壊れるため、
+# add_languages() を条件付き (required: with_cuda) で呼ぶことで回避する。
+cuda_dep     = dependency('', required: false)
+cuda_enabled = false
 
 if get_option('with_cuda')
   cuda_root = get_option('gpu_sdk_root')
   if cuda_root == ''
-    cuda_root = is_win ? 'C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8' \
+    cuda_root = is_win ? 'C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3' \
                        : '/usr/local/cuda'
   endif
 
@@ -73,13 +77,23 @@ if get_option('with_cuda')
   cuda_rt      = cpp.find_library('cudart', dirs: [cuda_lib_dir], required: false)
 
   if cuda_rt.found()
+    # cpp 側 (allocator.hpp など) が cudaMalloc 等をリンクするための依存。
+    # CUDA 言語有効化前から維持する (壊さない)。
     cuda_dep = declare_dependency(
       include_directories : cuda_inc,
       dependencies        : [cuda_rt],
     )
-    message('CUDA: ' + cuda_root)
+
+    # .cu をコンパイルするための CUDA 言語を有効化 (nvcc 検出)。
+    cuda_enabled = add_languages('cuda', required: true, native: false)
+    if cuda_enabled
+      add_project_arguments('-arch=sm_120', language: 'cuda')
+      message('CUDA: ' + cuda_root + ' (sm_120 有効)')
+    else
+      warning('nvcc が見つかりません。.cu のコンパイルは無効です。')
+    endif
   else
-    warning('CUDA が見つかりません。-Dcuda_root= で指定してください。')
+    warning('CUDA が見つかりません。-Dgpu_sdk_root= で指定してください。')
   endif
 endif
 
