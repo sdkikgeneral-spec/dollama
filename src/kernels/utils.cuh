@@ -58,7 +58,8 @@ __host__ __device__ inline int ceil_div(int a, int b)
 // ----------------------------------------------------------------
 // vector_add — 疎通用カーネル: out[i] = a[i] + b[i]
 // ----------------------------------------------------------------
-__global__ void vector_add(const float* a, const float* b, float* out, int n)
+// static: ヘッダオンリーのため、複数 TU に include されても LNK2005 を避ける (内部リンケージ)。
+static __global__ void vector_add(const float* a, const float* b, float* out, int n)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n)

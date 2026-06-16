@@ -120,6 +120,17 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('cuda_smoke', test_cuda_smoke_exe)
+
+  # dense FP16 GEMM テスト + ベンチ (Phase 2 マイルストーン 2-2-1)
+  # gemm.cu をテストと一緒にビルドして launch_gemm_fp16 をリンクする。
+  test_gemm_exe = executable('test_gemm',
+    sources             : files('tests/test_gemm.cu', 'kernels/gemm.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('gemm', test_gemm_exe)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする

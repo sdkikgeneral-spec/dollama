@@ -184,6 +184,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | compose_prompt (C++ CharacterBible, 1M iters) | **242 ns/op** | test_character |
 | CharacterBible::find (10,000体, 1M lookups) | **10.5 ns/op** | test_character |
 | vector_add 疎通ベンチ (N=16.7M, H2D×2+D2H, pageable, RTX5080) | **14.9ms 中央値 / 13.5 GB/s** (pinned 化で probe2 30GB/s 帯に上がる余地) | test_cuda_smoke |
+| 自作 FP16 GEMM 1024³ (shared-mem タイリング, FP32 蓄積, RTX5080) | **0.45ms 中央値 / 4730 GFLOPS** (max_rel 5e-4) | test_gemm |
+| 自作 FP16 GEMM SDXL Linear transB (M=4096 N=K=1280) | **3.19ms / 4208 GFLOPS** | test_gemm |
 
 ## 次のタスク
 
