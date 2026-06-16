@@ -27,15 +27,32 @@ SDXL / BitNet は含まない。
 ## Phase 2 — SDXL 自作 CUDA カーネル
 
 最大の実装物。CUDA カーネルをゼロから書き、diffusers なしで画像生成を実現する。
+SDXL UNet/VAE は **FP16 dense** なので ternary GEMM は使わない (Phase 4 BitNet へ移動)。
 
-| # | 実装物 | ファイル | 状態 |
-|---|---|---|---|
-| 1 | CUDA エラーユーティリティ | `src/kernels/utils.cuh` | ⏳ 未着手 |
-| 2 | Ternary GEMM (BitNet 基礎) | `src/kernels/ternary_gemm.cu` | ⏳ 未着手 |
-| 3 | Multi-Head Attention | `src/kernels/attention.cu` | ⏳ 未着手 |
-| 4 | VAE decode | `src/kernels/vae_decode.cu` | ⏳ 未着手 |
-| 5 | SDXL UNet 推論 + スケジューラ | `src/infer/unet.hpp` | ⏳ 未着手 |
-| 6 | モデル重みローダー (safetensors) | `src/io/safetensors.hpp` | ⏳ 未着手 |
+**前提 (ブロッカー)**: CUDA Toolkit 12.8 (nvcc) のインストールが必須。現状ドライバ
+(610.47) のみで Toolkit 未導入。probe10 は PyTorch 同梱ランタイムで動いていた。
+Blackwell sm_120 は CUDA 12.8+ が必須。導入後 `meson.build` の project 言語に `'cuda'`
+を追加し `-arch=sm_120` でコンパイルする。
+
+**カーネル方針 (確定)**: 完全自作を目指す。到達困難になった重い GEMM/Conv のみ
+cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な形で実装)。Attention・
+正規化・活性化は自作。3.80s 同等は段階的目標とし、まず正しさ・絵が出ることを優先。
+
+**検証戦略**: 生 CUDA は参照無しでは数値デバッグ不能 → Python(probe10 環境)で中間
+テンソルをダンプ → C++ カーネルがロードして許容誤差比較する**ゴールデンテスト**を各段に置く。
+
+| 段 | 実装物 | ファイル | 検証 | 状態 |
+|---|---|---|---|---|
+| 2-0 | Toolkit + meson CUDA 言語 + 疎通 (vector add) | `meson.build`, `src/kernels/utils.cuh` | test_cuda_smoke | ⏳ |
+| 2-1 | エラーチェック + カーネル基盤 | `src/kernels/utils.cuh` | — | ⏳ |
+| 2-2 | primitives: dense FP16 GEMM / Conv2d / GroupNorm / SiLU・GeLU / Attention | `src/kernels/*.cu` | 各 test、CPU 参照と tol 比較 | ⏳ |
+| 2-3 | safetensors 重みローダー | `src/io/safetensors.hpp` | test、既知ファイル突合 | ⏳ |
+| 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ⏳ |
+| 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.hpp` | 1step ごと latent を PyTorch 比較 | ⏳ |
+| 2-6 | フル C++ パイプライン統合 + 対 3.80s 計測 | `src/pipeline.hpp` 拡張 | test_pipeline 拡張 | ⏳ |
+
+**最初の "絵が出る" 山は 2-4 (VAE decode)**。UNet より小さく自己完結で、probe10 の
+latent を入力に正解画像と比較できるため、最初の実画像マイルストーンに置く。
 
 **Phase 2 完了の定義**: フル C++ パイプラインで 1024×1024 画像が生成されること。
 目標: probe10 ベースライン (3.80s / 20steps) と同等以上。
@@ -73,7 +90,8 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 | 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ⏳ 未着手 |
 | 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
 | 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 |
-| 5 | C++ 推論 (ternary GEMM 流用) | `src/infer/bitnet.hpp` | ⏳ 未着手 |
+| 5 | Ternary GEMM (重み{-1,0,+1}・乗算不要) | `src/kernels/ternary_gemm.cu` | ⏳ 未着手 (Phase 2 から移動) |
+| 6 | C++ 推論 (ternary GEMM 流用) | `src/infer/bitnet.hpp` | ⏳ 未着手 |
 
 **Phase 4 完了の定義**: user text → danbooru タグ変換が C++ で動き、
 Qwen2 Python に対して遜色ない品質であること。目標レイテンシ: <10ms (BitNet b1.58)。
