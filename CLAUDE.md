@@ -180,6 +180,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | CLIP-L NPU (C++ ClipEncoder, 中央値/N=100) | **7.82ms** (min 7.61 / max 12.15) | test_clip |
 | WD14 (C++ CPU Wd14Tagger, 中央値/N=100) | **105.3ms** (min 99.1 / max 132.8) | test_wd14 |
 | SDXL 20steps 1024×1024 RTX5080 | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
+| Pipeline 縦通し (stub→CLIP NPU→queue→WD14 CPU, C++ jthread) | **9.13 frames/s** / per_frame 109ms / 単発レイテンシ中央値 157ms (WD14 CPU 律速) | test_pipeline |
 | compose_prompt (C++ CharacterBible, 1M iters) | **242 ns/op** | test_character |
 | CharacterBible::find (10,000体, 1M lookups) | **10.5 ns/op** | test_character |
 
@@ -196,7 +197,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 5 | CLIP NPU 推論 + テスト | `src/infer/clip.hpp`, `test_clip.cpp` | ✅ 完了 (NPU 7.82ms) |
 | 5.5 | キャラ台帳 character.hpp + テスト | `src/core/character.hpp`, `test_character.cpp` | ✅ 完了 |
 | 6 | WD14 CPU 推論 + テスト | `src/infer/wd14.hpp`, `test_wd14.cpp` | ✅ 完了 (CPU 105.3ms) |
-| **7** | **スレッド骨格 + CPU アフィニティ** | **`src/main.cpp` 拡張** | **⏳ 次** |
+| 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` + `src/core/affinity.hpp` + `src/pipeline.hpp` | ✅ 完了 (9.13 frames/s) |
 
 **Phase 2 以降 (詳細は `docs/roadmap.md` 参照)**
 - `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル

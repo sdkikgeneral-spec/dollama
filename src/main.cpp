@@ -2,11 +2,37 @@
 #include <string>
 
 #ifdef HAVE_OPENVINO
+#include <filesystem>
 #include <openvino/openvino.hpp>
+#include "pipeline.hpp"
 #endif
 
 #ifdef HAVE_CUDA
 #include <cuda_runtime.h>
+#endif
+
+#ifdef HAVE_OPENVINO
+namespace
+{
+// モデル .xml の候補パスを探索する (実行ディレクトリ差を吸収)
+std::string find_model_xml(const std::string& rel)
+{
+    namespace fs = std::filesystem;
+    const std::string candidates[] = {
+        "../models/" + rel,
+        "models/" + rel,
+        "../../models/" + rel,
+    };
+    for (const auto& p : candidates)
+    {
+        if (fs::exists(p))
+        {
+            return p;
+        }
+    }
+    return ""; // 見つからなければ空文字
+}
+} // namespace
 #endif
 
 // デバイス情報を表示して環境チェック
@@ -56,6 +82,39 @@ int main()
     // 期待値: RTX5080 / sm_120 / ~16 GB
 #else
     std::cout << "\n[CUDA] not compiled\n";
+#endif
+
+    // ---- Phase 1 パイプライン (stub→CLIP(NPU)→queue→WD14(CPU)) ----
+#ifdef HAVE_OPENVINO
+    std::cout << "\n[pipeline] Phase 1 パイプライン縦通し\n";
+    const std::string clip_xml = find_model_xml("clip-l-text-encoder/model_ov.xml");
+    const std::string wd14_xml = find_model_xml("wd14-swinv2-tagger-v3/model_ov.xml");
+
+    if (clip_xml.empty() || wd14_xml.empty())
+    {
+        std::cout << "  [SKIP] CLIP/WD14 モデルが見つかりません "
+                     "(clip='" << clip_xml << "', wd14='" << wd14_xml << "')\n";
+    }
+    else
+    {
+        try
+        {
+            dollama::Pipeline pipe(clip_xml, wd14_xml);
+            const int frames = 3;
+            auto tags = pipe.run(frames);
+            std::cout << "  処理フレーム数: " << tags.size() << " / " << frames << "\n";
+            for (size_t i = 0; i < tags.size(); ++i)
+            {
+                std::cout << "  frame " << i << ": " << tags[i] << "\n";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "  [pipeline] 例外: " << e.what() << "\n";
+        }
+    }
+#else
+    std::cout << "\n[pipeline] OpenVINO 無効のためスキップ\n";
 #endif
 
     std::cout << "\nOK\n";

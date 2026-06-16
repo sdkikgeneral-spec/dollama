@@ -113,6 +113,31 @@ cat build/meson-logs/testlog.txt
 | `bench_infer_latency` | ベンチ | warmup5 + 100回中央値/min/max (実測: 中央値 105.3ms / min 99.1 / max 132.8 / N=100, CPU) |
 | `info_top_tags` | 情報 | selected_tags.csv があれば top-10 タグ名を出力 (assert 外) |
 
+
+### `src/tests/test_affinity.cpp` — set_thread_affinity
+
+`meson test` 名: `affinity`
+
+STL のみ・常時実行 (HAVE_OPENVINO 不要)。`std::jthread` を生かした状態でアフィニティを設定し、戻り値と no-crash を検証する。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_valid_mask` | 機能 | 有効マスク 0x1 で true が返る・クラッシュなし |
+| `test_zero_mask` | 境界 | mask=0 で false が返る (無効指定) |
+| `test_real_masks_no_crash` | 機能 | P/E-core マスク・全ビットマスクでクラッシュしない |
+
+
+### `src/tests/test_pipeline.cpp` — Pipeline (Phase 1 マルチスレッド骨格)
+
+`meson test` 名: `pipeline`
+
+stub(LLM) → CLIP(NPU) → stub(SDXL) → WD14(CPU) → feedback の縦通し統合テスト。HAVE_OPENVINO 未定義・CLIP/WD14 いずれかのモデル不在は [SKIP]。run() を `std::async` で起動し、ウォッチドッグ (10+frames 秒) でデッドロックを検出する。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_run_frames` | 機能 | 5 フレーム実行で各フレーム非空タグ・デッドロックなし・クリーン join |
+| `bench_pipeline` | ベンチ | 定常スループット frames/s と 1 フレームレイテンシ中央値 (実測: 9.13 frames/s / per_frame 109ms / 単発レイテンシ中央値 157ms。WD14 CPU ~105ms 律速) |
+
 ---
 
 ## テストファイルの追加方法
@@ -181,6 +206,8 @@ test('<component>', test_<component>_exe)
 | `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ⏳ 未着手 | 出力テンソルの shape・L2 norm が probe9 と一致 |
 | WD14 CPU 推論 | `test_wd14.cpp` | ✅ 完了 | 出力 shape・スコア値域 [0,1]・決定性・サイズガード・ベンチ |
+| アフィニティ | `test_affinity.cpp` | ✅ 完了 | 有効マスク true・mask=0 false・no-crash |
+| Pipeline 骨格 | `test_pipeline.cpp` | ✅ 完了 | 縦通し・非空タグ・デッドロックなし・クリーン join・スループット/レイテンシ |
 
 ### Phase 2 以降
 

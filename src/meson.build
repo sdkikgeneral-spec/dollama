@@ -66,6 +66,24 @@ test_wd14_exe = executable('test_wd14',
 )
 test('wd14', test_wd14_exe)
 
+# スレッドアフィニティ単体テスト (STL のみ・常時実行)
+test_affinity_exe = executable('test_affinity',
+  sources             : files('tests/test_affinity.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('affinity', test_affinity_exe)
+
+# Pipeline (Phase 1 マルチスレッド骨格) 統合テスト + ベンチ
+test_pipeline_exe = executable('test_pipeline',
+  sources             : files('tests/test_pipeline.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('pipeline', test_pipeline_exe, timeout : 120)
+
 # CharacterBible / プロンプト合成テスト
 test_character_exe = executable('test_character',
   sources             : files('tests/test_character.cpp'),
