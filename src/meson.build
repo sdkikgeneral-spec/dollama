@@ -131,6 +131,17 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('gemm', test_gemm_exe)
+
+  # 要素ごと活性化 (SiLU / GeLU) テスト + ベンチ (Phase 2 マイルストーン 2-2-2)
+  # activation.cu をテストと一緒にビルドして launch_silu / launch_gelu をリンクする。
+  test_activation_exe = executable('test_activation',
+    sources             : files('tests/test_activation.cu', 'kernels/activation.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('activation', test_activation_exe)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
