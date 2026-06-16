@@ -142,6 +142,17 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('activation', test_activation_exe)
+
+  # GroupNorm テスト + ベンチ (Phase 2 マイルストーン 2-2-3)
+  # groupnorm.cu をテストと一緒にビルドして launch_group_norm をリンクする。
+  test_groupnorm_exe = executable('test_groupnorm',
+    sources             : files('tests/test_groupnorm.cu', 'kernels/groupnorm.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('groupnorm', test_groupnorm_exe)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする

@@ -187,6 +187,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 FP16 GEMM 1024³ (shared-mem タイリング, FP32 蓄積, RTX5080) | **0.45ms 中央値 / 4730 GFLOPS** (max_rel 5e-4) | test_gemm |
 | 自作 FP16 GEMM SDXL Linear transB (M=4096 N=K=1280) | **3.19ms / 4208 GFLOPS** | test_gemm |
 | 自作 活性化 SiLU/GeLU(erf) FFN (4096×5120, FP32 内部, RTX5080) | **544 GB/s** (UNet FM は起動律速で ~230 GB/s) | test_activation |
+| 自作 GroupNorm (1グループ=1ブロック, 1パス FP32 リダクション, RTX5080) | UNet C1280 **73 GB/s** / C640 75 GB/s / VAE FM C128H512 48 GB/s (占有率制約) | test_groupnorm |
 
 ## 次のタスク
 
