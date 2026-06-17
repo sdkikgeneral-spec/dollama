@@ -1,6 +1,6 @@
 ---
 name: cpp-implementer
-description: dollama の C++ コア実装を担当する。src/core/ (Tensor, Allocator)・src/server/ (Winsock2 HTTP) の実装、Meson ビルド設定を行う。C++ ファイルを書く・修正するときに使う。
+description: dollama の C++ コア実装を担当する。src/core/ (Tensor, Allocator)・src/io/ (safetensors ローダー等)・src/infer/ (推論グルー)・src/models/・src/server/ (HTTP) の実装、Meson ビルド設定を行う。C++ ファイル (.hpp/.cpp) を書く・修正するときに使う (CUDA .cu は cuda-kernel-dev)。
 tools:
   - Bash
   - Read
