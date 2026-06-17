@@ -93,6 +93,18 @@ test_character_exe = executable('test_character',
 )
 test('character', test_character_exe)
 
+# safetensors 重みローダーテスト (CPU・常時実行、Phase 2 マイルストーン 2-3)
+# fixture (golden.safetensors) のパスはソース相対の絶対パスをコンパイル時に埋め込む
+# (テスト実行 cwd = build ディレクトリのため)。既存 cpp_args を壊さず専用引数で渡す。
+golden_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'golden.safetensors'
+test_safetensors_exe = executable('test_safetensors',
+  sources             : files('tests/test_safetensors.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + ['-DGOLDEN_PATH="' + golden_path + '"'],
+)
+test('safetensors', test_safetensors_exe)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled

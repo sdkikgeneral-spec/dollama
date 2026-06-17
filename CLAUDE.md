@@ -190,6 +190,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 GroupNorm (1グループ=1ブロック, 1パス FP32 リダクション, RTX5080) | UNet C1280 **73 GB/s** / C640 75 GB/s / VAE FM C128H512 48 GB/s (占有率制約) | test_groupnorm |
 | 自作 Conv2d direct (1スレッド=出力1画素, FP32 蓄積, RTX5080) | UNet C320 64² 3×3 **4.18ms / 1807 GFLOPS** / VAE C128 512² 3×3 **46.4ms / 1667 GFLOPS** (1×1=GEMM・3×3=タイリング昇格余地) | test_conv2d |
 | 自作 Attention (per-(b,h,row) block + shared scores, FP32 softmax, RTX5080) | self 1024² Dh80 **1.65ms / 1631 GFLOPS** / cross Sk77 Dh80 **0.116ms / 1748 GFLOPS** (flash/Tensor Core 委譲は後続) | test_attention |
+| safetensors ローダー (ヘッダオンリー, 自作最小 JSON パーサ, ifstream 全読み) | golden 5テンソル (F32/F16/BF16/I64/I8) ロード **19.0 µs/op** (N=10000) | test_safetensors |
 
 ## 次のタスク
 
@@ -207,6 +208,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 7 | スレッド骨格 + CPU アフィニティ | `src/main.cpp` + `src/core/affinity.hpp` + `src/pipeline.hpp` | ✅ 完了 (9.13 frames/s) |
 
 **Phase 2 以降 (詳細は `docs/roadmap.md` 参照)**
+- `src/io/safetensors.hpp` — safetensors 重みローダー ✅ 完了 (タスク 2-3, golden 突合, 19.0 µs/op)
 - `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
 - `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
 - 自作 BitNet b1.58 の訓練データ収集・学習

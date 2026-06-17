@@ -98,6 +98,30 @@ cat build/meson-logs/testlog.txt
 | `bench_bible_find` | ベンチ | 10,000 体登録し find × 1M 回ルックアップ (実績: 10.5 ns/op) |
 
 
+### `src/tests/test_safetensors.cpp` — SafeTensors ローダー
+
+`meson test` 名: `safetensors`
+
+CUDA 不要・常時実行。fixture `src/tests/data/golden.safetensors` は
+`scripts/dollma_make_safetensors_fixture.py` (safetensors 0.8.0 + torch.bfloat16) が生成した
+既知値ファイル。パスは meson の `cpp_args` で `-DGOLDEN_PATH=` を埋め込む (cwd 非依存)。
+golden 内容: t_f32 F32[2,3]={0..5} / t_f16 F16[4] / t_i64 I64[2,2]={1,2,3,4} /
+t_i8 I8[3]={-128,0,127} / t_bf16 BF16[2]={1.0,-2.5}。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_names` | 機能 | テンソル名 5 件・`__metadata__` がテンソルに混入しない |
+| `test_dtype_shape` | 機能 | 各テンソルの dtype/shape が期待と一致 |
+| `test_f32_values` | 機能 | F32[2,3] を float 値で突合 |
+| `test_i64_values` | 機能 | I64[2,2] を int64 値で突合 |
+| `test_i8_values` | 機能 | I8[3] を符号付き境界値 (-128/0/127) で突合 |
+| `test_half_bits` | 機能 | F16/BF16 を 16bit ビットパターンで突合 (生バイト透過性) |
+| `test_missing_file_throws` | エラー | 不在ファイルで例外 |
+| `test_corrupt_header_throws` | エラー | ヘッダ長を過大に細工した一時ファイルで例外 |
+| `test_unknown_tensor_throws` | エラー | 未登録テンソル名アクセスで例外 |
+| `bench_load` | ベンチ | golden を 10,000 回ロードして µs/op (実測: 19.0 µs/op) |
+
+
 ### `src/tests/test_clip.cpp` — ClipEncoder (NPU)
 
 `meson test` 名: `clip`
@@ -312,6 +336,7 @@ endif
 | 2-2-3 | GroupNorm | `test_groupnorm.cu` | ✅ 完了 | known/random/affine/inplace/エッジ・GB/s |
 | 2-2-4 | Conv2d | `test_conv2d.cu` | ⏳ 未着手 | im2col/直接畳み込みを CPU 参照と比較 |
 | 2-2-5 | Attention (self/cross) | `test_attention.cu` | ⏳ 未着手 | known input → expected output |
+| 2-3 | safetensors ローダー | `test_safetensors.cpp` | ✅ 完了 | golden の dtype/shape/値・破損/不在で例外・load µs/op |
 | 2-4 | VAE decode | `test_vae_decode.cu` | ⏳ 未着手 | latent → image が probe10 出力と SSIM ≥ 0.99 |
 
 ---
