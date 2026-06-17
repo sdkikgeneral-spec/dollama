@@ -45,12 +45,12 @@ cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な�
 |---|---|---|---|---|
 | 2-0 | Toolkit + meson CUDA 言語 + 疎通 (vector add) | `meson.build`, `src/kernels/utils.cuh` | test_cuda_smoke | ✅ 完了 (CUDA 13.3 / sm_120) |
 | 2-1 | エラーチェック + カーネル基盤 (CUDA_CHECK/CUDA_CHECK_KERNEL/ceil_div) | `src/kernels/utils.cuh` | test_cuda_smoke (マクロ経由) | ✅ 完了 |
-| 2-2 | primitives (下記 2-2-1〜2-2-5 に分割。1つずつ 実装→ゴールデンテスト→ベンチ) | `src/kernels/*.cu` | 各 test、CPU 参照と tol 比較 | ⏳ |
+| 2-2 | primitives (下記 2-2-1〜2-2-5 に分割。1つずつ 実装→ゴールデンテスト→ベンチ) | `src/kernels/*.cu` | 各 test、CPU 参照と tol 比較 | ✅ 完了 (GEMM/活性化/GroupNorm/Conv2d/Attention 全緑) |
 | 2-2-1 | dense FP16 GEMM (他カーネルの検証土台) | `src/kernels/gemm.cu` | test_gemm、CPU 参照と tol 比較 | ✅ 完了 (shared-mem タイリング, 1024³ 4730 GFLOPS) |
 | 2-2-2 | SiLU / GeLU 活性化 (GeLU erf 主・tanh 併設) | `src/kernels/activation.cu` | test_activation | ✅ 完了 (FFN 544 GB/s, in-place 安全) |
 | 2-2-3 | GroupNorm (1グループ=1ブロック, 1パス FP32 リダクション) | `src/kernels/groupnorm.cu` | test_groupnorm | ✅ 完了 (UNet 75 GB/s, SiLU 融合は 2-4/2-5 で検討) |
 | 2-2-4 | Conv2d (最重量・計算量の大半) | `src/kernels/conv2d.cu` | test_conv2d | ✅ 完了 (direct conv, UNet C320 64² 3×3 1807 GFLOPS / VAE C128 512² 3×3 1667 GFLOPS。1×1=GEMM・3×3=im2col/タイリング昇格は 2-4/2-5 で実測後) |
-| 2-2-5 | Attention (self + cross、GEMM+softmax) | `src/kernels/attention.cu` | test_attention | ⏳ |
+| 2-2-5 | Attention (self + cross、GEMM+softmax) | `src/kernels/attention.cu` | test_attention | ✅ 完了 (per-(b,h,row) block + shared scores, FP32 softmax。self 1024² Dh80 1631 GFLOPS / cross Sk77 1748 GFLOPS。flash/Tensor Core 委譲は後続) |
 | 2-3 | safetensors 重みローダー | `src/io/safetensors.hpp` | test、既知ファイル突合 | ⏳ |
 | 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ⏳ |
 | 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.hpp` | 1step ごと latent を PyTorch 比較 | ⏳ |

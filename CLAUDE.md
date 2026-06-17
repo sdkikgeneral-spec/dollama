@@ -189,6 +189,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 活性化 SiLU/GeLU(erf) FFN (4096×5120, FP32 内部, RTX5080) | **544 GB/s** (UNet FM は起動律速で ~230 GB/s) | test_activation |
 | 自作 GroupNorm (1グループ=1ブロック, 1パス FP32 リダクション, RTX5080) | UNet C1280 **73 GB/s** / C640 75 GB/s / VAE FM C128H512 48 GB/s (占有率制約) | test_groupnorm |
 | 自作 Conv2d direct (1スレッド=出力1画素, FP32 蓄積, RTX5080) | UNet C320 64² 3×3 **4.18ms / 1807 GFLOPS** / VAE C128 512² 3×3 **46.4ms / 1667 GFLOPS** (1×1=GEMM・3×3=タイリング昇格余地) | test_conv2d |
+| 自作 Attention (per-(b,h,row) block + shared scores, FP32 softmax, RTX5080) | self 1024² Dh80 **1.65ms / 1631 GFLOPS** / cross Sk77 Dh80 **0.116ms / 1748 GFLOPS** (flash/Tensor Core 委譲は後続) | test_attention |
 
 ## 次のタスク
 
