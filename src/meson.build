@@ -153,6 +153,16 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('groupnorm', test_groupnorm_exe)
+
+  # Conv2d テスト + ベンチ (Phase 2 マイルストーン 2-2-4)
+  test_conv2d_exe = executable('test_conv2d',
+    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('conv2d', test_conv2d_exe)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
