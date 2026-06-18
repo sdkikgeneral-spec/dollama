@@ -337,7 +337,7 @@ endif
 | 2-2-4 | Conv2d | `test_conv2d.cu` | ⏳ 未着手 | im2col/直接畳み込みを CPU 参照と比較 |
 | 2-2-5 | Attention (self/cross) | `test_attention.cu` | ⏳ 未着手 | known input → expected output |
 | 2-3 | safetensors ローダー | `test_safetensors.cpp` | ✅ 完了 | golden の dtype/shape/値・破損/不在で例外・load µs/op |
-| 2-4 | VAE decode | `test_vae_decode.cu` | ⏳ 未着手 | latent → image が probe10 出力と SSIM ≥ 0.99 |
+| 2-4 | VAE decode | `test_vae_decode.cu` | ✅ 完了 | latent → image を golden と SSIM(11×11一様窓)突合。実測 SSIM 0.999992 / MAE 5.45e-4 / Inf-NaN=0 / decode 中央値 7.96s。中間段は VAE_DEBUG=1 で全段ダンプ確認可。timeout 300 |
 
 ---
 

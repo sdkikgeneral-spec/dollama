@@ -19,6 +19,9 @@
 //   - 占有率: scores を shared に materialize する単純版で正しさを優先。Sk が
 //     極端に大きく shared に収まらない場合は online-softmax (flash) へ昇格する
 //     (attention.cuh の最適化メモ参照)。
+//   - 大 Sk 対応 (VAE mid_block): scores[Sk] がデフォルト 48KB を超える場合
+//     (Sk > 12288)、launch ラッパーで cudaFuncSetAttribute による動的 shared の
+//     opt-in を行う。VAE mid は Sq=Sk=16384 → 64KB+ で 48KB を超えるため必須。
 #include "kernels/attention.cuh"
 #include "kernels/utils.cuh"
 
@@ -235,6 +238,22 @@ void launch_attention(const __half* d_q, const __half* d_k, const __half* d_v,
     // 動的 shared memory: scores(Sk float) + block reduce scratch(nwarps float)。
     const int nwarps = (ATTN_THREADS + 31) / 32;
     const size_t shmem = (static_cast<size_t>(Sk) + nwarps) * sizeof(float);
+
+    // Blackwell (sm_120) の動的 shared memory opt-in:
+    //   起動時に静的に確保できる動的 shared はデフォルト 48KB が上限。VAE mid_block の
+    //   spatial self-attention (Sq=Sk=16384) では scores[Sk] が 16384*4=64KB に達し
+    //   48KB を超えるため、cudaFuncSetAttribute で MaxDynamicSharedMemorySize を
+    //   引き上げる必要がある (sm_120 は ~227KB/SM まで許可)。opt-in は冪等なので
+    //   毎回呼んでよいが、48KB 以下のときは不要 (既存の小 Sk ケースの挙動を変えない)。
+    //   確保上限を超える要求は cudaFuncSetAttribute が cudaErrorInvalidValue を返し、
+    //   CUDA_CHECK が必要バイト数を含む例外を投げて止まる (online-softmax 昇格の判断材料)。
+    constexpr size_t kDefaultShmemLimit = 48u * 1024u; // 48KB (デフォルト動的 shared 上限)
+    if (shmem > kDefaultShmemLimit)
+    {
+        CUDA_CHECK(cudaFuncSetAttribute(attention_fp16,
+                                        cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                        static_cast<int>(shmem)));
+    }
 
     attention_fp16<<<blocks, ATTN_THREADS, shmem>>>(d_q, d_k, d_v, d_out,
                                                     B, H, Sq, Sk, Dh, scale);

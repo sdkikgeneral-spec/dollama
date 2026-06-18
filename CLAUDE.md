@@ -191,6 +191,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 Conv2d direct (1スレッド=出力1画素, FP32 蓄積, RTX5080) | UNet C320 64² 3×3 **4.18ms / 1807 GFLOPS** / VAE C128 512² 3×3 **46.4ms / 1667 GFLOPS** (1×1=GEMM・3×3=タイリング昇格余地) | test_conv2d |
 | 自作 Attention (per-(b,h,row) block + shared scores, FP32 softmax, RTX5080) | self 1024² Dh80 **1.65ms / 1631 GFLOPS** / cross Sk77 Dh80 **0.116ms / 1748 GFLOPS** (flash/Tensor Core 委譲は後続) | test_attention |
 | safetensors ローダー (ヘッダオンリー, 自作最小 JSON パーサ, ifstream 全読み) | golden 5テンソル (F32/F16/BF16/I64/I8) ロード **19.0 µs/op** (N=10000) | test_safetensors |
+| 自作 VAE decoder 全段 (SDXL AutoencoderKL, latent[1,4,128,128]→image[1,3,1024,1024], RTX5080) | final **SSIM 0.999992** / MAE 5.45e-4 / decode **中央値 7.96s** (cudaEvent N=7)。up2 以降は FP32 中間 (FP16 中間は up3 で Inf→GroupNorm NaN 伝播のため不可)。naive attention(Sq=Sk=16384)+ direct conv(1024²)が律速で最適化余地大 | test_vae_decode |
 
 ## 次のタスク
 

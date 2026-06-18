@@ -52,7 +52,7 @@ cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な�
 | 2-2-4 | Conv2d (最重量・計算量の大半) | `src/kernels/conv2d.cu` | test_conv2d | ✅ 完了 (direct conv, UNet C320 64² 3×3 1807 GFLOPS / VAE C128 512² 3×3 1667 GFLOPS。1×1=GEMM・3×3=im2col/タイリング昇格は 2-4/2-5 で実測後) |
 | 2-2-5 | Attention (self + cross、GEMM+softmax) | `src/kernels/attention.cu` | test_attention | ✅ 完了 (per-(b,h,row) block + shared scores, FP32 softmax。self 1024² Dh80 1631 GFLOPS / cross Sk77 1748 GFLOPS。flash/Tensor Core 委譲は後続) |
 | 2-3 | safetensors 重みローダー | `src/io/safetensors.hpp` | test_safetensors、golden 突合 | ✅ 完了 (ヘッダオンリー・自作最小 JSON パーサ・F32/F16/BF16/I64/I8 突合, load 19.0 µs/op) |
-| 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ⏳ |
+| 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ✅ 完了 (final SSIM 0.999992 / decode 7.96s/枚 / up2以降 FP32 中間) |
 | 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.hpp` | 1step ごと latent を PyTorch 比較 | ⏳ |
 | 2-6 | フル C++ パイプライン統合 + 対 3.80s 計測 | `src/pipeline.hpp` 拡張 | test_pipeline 拡張 | ⏳ |
 
@@ -151,6 +151,7 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 | 拡散 UNet の timestep-expert | eDiff-I / DiT-MoE 系。20step を「初期=構図 / 後期=ディテール」で別エキスパートに分割。Phase 2 で dense を動かした後に検討。 | ◯ |
 | タグ生成 LLM の MoE 化 | 単体では 30–100M 規模に対し過剰 (MoE は数B〜で真価)。ルーティング損失・分岐コストが見合わない。 | △ 過剰 |
 | **NPU 骨格/部位検出による解剖メタ整合検査** | 生成画像を NPU で部位検出し、**「数・位相」だけ**を `CharacterIdentity` の宣言値と照合 (指数/四肢の本数・有無/重複欠損/左右の本数対称)。**角度・比率・ポーズ自然さは見ない** (2D のパース・デフォルメで誤検出するため)。L3 指数検査の一般化。NPU は拡散中 3.8s ほぼ遊休 → 裏で実質ゼロコスト採点。詳細は character-bible-spec §11。 | **◎ 価値高 (Phase 2)** |
+| **MCP 公開 / Claude 連携** | (a) dollama を **MCP サーバとして公開** → Claude 等が画像生成をツール呼び出し。Phase 3 の OpenAI 互換 HTTP サーバ (cpp-httplib) の薄いラッパで済み、自作・単一バイナリの美学と両立。(b) **プロンプト解析を Claude に**やらせる案は研究コア (自作 BitNet) の代替ではなく、BitNet の**訓練データ収集 / 品質上限の評価基準**として位置づける (Qwen2 蒸留と同じ役割)。 | (a) ◎ Phase 3 / (b) Phase 4 のデータ・評価文脈 |
 
 **共通の制約**: NPU は静的形状のみ → 古典的な token-level dynamic routing は不可。
 回避策は (a) 全エキスパート dense 計算 + マスク合成 (容量メリット消失)、または

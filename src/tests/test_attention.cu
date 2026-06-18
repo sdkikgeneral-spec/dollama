@@ -305,11 +305,38 @@ static bool test_attn_scale()
 }
 
 // ----------------------------------------------------------------
+// 6. 大 Sk (VAE mid_block 相当)。spatial self-attention は [1,512,128,128] を
+//    [1, H=1, S=128*128=16384, Dh=512] に reshape した self-attn になる。
+//    scores[Sk] が Sk*4byte = 64KB+ になり、デフォルト動的 shared 上限 48KB を
+//    超えるため cudaFuncSetAttribute の opt-in 経路を踏む。
+//
+//    サイズ選定の判断:
+//      - shared 要件は scores(Sk*4) で決まる (Dh は内積長で shared を食わない)。
+//        Sk > 12288 で 48KB 超 → opt-in が必要。本ケースは Sk=16384 で 64KB を
+//        要求し、本番 VAE mid と同じ shared 経路を厳密に踏む。
+//      - 一方 CPU 参照は Sq*Sk*Dh の計算量なので、Sq を 16384 のままにすると
+//        16384*16384*512 ≈ 1.4e11 で非現実的。各 query 行は独立に処理されるので、
+//        Sq を 8 に絞っても「64KB 超の shared を踏む」性質は完全に保たれる
+//        (kernel は 1 ブロック = 1 query 行で Sk 全体を shared に置くため)。
+//        Sq=8 なら CPU 参照は 8*16384*512 ≈ 6.7e7 で現実的時間に収まる。
+//      - Dh は本番 VAE mid と同じ 512 を維持 (内積長の数値挙動を保つ)。
+// ----------------------------------------------------------------
+static bool test_attn_large_sk()
+{
+    bool ok = true;
+    // Sk=16384 (= 128*128) で scores = 64KB。Sq=8 に絞って CPU 参照を現実的に。
+    ok = run_case("attn_vae_mid_largeSk", 1, 1, 8, 16384, 512, -1.0f, 6001) && ok;
+    // 48KB 境界直上の追加ケース (Sk=12289 → 48.004KB)。opt-in 分岐の下限を踏む。
+    ok = run_case("attn_largeSk_boundary", 1, 1, 4, 12289, 64, -1.0f, 6101) && ok;
+    return ok;
+}
+
+// ----------------------------------------------------------------
 // ベンチ: attention は 2 つの GEMM (Q·Kᵀ と P·V) 律速。
 // FLOPs = 2 * (2*B*H*Sq*Sk*Dh) (QKᵀ と PV の積和ぶん)。
 // warmup3 / iters100 / cudaEvent 中央値。
 // ----------------------------------------------------------------
-static void bench_one(int B, int H, int Sq, int Sk, int Dh, const char* label)
+static void bench_one(int B, int H, int Sq, int Sk, int Dh, const char* label, int iters = 100)
 {
     const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
     const int q_n = B * H * Sq * Dh;
@@ -352,7 +379,6 @@ static void bench_one(int B, int H, int Sq, int Sk, int Dh, const char* label)
     };
 
     const int warmup = 3;
-    const int iters  = 100;
     for (int i = 0; i < warmup; ++i)
     {
         (void)run_once();
@@ -391,6 +417,9 @@ static void bench_attention()
     bench_one(1, 8, 1024, 1024, 80, "sdxl_self_1024");
     // SDXL 代表 cross-attn: B1 H8 Sq=1024 Sk=77 Dh=80。
     bench_one(1, 8, 1024, 77, 80, "sdxl_cross_1024x77");
+    // VAE mid 代表 self-attn: B1 H1 Sq=Sk=16384 Dh=512 (64KB shared opt-in 経路)。
+    // VAE mid は 1 反復 ~0.7s と重いので iters を 5 に絞る (テスト全体の時間短縮)。
+    bench_one(1, 1, 16384, 16384, 512, "vae_mid_16384", 5);
 }
 
 #endif // HAVE_CUDA
@@ -404,11 +433,12 @@ int main()
     return 0;
 #else
     bool ok = true;
-    ok = dollama::test_attn_small() && ok;
-    ok = dollama::test_attn_multi() && ok;
-    ok = dollama::test_attn_cross() && ok;
-    ok = dollama::test_attn_asym()  && ok;
-    ok = dollama::test_attn_scale() && ok;
+    ok = dollama::test_attn_small()    && ok;
+    ok = dollama::test_attn_multi()    && ok;
+    ok = dollama::test_attn_cross()    && ok;
+    ok = dollama::test_attn_asym()     && ok;
+    ok = dollama::test_attn_scale()    && ok;
+    ok = dollama::test_attn_large_sk() && ok;
 
     if (!ok)
     {

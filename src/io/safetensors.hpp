@@ -57,7 +57,7 @@ inline size_t st_itemsize(StDtype dt)
     case StDtype::U8:
         return 1;
     }
-    throw std::runtime_error("st_itemsize: 未知の dtype");
+    throw std::runtime_error("st_itemsize: unknown dtype");
 }
 
 // dtype 文字列 → enum。未知なら例外。
@@ -70,7 +70,7 @@ inline StDtype st_dtype_from_string(const std::string& s)
     if (s == "I32")  return StDtype::I32;
     if (s == "I8")   return StDtype::I8;
     if (s == "U8")   return StDtype::U8;
-    throw std::runtime_error("safetensors: 未知の dtype 文字列 '" + s + "'");
+    throw std::runtime_error("safetensors: unknown dtype string '" + s + "'");
 }
 
 // dtype 文字列表現 (デバッグ・突合用)。
@@ -161,7 +161,7 @@ private:
         auto it = infos_.find(name);
         if (it == infos_.end())
         {
-            throw std::runtime_error("safetensors: テンソル '" + name + "' が存在しない");
+            throw std::runtime_error("safetensors: tensor '" + name + "' not found");
         }
         return it->second;
     }
@@ -171,18 +171,18 @@ private:
         std::ifstream f(path, std::ios::binary | std::ios::ate);
         if (!f)
         {
-            throw std::runtime_error("safetensors: ファイルを開けない: " + path);
+            throw std::runtime_error("safetensors: cannot open file: " + path);
         }
         std::streamoff sz = f.tellg();
         if (sz < 8)
         {
-            throw std::runtime_error("safetensors: ファイルが小さすぎる (8 バイト未満)");
+            throw std::runtime_error("safetensors: file too small (<8 bytes)");
         }
         f.seekg(0, std::ios::beg);
         data_.resize(static_cast<size_t>(sz));
         if (!f.read(reinterpret_cast<char*>(data_.data()), sz))
         {
-            throw std::runtime_error("safetensors: ファイル読み込み失敗: " + path);
+            throw std::runtime_error("safetensors: file read failed: " + path);
         }
     }
 
@@ -196,7 +196,7 @@ private:
         }
         if (n > data_.size() - 8)
         {
-            throw std::runtime_error("safetensors: ヘッダ長がファイルサイズを超過");
+            throw std::runtime_error("safetensors: header length exceeds file size");
         }
         data_offset_ = 8 + static_cast<size_t>(n);
 
@@ -253,7 +253,7 @@ private:
                 ++i;
                 break;
             }
-            throw std::runtime_error("safetensors: JSON 構文エラー (',' または '}' を期待)");
+            throw std::runtime_error("safetensors: JSON syntax error (expected ',' or '}')");
         }
     }
 
@@ -268,7 +268,7 @@ private:
         if (peek(s, i) == '}')
         {
             ++i;
-            throw std::runtime_error("safetensors: テンソルオブジェクトが空");
+            throw std::runtime_error("safetensors: empty tensor object");
         }
         while (true)
         {
@@ -293,7 +293,7 @@ private:
                 std::vector<size_t> off = parse_uint_array(s, i);
                 if (off.size() != 2)
                 {
-                    throw std::runtime_error("safetensors: data_offsets は 2 要素必須");
+                    throw std::runtime_error("safetensors: data_offsets must have 2 elements");
                 }
                 ti.begin    = off[0];
                 ti.end      = off[1];
@@ -317,12 +317,12 @@ private:
                 ++i;
                 break;
             }
-            throw std::runtime_error("safetensors: テンソルオブジェクト構文エラー");
+            throw std::runtime_error("safetensors: tensor object syntax error");
         }
 
         if (!has_dtype || !has_shape || !has_offsets)
         {
-            throw std::runtime_error("safetensors: dtype/shape/data_offsets のいずれか欠落");
+            throw std::runtime_error("safetensors: missing dtype/shape/data_offsets");
         }
         return ti;
     }
@@ -332,11 +332,11 @@ private:
     {
         if (ti.end < ti.begin)
         {
-            throw std::runtime_error("safetensors: '" + name + "' の data_offsets が逆転");
+            throw std::runtime_error("safetensors: '" + name + "' data_offsets reversed");
         }
         if (ti.end > body_len)
         {
-            throw std::runtime_error("safetensors: '" + name + "' の offset がデータ本体範囲外");
+            throw std::runtime_error("safetensors: '" + name + "' offset out of data body range");
         }
         // shape 要素数の積 × itemsize がバイト長と一致するか
         size_t numel = 1;
@@ -349,9 +349,9 @@ private:
         if (expect_bytes != actual_bytes)
         {
             throw std::runtime_error(
-                "safetensors: '" + name + "' の shape×itemsize=" +
-                std::to_string(expect_bytes) + " がバイト長 " +
-                std::to_string(actual_bytes) + " と不整合");
+                "safetensors: '" + name + "' shape*itemsize=" +
+                std::to_string(expect_bytes) + " vs byte length " +
+                std::to_string(actual_bytes) + " mismatch");
         }
     }
 
@@ -370,7 +370,7 @@ private:
     {
         if (i >= s.size())
         {
-            throw std::runtime_error("safetensors: JSON が途中で終了");
+            throw std::runtime_error("safetensors: JSON ended prematurely");
         }
         return s[i];
     }
@@ -379,7 +379,7 @@ private:
     {
         if (peek(s, i) != c)
         {
-            throw std::runtime_error(std::string("safetensors: JSON で '") + c + "' を期待");
+            throw std::runtime_error(std::string("safetensors: JSON expected '") + c + "'");
         }
         ++i;
     }
@@ -433,7 +433,7 @@ private:
                 out.push_back(c);
             }
         }
-        throw std::runtime_error("safetensors: 終端しない文字列");
+        throw std::runtime_error("safetensors: unterminated string");
     }
 
     // 非負整数の配列 [a, b, ...] を読む
@@ -463,7 +463,7 @@ private:
                 ++i;
                 break;
             }
-            throw std::runtime_error("safetensors: 配列構文エラー");
+            throw std::runtime_error("safetensors: array syntax error");
         }
         return out;
     }
@@ -477,7 +477,7 @@ private:
         }
         if (i == start)
         {
-            throw std::runtime_error("safetensors: 整数を期待");
+            throw std::runtime_error("safetensors: expected integer");
         }
         return static_cast<size_t>(std::stoull(s.substr(start, i - start)));
     }
@@ -534,7 +534,7 @@ private:
         }
         if (depth != 0)
         {
-            throw std::runtime_error("safetensors: コンテナが終端しない");
+            throw std::runtime_error("safetensors: unterminated container");
         }
     }
 };

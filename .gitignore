@@ -1,6 +1,12 @@
 # モデルファイル (大容量バイナリ)
 models/
 
+# VAE ゴールデンデータ (計 ~400MB, GitHub 100MB 制限超)。
+# scripts/dollma_dump_vae_golden.py で再生成する。不在時 test_vae_decode は [SKIP]。
+src/tests/data/vae_weights.safetensors
+src/tests/data/vae_io.safetensors
+src/tests/data/vae_golden.png
+
 # 実行ログ・出力画像
 logs/
 outputs/

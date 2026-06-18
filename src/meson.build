@@ -184,7 +184,43 @@ if cuda_enabled
     cpp_args            : cpp_args,
     cuda_args           : cuda_test_args,
   )
-  test('attention', test_attention_exe)
+  test('attention', test_attention_exe, timeout : 120)
+
+  # Elementwise (residual add / nearest upsample 2x) テスト + ベンチ (Phase 2 マイルストーン 2-4)
+  test_elementwise_exe = executable('test_elementwise',
+    sources             : files('tests/test_elementwise.cu', 'kernels/elementwise.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('elementwise', test_elementwise_exe)
+
+  # VAE decoder ゴールデン突合テスト + レイテンシ計測 (Phase 2 マイルストーン 2-4 本体)
+  # vae_decode.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
+  # ゴールデンパスはソース相対の絶対パスをコンパイル時に -D 埋め込み (cwd 非依存)。
+  vae_weights_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'vae_weights.safetensors'
+  vae_io_path      = meson.project_source_root() / 'src' / 'tests' / 'data' / 'vae_io.safetensors'
+  test_vae_decode_exe = executable('test_vae_decode',
+    sources             : files(
+      'tests/test_vae_decode.cu',
+      'kernels/vae_decode.cu',
+      'kernels/conv2d.cu',
+      'kernels/groupnorm.cu',
+      'kernels/activation.cu',
+      'kernels/attention.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DVAE_WEIGHTS_PATH="' + vae_weights_path + '"',
+      '-DVAE_IO_PATH="' + vae_io_path + '"',
+    ],
+  )
+  test('vae_decode', test_vae_decode_exe, timeout : 300)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする
