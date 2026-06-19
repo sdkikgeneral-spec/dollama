@@ -11,6 +11,11 @@
 #include <cuda_runtime.h>
 #endif
 
+#ifdef HAVE_HTTP
+#include "server/api.hpp"
+#include "server/stub_generator.hpp"
+#endif
+
 #ifdef HAVE_OPENVINO
 namespace
 {
@@ -35,8 +40,11 @@ std::string find_model_xml(const std::string& rel)
 } // namespace
 #endif
 
-// デバイス情報を表示して環境チェック
-int main()
+namespace
+{
+
+// デバイスチェック (従来のデフォルト挙動) を実行する
+int run_device_check()
 {
     std::cout << "dollama v0.1.0 — device check\n";
     std::cout << "================================\n";
@@ -119,4 +127,75 @@ int main()
 
     std::cout << "\nOK\n";
     return 0;
+}
+
+} // namespace
+
+// エントリポイント。
+//   引数なし          : 従来のデバイスチェック (既存挙動を維持)。
+//   --http [--port N] : OpenAI Images 互換 HTTP サーバーを起動 (StubGenerator)。
+int main(int argc, char** argv)
+{
+#ifdef HAVE_HTTP
+    bool http_mode = false;
+    int port = 8080;
+    int steps = 20;
+    int width = 1024;
+    int height = 1024;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string a = argv[i];
+        auto next_int = [&](int def) -> int
+        {
+            if (i + 1 < argc)
+            {
+                try
+                {
+                    return std::stoi(argv[++i]);
+                }
+                catch (...)
+                {
+                    return def;
+                }
+            }
+            return def;
+        };
+        if (a == "--http")
+        {
+            http_mode = true;
+        }
+        else if (a == "--port")
+        {
+            port = next_int(port);
+        }
+        else if (a == "--steps")
+        {
+            steps = next_int(steps);
+        }
+        else if (a == "--width")
+        {
+            width = next_int(width);
+        }
+        else if (a == "--height")
+        {
+            height = next_int(height);
+        }
+    }
+
+    if (http_mode)
+    {
+        // 現フェーズは StubGenerator を DI。2-6 完了時にここを PipelineGenerator へ差し替える。
+        dollama::StubGenerator gen;
+        std::cout << "dollama HTTP server (stub generator)\n";
+        std::cout << "  defaults: steps=" << steps
+                  << " size=" << width << "x" << height << "\n";
+        return dollama::start_server(gen, "127.0.0.1", port);
+    }
+#else
+    (void)argc;
+    (void)argv;
+#endif
+
+    return run_device_check();
 }

@@ -72,16 +72,22 @@ latent を入力に正解画像と比較できるため、最初の実画像マ�
 
 | # | 実装物 | ライブラリ / ファイル | 状態 |
 |---|---|---|---|
-| 1 | HTTP サーバー | **cpp-httplib** (単一ヘッダ・Winsock2/POSIX 吸収) | ⏳ 未着手 |
-| 2 | JSON 入出力 | **nlohmann/json** (ヘッダオンリー) | ⏳ 未着手 |
-| 3 | エンドポイント実装 | `src/server/api.cpp` (上記2ライブラリを使用) | ⏳ 未着手 |
-| 4 | Base64 (PNG 返却用) | httplib 付属 or 数十行の小物 | ⏳ 未着手 |
+| 1 | HTTP サーバー | **cpp-httplib 0.47.0** (単一ヘッダ・Winsock2/POSIX 吸収) | ✅ 完了 |
+| 2 | JSON 入出力 | **nlohmann/json 3.12.0** (ヘッダオンリー) | ✅ 完了 |
+| 3 | エンドポイント実装 | `src/server/api.cpp` (上記2ライブラリを使用) | ✅ 完了 (generations/health/models, edits=501) |
+| 4 | Base64 (PNG 返却用) | `src/server/base64.hpp` (自己完結) | ✅ 完了 |
 
 依存はヘッダオンリーのみ採用 → 単一バイナリ・重量級フレームワーク不使用の方針は維持。
 meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` 参照。
 `POST /v1/images/generations` で OpenAI Images API 互換。
 
+**生成本体の抽象境界**: `src/server/generator.hpp` の `IImageGenerator` (純粋仮想) 越しに
+生成器を注入。生成器の責務は PNG バイト列まで・base64 化はサーバ層。現状は
+`StubGenerator` (prompt ハッシュ決定色のダミー画像)。**2-6 完了時に `PipelineGenerator`
+を追加し main.cpp の DI 1 箇所差し替えで本 txt2img へ移行** (Pipeline は本フェーズで未改変)。
+
 **Phase 3 完了の定義**: `curl` で叩いて PNG (base64) が返ってくること。
+→ ✅ 達成。test_http で自己リクエスト全緑、スタブ生成+HTTP 往復 2.11ms (256×192)。
 
 ---
 

@@ -11,14 +11,27 @@ if cuda_dep.found()
   cpp_args += '-DHAVE_CUDA'
 endif
 
+# HTTP サーバー (cpp-httplib + nlohmann/json)。純 C++・CUDA/OpenVINO 非依存。
+# exe / test_http にのみ追加する (推論テスト群には不要)。
+http_deps     = []
+http_cpp_args = []
+if http_enabled
+  http_deps     += http_dep
+  http_cpp_args += '-DHAVE_HTTP'
+endif
+
 # src/ をインクルードパスに追加 (core/*.hpp を #include "core/tensor.hpp" で参照可能)
 src_inc = include_directories('.')
 
+exe_sources = ['main.cpp']
+if http_enabled
+  exe_sources += 'server/api.cpp'
+endif
 exe = executable('dollama',
-  sources             : files('main.cpp'),
+  sources             : files(exe_sources),
   include_directories : src_inc,
-  dependencies        : deps,
-  cpp_args            : cpp_args,
+  dependencies        : deps + http_deps,
+  cpp_args            : cpp_args + http_cpp_args,
 )
 
 # SPSCQueue 単体テスト
@@ -303,6 +316,18 @@ if cuda_enabled
     ],
   )
   test('unet', test_unet_exe, timeout : 600)
+endif
+
+# HTTP サーバー (OpenAI Images 互換) テスト — 純 C++・CUDA/OpenVINO 非依存・常時実行
+# StubGenerator を注入し httplib::Server を bind_to_any_port で起動して自己リクエスト。
+if http_enabled
+  test_http_exe = executable('test_http',
+    sources             : files('tests/test_http.cpp', 'server/api.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps + http_deps,
+    cpp_args            : cpp_args + http_cpp_args,
+  )
+  test('http', test_http_exe, timeout : 60)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする

@@ -97,4 +97,29 @@ if get_option('with_cuda')
   endif
 endif
 
+# ----------------------------------------------------------------
+# HTTP サーバー (cpp-httplib + nlohmann/json, ヘッダオンリー)
+# ----------------------------------------------------------------
+# 配管は自作せず subproject (wrap) で取り込む。両者ともヘッダオンリーなので
+# include_directories を渡すだけ。HTTP サーバ自体は CUDA/OpenVINO 非依存の純 C++。
+http_dep     = dependency('', required: false)  # デフォルト: 無効
+http_enabled = false
+
+if get_option('with_http')
+  json_dep    = dependency('nlohmann_json', fallback: ['nlohmann_json', 'nlohmann_json_dep'], required: true)
+  httplib_dep = dependency('cpp-httplib', required: true)
+
+  http_extra = []
+  if is_win
+    # cpp-httplib は Winsock2 を使う。MSVC では ws2_32 を明示リンクする。
+    http_extra += cpp.find_library('ws2_32', required: true)
+  endif
+
+  http_dep = declare_dependency(
+    dependencies : [json_dep, httplib_dep] + http_extra,
+  )
+  http_enabled = true
+  message('HTTP: cpp-httplib + nlohmann/json (有効)')
+endif
+
 subdir('src')

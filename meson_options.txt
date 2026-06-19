@@ -9,3 +9,6 @@ option('with_cuda', type: 'boolean', value: true,
 
 option('with_openvino', type: 'boolean', value: true,
   description: 'OpenVINO サポートを有効化 (NPU / iGPU)')
+
+option('with_http', type: 'boolean', value: true,
+  description: 'HTTP サーバー (OpenAI Images 互換) を有効化 (cpp-httplib + nlohmann/json)')

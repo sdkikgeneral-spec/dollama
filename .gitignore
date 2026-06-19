@@ -12,6 +12,12 @@ src/tests/data/vae_golden.png
 src/tests/data/unet_weights.safetensors
 src/tests/data/unet_io.safetensors
 
+# Meson subprojects: wrap 定義のみ追跡し DL ソース/キャッシュは無視
+# (meson が wrap から再取得する。ヘッダオンリーなので再現容易)
+subprojects/*
+!subprojects/*.wrap
+!subprojects/packagefiles/
+
 # 実行ログ・出力画像
 logs/
 outputs/
