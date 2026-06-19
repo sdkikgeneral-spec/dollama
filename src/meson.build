@@ -105,6 +105,18 @@ test_safetensors_exe = executable('test_safetensors',
 )
 test('safetensors', test_safetensors_exe)
 
+# EulerDiscreteScheduler テスト (純 C++・CUDA 不要、Phase 2 マイルストーン 2-5)
+# golden (unet_io.safetensors) のパスをコンパイル時に -D 埋め込み (cwd 非依存)。
+# golden 不在時は [SKIP] return 0 (test_scheduler 側で判定)。
+unet_io_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_io.safetensors'
+test_scheduler_exe = executable('test_scheduler',
+  sources             : files('tests/test_scheduler.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + ['-DUNET_IO_PATH="' + unet_io_path + '"'],
+)
+test('scheduler', test_scheduler_exe)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled
@@ -196,6 +208,46 @@ if cuda_enabled
   )
   test('elementwise', test_elementwise_exe)
 
+  # LayerNorm テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet Transformer2D)
+  test_layernorm_exe = executable('test_layernorm',
+    sources             : files('tests/test_layernorm.cu', 'kernels/layernorm.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('layernorm', test_layernorm_exe)
+
+  # GEGLU テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet FeedForward)
+  test_geglu_exe = executable('test_geglu',
+    sources             : files('tests/test_geglu.cu', 'kernels/geglu.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('geglu', test_geglu_exe)
+
+  # sinusoidal time embedding テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet)
+  test_timeembed_exe = executable('test_timeembed',
+    sources             : files('tests/test_timeembed.cu', 'kernels/timeembed.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('timeembed', test_timeembed_exe)
+
+  # broadcast bias add テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet)
+  test_bias_add_exe = executable('test_bias_add',
+    sources             : files('tests/test_bias_add.cu', 'kernels/bias_add.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('bias_add', test_bias_add_exe)
+
   # VAE decoder ゴールデン突合テスト + レイテンシ計測 (Phase 2 マイルストーン 2-4 本体)
   # vae_decode.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
   # ゴールデンパスはソース相対の絶対パスをコンパイル時に -D 埋め込み (cwd 非依存)。
@@ -221,6 +273,36 @@ if cuda_enabled
     ],
   )
   test('vae_decode', test_vae_decode_exe, timeout : 300)
+
+  # UNet2DConditionModel ゴールデン突合テスト + 1step レイテンシ計測 (Phase 2 マイルストーン 2-5)
+  # unet.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
+  # ゴールデンパスはソース相対の絶対パスをコンパイル時に -D 埋め込み (cwd 非依存)。
+  unet_weights_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_weights.safetensors'
+  unet_io_path2     = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_io.safetensors'
+  test_unet_exe = executable('test_unet',
+    sources             : files(
+      'tests/test_unet.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + unet_weights_path + '"',
+      '-DUNET_IO_PATH="' + unet_io_path2 + '"',
+    ],
+  )
+  test('unet', test_unet_exe, timeout : 600)
 endif
 
 # Windows: OpenVINO DLL を build/src/ にコピーして PATH 設定なしで実行できるようにする

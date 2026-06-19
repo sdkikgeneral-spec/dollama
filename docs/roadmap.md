@@ -53,7 +53,7 @@ cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な�
 | 2-2-5 | Attention (self + cross、GEMM+softmax) | `src/kernels/attention.cu` | test_attention | ✅ 完了 (per-(b,h,row) block + shared scores, FP32 softmax。self 1024² Dh80 1631 GFLOPS / cross Sk77 1748 GFLOPS。flash/Tensor Core 委譲は後続) |
 | 2-3 | safetensors 重みローダー | `src/io/safetensors.hpp` | test_safetensors、golden 突合 | ✅ 完了 (ヘッダオンリー・自作最小 JSON パーサ・F32/F16/BF16/I64/I8 突合, load 19.0 µs/op) |
 | 2-4 | **VAE decode** (latent→画像、自己完結・初の実画像) | `src/kernels/vae_decode.cu` | probe10 latent → 正解画像比較 | ✅ 完了 (final SSIM 0.999992 / decode 7.96s/枚 / up2以降 FP32 中間) |
-| 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.hpp` | 1step ごと latent を PyTorch 比較 | ⏳ |
+| 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.cu`/`.cuh`, `src/infer/scheduler.hpp` | 1step ごと latent を PyTorch 比較 | ✅ 完了 (noise_pred SSIM 0.999998 / 24段ゴールデン全緑 / 1step ~9.2s。Euler scheduler max_err≤5e-6) |
 | 2-6 | フル C++ パイプライン統合 + 対 3.80s 計測 | `src/pipeline.hpp` 拡張 | test_pipeline 拡張 | ⏳ |
 
 **最初の "絵が出る" 山は 2-4 (VAE decode)**。UNet より小さく自己完結で、probe10 の

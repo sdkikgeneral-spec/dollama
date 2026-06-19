@@ -7,6 +7,11 @@ src/tests/data/vae_weights.safetensors
 src/tests/data/vae_io.safetensors
 src/tests/data/vae_golden.png
 
+# UNet ゴールデンデータ (計 ~2.6GB, GitHub 100MB 制限超)。
+# scripts/dollma_dump_unet_golden.py で再生成する。不在時 test_unet は [SKIP]。
+src/tests/data/unet_weights.safetensors
+src/tests/data/unet_io.safetensors
+
 # 実行ログ・出力画像
 logs/
 outputs/

@@ -192,6 +192,9 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 Attention (per-(b,h,row) block + shared scores, FP32 softmax, RTX5080) | self 1024² Dh80 **1.65ms / 1631 GFLOPS** / cross Sk77 Dh80 **0.116ms / 1748 GFLOPS** (flash/Tensor Core 委譲は後続) | test_attention |
 | safetensors ローダー (ヘッダオンリー, 自作最小 JSON パーサ, ifstream 全読み) | golden 5テンソル (F32/F16/BF16/I64/I8) ロード **19.0 µs/op** (N=10000) | test_safetensors |
 | 自作 VAE decoder 全段 (SDXL AutoencoderKL, latent[1,4,128,128]→image[1,3,1024,1024], RTX5080) | final **SSIM 0.999992** / MAE 5.45e-4 / decode **中央値 7.96s** (cudaEvent N=7)。up2 以降は FP32 中間 (FP16 中間は up3 で Inf→GroupNorm NaN 伝播のため不可)。naive attention(Sq=Sk=16384)+ direct conv(1024²)が律速で最適化余地大 | test_vae_decode |
+| 自作 SDXL UNet 全段 (UNet2DConditionModel, latent[1,4,128,128]+CLIP[1,77,2048]+added_cond → noise_pred[1,4,128,128], RTX5080) | final noise_pred **SSIM 0.999998** / MAE 7.40e-5 / 24段ゴールデン全緑 (time/add embed〜各down/mid/up〜conv_out, corr≥0.999997)。中間は全段 FP16 で可 (VAE と違い FP16 範囲内)。1step **中央値 ~9.2s** (cudaEvent N=7、direct conv + per-row attention 律速・Tensor Core/im2col-GEMM/flash 化が最適化余地)。重み 2.57B params (FP16 5.1GB) | test_unet |
+| 自作 EulerDiscreteScheduler (SDXL, scaled_linear betas, timestep_spacing=leading, 20steps) | sigmas max_err 4.77e-6 / timesteps 完全一致 / scale_model_input 1.79e-7 / step0 1.43e-6 (diffusers golden 突合) | test_scheduler |
+| 自作 LayerNorm / GEGLU / sinusoidal time embed / broadcast bias add (UNet 補助カーネル, RTX5080) | LayerNorm 4096×1280 **0.043ms / 486 GB/s** / GEGLU 4096×2560 **0.055ms / 1138 GB/s** / time embed dim320 0.011ms / bias_add rowvec 4096×1280 0.071ms (max_rel<2e-3) | test_layernorm/geglu/timeembed/bias_add |
 
 ## 次のタスク
 
@@ -210,9 +213,12 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 
 **Phase 2 以降 (詳細は `docs/roadmap.md` 参照)**
 - `src/io/safetensors.hpp` — safetensors 重みローダー ✅ 完了 (タスク 2-3, golden 突合, 19.0 µs/op)
-- `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル
-- `src/server/http.cpp` — Winsock2 OpenAI 互換 HTTP サーバー
-- 自作 BitNet b1.58 の訓練データ収集・学習
+- `src/kernels/vae_decode.cu` — VAE decode ✅ 完了 (タスク 2-4, SSIM 0.999992)
+- `src/infer/unet.cu` + `src/infer/scheduler.hpp` — SDXL UNet + Euler scheduler ✅ 完了 (タスク 2-5, noise_pred SSIM 0.999998, 1step ~9.2s)
+- **次 (タスク 2-6)**: フル C++ パイプライン統合 (UNet×20step + Euler + VAE decode を繋ぎ実画像生成) + 対 probe10 3.80s 計測。**最適化** (direct conv → im2col/Tensor Core GEMM, naive attention → flash) が速度の本丸
+- `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル (Phase 4)
+- `src/server/http.cpp` — cpp-httplib OpenAI 互換 HTTP サーバー (Phase 3)
+- 自作 BitNet b1.58 の訓練データ収集・学習 (Phase 4)
 
 ## 実装作業のルール
 
