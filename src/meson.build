@@ -118,6 +118,19 @@ test_safetensors_exe = executable('test_safetensors',
 )
 test('safetensors', test_safetensors_exe)
 
+# PNG メタ往復 (character-bible-spec §7 tEXt 焼き込み) テスト + ベンチ
+# 純 C++ (CUDA/OpenVINO 非依存)・常時実行。JSON は nlohmann/json (json_dep)。
+# json_dep が解決できた場合のみ登録する (wrap 不在環境では自動スキップ)。
+if json_dep.found()
+  test_png_meta_exe = executable('test_png_meta',
+    sources             : files('tests/test_png_meta.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps + [json_dep],
+    cpp_args            : cpp_args,
+  )
+  test('png_meta', test_png_meta_exe)
+endif
+
 # EulerDiscreteScheduler テスト (純 C++・CUDA 不要、Phase 2 マイルストーン 2-5)
 # golden (unet_io.safetensors) のパスをコンパイル時に -D 埋め込み (cwd 非依存)。
 # golden 不在時は [SKIP] return 0 (test_scheduler 側で判定)。

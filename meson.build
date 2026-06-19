@@ -98,6 +98,14 @@ if get_option('with_cuda')
 endif
 
 # ----------------------------------------------------------------
+# nlohmann/json (ヘッダオンリー・常時解決)
+# ----------------------------------------------------------------
+# PNG メタ往復 (src/io/png_meta.hpp) など HTTP 以外でも JSON を使うため、
+# with_http に依存せず常に解決しておく (ヘッダオンリーなのでコスト極小)。
+# wrap が無い環境では無効になり、JSON を要するテストは登録をスキップする。
+json_dep = dependency('nlohmann_json', fallback: ['nlohmann_json', 'nlohmann_json_dep'], required: false)
+
+# ----------------------------------------------------------------
 # HTTP サーバー (cpp-httplib + nlohmann/json, ヘッダオンリー)
 # ----------------------------------------------------------------
 # 配管は自作せず subproject (wrap) で取り込む。両者ともヘッダオンリーなので
@@ -106,8 +114,10 @@ http_dep     = dependency('', required: false)  # デフォルト: 無効
 http_enabled = false
 
 if get_option('with_http')
-  json_dep    = dependency('nlohmann_json', fallback: ['nlohmann_json', 'nlohmann_json_dep'], required: true)
   httplib_dep = dependency('cpp-httplib', required: true)
+  if not json_dep.found()
+    json_dep = dependency('nlohmann_json', fallback: ['nlohmann_json', 'nlohmann_json_dep'], required: true)
+  endif
 
   http_extra = []
   if is_win

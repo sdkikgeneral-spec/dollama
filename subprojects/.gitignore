@@ -1,0 +1,8 @@
+# Meson subprojects: wrap 定義 (.wrap) と packagefiles/ のみ追跡し、
+# meson が wrap から取得・展開する DL ソース・packagecache は追跡しない。
+# (ヘッダオンリー依存なので再取得は容易。単一バイナリ方針は不変。)
+/*
+!/.gitignore
+!/*.wrap
+!/packagefiles
+!/packagefiles/**
