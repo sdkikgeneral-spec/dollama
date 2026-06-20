@@ -212,7 +212,13 @@ __global__ void gemm_fp16_wmma(const __half* A,
         fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, col_major> b_frag_t; // transB 用
         fragment<matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, row_major> b_frag_n; // 非 transB 用
 
-        if (active && full_row && full_col && full_k)
+        // wmma load_matrix_sync は leading dim が 16byte (= __half 8 要素) 境界で
+        // 整列している必要がある。A の lda=K、非 transB の B の ldb=N が 8 の倍数で
+        // ないと領域外/誤読する。整列していなければ高速経路を諦め、共有メモリへ
+        // 0 パディングして読む安全経路 (else if) に落とす (端数タイルと同じ扱い)。
+        const bool aligned = ((K & 7) == 0) && (transB || ((N & 7) == 0));
+
+        if (active && full_row && full_col && full_k && aligned)
         {
             // 完全タイル: グローバルメモリから直接ロード (高速経路)。
             //   A: [M,K] row-major、先頭 A[tile_row*K + k0]、lda=K。
@@ -267,7 +273,7 @@ __global__ void gemm_fp16_wmma(const __half* A,
 
         if (active)
         {
-            if (full_row && full_col && full_k && !transB)
+            if (full_row && full_col && full_k && aligned && !transB)
             {
                 mma_sync(acc_frag, a_frag, b_frag_n, acc_frag);
             }

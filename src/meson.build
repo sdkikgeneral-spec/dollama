@@ -271,7 +271,7 @@ if cuda_enabled
 
   # Conv2d テスト + ベンチ (Phase 2 マイルストーン 2-2-4)
   test_conv2d_exe = executable('test_conv2d',
-    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu'),
+    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
