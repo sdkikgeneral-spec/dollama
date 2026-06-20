@@ -12,8 +12,14 @@
 #endif
 
 #ifdef HAVE_HTTP
+#include <cstdlib>
+#include <memory>
 #include "server/api.hpp"
+#include "server/generator.hpp"
 #include "server/stub_generator.hpp"
+// 純 cpp 宣言のみ (CUDA 非依存)。実体は CUDA 有効時 pipeline_generator_factory.cu、
+// 無効時 pipeline_generator_factory_stub.cpp が提供する。main.cpp に CUDA は漏れない。
+#include "server/pipeline_generator_factory.hpp"
 #endif
 
 #ifdef HAVE_OPENVINO
@@ -129,11 +135,39 @@ int run_device_check()
     return 0;
 }
 
+#ifdef HAVE_HTTP
+// 環境変数で上書き可能な重みパスを解決する。
+//   env が空でなければそれを使い、無ければソースツリーの既定 data パスを使う。
+//   本番でどこから重みを読むかは未定のため、当面は test data を既定にしておく
+//   (ファイル不在なら factory が nullptr → StubGenerator にフォールバックする)。
+std::string resolve_path(const char* env_name, const std::string& fallback)
+{
+    // MSVC は std::getenv に C4996 (非推奨) を出すが、ここは読み取り専用で
+    // スレッド前 (起動時 1 回) のため安全。局所的に警告を抑止する。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+    if (const char* v = std::getenv(env_name))
+    {
+        if (v[0] != '\0')
+        {
+            return std::string(v);
+        }
+    }
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+    return fallback;
+}
+#endif
+
 } // namespace
 
 // エントリポイント。
 //   引数なし          : 従来のデバイスチェック (既存挙動を維持)。
-//   --http [--port N] : OpenAI Images 互換 HTTP サーバーを起動 (StubGenerator)。
+//   --http [--port N] : OpenAI Images 互換 HTTP サーバーを起動。
+//                       重み/golden が揃えば PipelineGenerator、無ければ StubGenerator。
 int main(int argc, char** argv)
 {
 #ifdef HAVE_HTTP
@@ -185,12 +219,36 @@ int main(int argc, char** argv)
 
     if (http_mode)
     {
-        // 現フェーズは StubGenerator を DI。2-6 完了時にここを PipelineGenerator へ差し替える。
-        dollama::StubGenerator gen;
-        std::cout << "dollama HTTP server (stub generator)\n";
+        // 重み/golden パスを解決 (env 変数で上書き可。既定は test data パス)。
+        // 既定は src/tests/data。本番の重み配置先が決まったら DEFAULT を差し替える。
+        const std::string unet_w =
+            resolve_path("DOLLAMA_UNET_WEIGHTS", "src/tests/data/unet_weights.safetensors");
+        const std::string vae_w =
+            resolve_path("DOLLAMA_VAE_WEIGHTS", "src/tests/data/vae_weights.safetensors");
+        const std::string embeds =
+            resolve_path("DOLLAMA_EMBEDS", "src/tests/data/unet_io.safetensors");
+
+        // ファクトリで PipelineGenerator を試みる。重み不在 / CUDA 無効なら nullptr。
+        //   本番なので deterministic=false (毎回異なる画像)。
+        std::unique_ptr<dollama::IImageGenerator> gen =
+            dollama::make_pipeline_generator(unet_w, vae_w, embeds, /*deterministic=*/false);
+
+        if (gen)
+        {
+            std::cout << "dollama HTTP server (pipeline generator)\n";
+            std::cout << "  weights: unet='" << unet_w << "' vae='" << vae_w
+                      << "' embeds='" << embeds << "'\n";
+        }
+        else
+        {
+            // フォールバック: 重みが無い / CUDA 無効でも HTTP は起動し続ける (回帰防止)。
+            gen = std::make_unique<dollama::StubGenerator>();
+            std::cout << "dollama HTTP server (stub generator — 重み未解決のためフォールバック)\n";
+        }
+
         std::cout << "  defaults: steps=" << steps
                   << " size=" << width << "x" << height << "\n";
-        return dollama::start_server(gen, "127.0.0.1", port);
+        return dollama::start_server(*gen, "127.0.0.1", port);
     }
 #else
     (void)argc;

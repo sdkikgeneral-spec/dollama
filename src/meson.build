@@ -23,15 +23,66 @@ endif
 # src/ をインクルードパスに追加 (core/*.hpp を #include "core/tensor.hpp" で参照可能)
 src_inc = include_directories('.')
 
+# .cu 用 CUDA 引数 (CUDA 有効時のみ参照)。
+# - -DHAVE_CUDA: pipeline_generator.hpp 等のガードを開く。
+# - /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (MSVC ホスト)。
+# - /std:c++14: CUDA 13.3 + MSVC で c++17/20 ヘッダ組合せの 0xC0000409 を回避。
+cuda_args = []
+if cuda_enabled
+  cuda_args = ['-DHAVE_CUDA']
+  if cpp.get_id() == 'msvc'
+    cuda_args += ['-Xcompiler', '/utf-8']
+    cuda_args += ['-Xcompiler', '/std:c++14']
+  endif
+endif
+
+# DiffusionPipeline を構成する CUDA カーネル群 (test_diffusion と同一)。
+# main 実行ファイルが PipelineGenerator (= DiffusionPipeline) をリンクするため必要。
+diffusion_cu_sources = [
+  'infer/diffusion.cu',
+  'infer/unet.cu',
+  'kernels/vae_decode.cu',
+  'kernels/conv2d.cu',
+  'kernels/groupnorm.cu',
+  'kernels/layernorm.cu',
+  'kernels/activation.cu',
+  'kernels/geglu.cu',
+  'kernels/attention.cu',
+  'kernels/gemm.cu',
+  'kernels/elementwise.cu',
+  'kernels/bias_add.cu',
+  'kernels/timeembed.cu',
+]
+
+# ----------------------------------------------------------------
+# dollama 実行ファイル (main)
+# ----------------------------------------------------------------
+# DI 設計 (ST-5):
+#   main.cpp は CUDA 非依存の cpp TU。PipelineGenerator の構築は
+#   make_pipeline_generator() ファクトリ越し。実装を CUDA 有無で切り替える:
+#     - CUDA 有効: pipeline_generator_factory.cu + DiffusionPipeline 全 .cu をリンク。
+#     - CUDA 無効: pipeline_generator_factory_stub.cpp (nullptr 返し) をリンク。
+#   これにより CUDA 無効ビルドでも main がリンクでき、重み不在でも HTTP が起動する。
 exe_sources = ['main.cpp']
+exe_cuda_sources = []
 if http_enabled
   exe_sources += 'server/api.cpp'
+  if cuda_enabled
+    # CUDA 有効: 本 txt2img を DI 可能にする。factory.cu と全カーネルをリンク。
+    exe_cuda_sources += 'server/pipeline_generator_factory.cu'
+    exe_cuda_sources += diffusion_cu_sources
+  else
+    # CUDA 無効: ファクトリは nullptr を返す cpp スタブ。main は Stub にフォールバック。
+    exe_sources += 'server/pipeline_generator_factory_stub.cpp'
+  endif
 endif
+
 exe = executable('dollama',
-  sources             : files(exe_sources),
+  sources             : files(exe_sources + exe_cuda_sources),
   include_directories : src_inc,
   dependencies        : deps + http_deps,
   cpp_args            : cpp_args + http_cpp_args,
+  cuda_args           : cuda_args,
 )
 
 # SPSCQueue 単体テスト
@@ -77,7 +128,8 @@ test_wd14_exe = executable('test_wd14',
   dependencies        : deps,
   cpp_args            : cpp_args,
 )
-test('wd14', test_wd14_exe)
+# OV モデルロードが重く既定 30s を超えうる (並列実行時の CPU 競合で顕著)。
+test('wd14', test_wd14_exe, timeout : 120)
 
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
@@ -105,6 +157,31 @@ test_character_exe = executable('test_character',
   cpp_args            : cpp_args,
 )
 test('character', test_character_exe)
+
+# make_pipeline_generator フォールバック判定テスト (純 cpp・CUDA 不要、ST-5)
+# 不在パス → nullptr (= StubGenerator フォールバック経路) を保証する。
+# ファクトリ実装は exe と同じく CUDA 有無で切り替えてリンクする。
+factory_test_cuda_sources = []
+if cuda_enabled
+  factory_test_cuda_sources += 'server/pipeline_generator_factory.cu'
+  factory_test_cuda_sources += diffusion_cu_sources
+  test_pipeline_factory_exe = executable('test_pipeline_factory',
+    sources             : files(['tests/test_pipeline_factory.cpp'] + factory_test_cuda_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_args,
+  )
+else
+  test_pipeline_factory_exe = executable('test_pipeline_factory',
+    sources             : files('tests/test_pipeline_factory.cpp',
+                                'server/pipeline_generator_factory_stub.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+  )
+endif
+test('pipeline_factory', test_pipeline_factory_exe)
 
 # safetensors 重みローダーテスト (CPU・常時実行、Phase 2 マイルストーン 2-3)
 # fixture (golden.safetensors) のパスはソース相対の絶対パスをコンパイル時に埋め込む
@@ -147,20 +224,8 @@ test('scheduler', test_scheduler_exe)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled
   # cpp_args は cpp ソース用なので、.cu には cuda_args で -DHAVE_CUDA を渡す。
-  cuda_test_args = ['-DHAVE_CUDA']
-
-  # MSVC ホストコンパイラ (cl) 固有の対処:
-  # - /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (未指定だと C1070)。
-  if cpp.get_id() == 'msvc'
-    # /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (未指定だと C1070)。
-    cuda_test_args += ['-Xcompiler', '/utf-8']
-    # CUDA 13.3 の cudafe++ は VS18 (MSVC 14.51) の c++17/20 標準ライブラリヘッダを
-    # 複数組み合わせるとスタックオーバーラン (0xC0000409) でクラッシュする。
-    # カーネル側は新しい言語機能を必要としないため、meson が注入する /std:c++20 の
-    # 後ろに /std:c++14 を付与して CUDA TU のホストコンパイルだけ c++14 へ落とす
-    # (後勝ちで c++14 が有効。cpp 側は c++20 のまま)。
-    cuda_test_args += ['-Xcompiler', '/std:c++14']
-  endif
+  # (cuda_args はファイル冒頭で定義済み。テスト群でもそれを使う。)
+  cuda_test_args = cuda_args
 
   test_cuda_smoke_exe = executable('test_cuda_smoke',
     sources             : files('tests/test_cuda_smoke.cu'),
@@ -298,7 +363,9 @@ if cuda_enabled
       '-DVAE_IO_PATH="' + vae_io_path + '"',
     ],
   )
-  test('vae_decode', test_vae_decode_exe, timeout : 300)
+  # 重い GPU テスト (UNet 重み 5.1GB 常駐) は is_parallel:false で単独実行。
+  # 複数の 5GB テストが並列に走ると VRAM (16GB) を食い潰し OOM/タイムアウトするため。
+  test('vae_decode', test_vae_decode_exe, timeout : 300, is_parallel : false)
 
   # UNet2DConditionModel ゴールデン突合テスト + 1step レイテンシ計測 (Phase 2 マイルストーン 2-5)
   # unet.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
@@ -328,7 +395,44 @@ if cuda_enabled
       '-DUNET_IO_PATH="' + unet_io_path2 + '"',
     ],
   )
-  test('unet', test_unet_exe, timeout : 600)
+  test('unet', test_unet_exe, timeout : 600, is_parallel : false)
+
+  # 拡散ループ結線 (DiffusionPipeline) smoke + フルベンチ (Phase 2 マイルストーン 2-6a)
+  # diffusion.cu + unet.cu + vae_decode.cu + 全プリミティブ .cu を一括ビルドしてリンクする。
+  # golden 埋め込みは unet_io.safetensors (UNET_IO_PATH) を使い回す。
+  # 重みパス (UNET_WEIGHTS_PATH / VAE_WEIGHTS_PATH / UNET_IO_PATH) は -D 埋め込み。
+  diff_unet_w  = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_weights.safetensors'
+  diff_vae_w   = meson.project_source_root() / 'src' / 'tests' / 'data' / 'vae_weights.safetensors'
+  diff_unet_io = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_io.safetensors'
+  test_diffusion_exe = executable('test_diffusion',
+    sources             : files(['tests/test_diffusion.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + diff_unet_w + '"',
+      '-DVAE_WEIGHTS_PATH="' + diff_vae_w + '"',
+      '-DUNET_IO_PATH="' + diff_unet_io + '"',
+    ],
+  )
+  test('diffusion', test_diffusion_exe, timeout : 600, is_parallel : false)
+
+  # PipelineGenerator (DiffusionPipeline -> IImageGenerator アダプタ) テスト (Phase 2 / 2-6a ST-3+ST-4)
+  # pipeline_generator.hpp は HAVE_CUDA ガード越しに diffusion.cuh を include するため
+  # .cu (nvcc 経由) でビルドする。リンクするソースは test_diffusion と同一 (diffusion.cu +
+  # unet.cu + vae_decode.cu + 全プリミティブ)。重みパスは -D 埋め込み (cwd 非依存)。
+  test_pipeline_generator_exe = executable('test_pipeline_generator',
+    sources             : files(['tests/test_pipeline_generator.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + diff_unet_w + '"',
+      '-DVAE_WEIGHTS_PATH="' + diff_vae_w + '"',
+      '-DUNET_IO_PATH="' + diff_unet_io + '"',
+    ],
+  )
+  test('pipeline_generator', test_pipeline_generator_exe, timeout : 600, is_parallel : false)
 endif
 
 # HTTP サーバー (OpenAI Images 互換) テスト — 純 C++・CUDA/OpenVINO 非依存・常時実行
