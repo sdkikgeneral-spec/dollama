@@ -27,12 +27,18 @@ src_inc = include_directories('.')
 # - -DHAVE_CUDA: pipeline_generator.hpp 等のガードを開く。
 # - /utf-8: 日本語コメント (UTF-8) を CP932 誤読させない (MSVC ホスト)。
 # - /std:c++14: CUDA 13.3 + MSVC で c++17/20 ヘッダ組合せの 0xC0000409 を回避。
+# - /arch:AVX2: S3-0。.cu のホスト部 (カーネル起動グルー等) にも AVX2 を効かせる。
+#   -Xcompiler でホストコンパイラ (cl) にのみ転送 (device codegen には無影響)。
+#   revert は -Dhost_avx2=false。
 cuda_args = []
 if cuda_enabled
   cuda_args = ['-DHAVE_CUDA']
   if cpp.get_id() == 'msvc'
     cuda_args += ['-Xcompiler', '/utf-8']
     cuda_args += ['-Xcompiler', '/std:c++14']
+    if get_option('host_avx2')
+      cuda_args += ['-Xcompiler', '/arch:AVX2']
+    endif
   endif
 endif
 

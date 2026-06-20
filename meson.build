@@ -4,6 +4,10 @@ project('dollama', ['cpp'],
     'cpp_std=c++20',
     'buildtype=release',
     'warning_level=2',
+    # S3-0: release ビルドでのみ assert を無効化 (-DNDEBUG)。
+    # device/host 両方の assert と CCCL_ENABLE_ASSERTIONS を外す。
+    # debug ビルドでは assert を残す。revert は 'b_ndebug=false' を指定。
+    'b_ndebug=if-release',
   ]
 )
 
@@ -15,6 +19,33 @@ is_linux = host_os == 'linux'
 # MSVC: ソース/実行文字セットを UTF-8 に統一 (文字化け防止)
 if cpp.get_id() == 'msvc'
   add_project_arguments('/utf-8', language: 'cpp')
+endif
+
+# ----------------------------------------------------------------
+# S3-0 ホスト最適化フラグ (タスク 2-6 最適化・ビルド構成のみ)
+# すべて meson option で on/off 可。崩れたら 1 フラグで revert できる。
+# ----------------------------------------------------------------
+# host_avx2: MSVC ホストに /arch:AVX2 (safetensors ロード / WD14 グルー / HTTP /
+#            JSON / base64 など host 側 SIMD。数〜十数%)。.cu のホスト部にも下で渡す。
+if cpp.get_id() == 'msvc' and get_option('host_avx2')
+  add_project_arguments('/arch:AVX2', language: 'cpp')
+  message('host_avx2: /arch:AVX2 (cpp) 有効')
+endif
+
+# host_lto: ホスト LTO。nvcc obj と MSVC LTCG は非互換のため、CUDA をリンクする
+#           exe (dollama 本体 / test_unet / test_diffusion 等) の link が壊れうる。
+#           そのため既定 false。true のときだけ cpp 側に LTO フラグを足す。
+#           CUDA exe で link が通るかは setup→compile で実検証する。
+if get_option('host_lto')
+  if cpp.get_id() == 'msvc'
+    # MSVC: コンパイル時 /GL + リンク時 /LTCG。
+    add_project_arguments('/GL', language: 'cpp')
+    add_project_link_arguments('/LTCG', language: 'cpp')
+  else
+    add_project_arguments('-flto', language: 'cpp')
+    add_project_link_arguments('-flto', language: 'cpp')
+  endif
+  message('host_lto: ホスト LTO 有効 (CUDA exe の link 互換性に注意)')
 endif
 
 # ----------------------------------------------------------------
@@ -88,6 +119,11 @@ if get_option('with_cuda')
     cuda_enabled = add_languages('cuda', required: true, native: false)
     if cuda_enabled
       add_project_arguments('-arch=sm_120', language: 'cuda')
+      # S3-0 fast_math: device 側 fast-math (数%)。revert は -Dfast_math=false。
+      if get_option('fast_math')
+        add_project_arguments('--use_fast_math', language: 'cuda')
+        message('fast_math: --use_fast_math (cuda) 有効')
+      endif
       message('CUDA: ' + cuda_root + ' (sm_120 有効)')
     else
       warning('nvcc が見つかりません。.cu のコンパイルは無効です。')
