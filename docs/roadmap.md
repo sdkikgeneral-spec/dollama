@@ -99,7 +99,7 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 
 | # | 実装物 | ファイル / 作業 | 状態 |
 |---|---|---|---|
-| 1 | 訓練データ収集 | user text → danbooru tags ペア | ⏳ 未着手 |
+| 1 | 訓練データ収集 | user text → danbooru tags ペア (`data/bitnet/`, `scripts/dollma_{build_vocab,make_pairs}.py`, `docs/dataset-spec.md`) | ✅ 完了 (5,000 ペア / vocab 4,994 タグ / 実 danbooru タグ共起 + 合成テンプレ / OOV0・負語0・順序0・リーク0 / tokenizer 往復 UNK0) |
 | 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ⏳ 未着手 |
 | 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
 | 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 |

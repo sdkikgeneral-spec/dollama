@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "seed": 20260620,
+ "created_utc": "2026-06-20T15:39:41.660032+00:00",
+ "counts": {
+  "total": 5000,
+  "train": 4500,
+  "val": 500
+ },
+ "lang_ratio": {
+  "ja": 0.502,
+  "en": 0.498
+ },
+ "source_ratio": {
+  "synthetic": 1.0
+ },
+ "rating_ratio": {
+  "g": 1.0
+ },
+ "split_ratio": {
+  "train": 0.9,
+  "val": 0.1
+ },
+ "unique_text_ratio": 1.0,
+ "template_dist": {
+  "0": 1685,
+  "1": 1663,
+  "2": 1652
+ },
+ "vocab": {
+  "total_tags": 4994,
+  "cutoff_min_count": 2518,
+  "raw_tags": 10861
+ },
+ "tag_freq_top": [
+  [
+   "1girl",
+   2784
+  ],
+  [
+   "solo",
+   2517
+  ],
+  [
+   "long hair",
+   1991
+  ],
+  [
+   "looking at viewer",
+   1677
+  ],
+  [
+   "shirt",
+   1613
+  ],
+  [
+   "short hair",
+   1401
+  ],
+  [
+   "long sleeves",
+   1184
+  ],
+  [
+   "dress",
+   1020
+  ],
+  [
+   "black hair",
+   973
+  ],
+  [
+   "jacket",
+   955
+  ],
+  [
+   "1boy",
+   954
+  ],
+  [
+   "multiple girls",
+   917
+  ],
+  [
+   "bow",
+   884
+  ],
+  [
+   "blue eyes",
+   876
+  ],
+  [
+   "hair between eyes",
+   869
+  ],
+  [
+   "hair ornament",
+   855
+  ],
+  [
+   "brown hair",
+   823
+  ],
+  [
+   "white shirt",
+   814
+  ],
+  [
+   "male focus",
+   799
+  ],
+  [
+   "blonde hair",
+   758
+  ]
+ ],
+ "tags_per_pair": {
+  "min": 4,
+  "max": 16,
+  "mean": 15.44
+ },
+ "sources": {
+  "wd14_csv": "SmilingWolf/wd-swinv2-tagger-v3/selected_tags.csv",
+  "danbooru_api": "danbooru.donmai.us/posts.json (tags-only, no pixels)"
+ }
+}

@@ -22,6 +22,11 @@ subprojects/*
 logs/
 outputs/
 
+# BitNet データセットのキャッシュ (danbooru API 生取得・WD14 タグ csv)。
+# scripts/dollma_make_pairs.py / dollma_build_vocab.py で再取得する。
+# 成果物 (vocab.json / pairs.*.jsonl / stats.json) は追跡する。
+data/bitnet/cache/
+
 # Python
 __pycache__/
 *.pyc
