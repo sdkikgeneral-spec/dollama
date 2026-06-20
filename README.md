@@ -9,10 +9,13 @@ generator, but the best *assignment* of work across heterogeneous hardware. Buil
 without ML frameworks.
 
 > ⚠️ **Work in progress — research project, not a finished product.**
-> This repository is under active development. The full C++ pipeline does not generate images yet
-> (see the status table below): Phase 1 (skeleton) and the Phase 2 CUDA primitives are done, but VAE
-> decode, the UNet, and the HTTP server are not implemented yet. APIs, file layout, and measurements
-> will change. It is published for transparency of the research process, not for turnkey use.
+> The full from-scratch C++ diffusion pipeline (custom UNet + Euler scheduler + VAE decode) now
+> **generates real 1024×1024 images** (task 2-6a). Two caveats remain: (1) speed is bound by the naive
+> hand-written kernels — **84 s for 20 steps** (22× slower than the PyTorch/diffusers probe10 baseline;
+> Tensor-Core / flash kernels are the next focus), and (2) inputs are golden embeddings — **wiring up
+> arbitrary text → image (SDXL dual encoder with CLIP-G + CFG) is not done yet** (task 2-6b).
+> APIs, file layout, and measurements will change. Published for transparency of the research process,
+> not for turnkey use.
 
 > **This research targets a specific machine: an Intel Core Ultra 9 285 (Intel AI Boost NPU + Intel Xe iGPU)
 > combined with an NVIDIA RTX 5080.** The NPU / iGPU usage (via OpenVINO) depends on Intel-platform
@@ -47,9 +50,12 @@ other's wait time.
 | Phase | Scope | Status |
 |---|---|---|
 | Phase 1 | C++ pipeline skeleton (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/threads) | ✅ Done (9.13 frames/s) |
-| Phase 2 | Hand-written CUDA kernels (GEMM/activation/GroupNorm/Conv2d/Attention) | ✅ Primitives done → next: VAE decode (first real image) |
-| Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ⏳ Not started |
+| Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — **84 s / 20 steps**) |
+| Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
 | Phase 4 | Custom BitNet b1.58 LLM (ternary weights, multiply-free) | ⏳ Not started |
+
+> **Next up:** ① speed optimization (direct conv → im2col/Tensor-Core GEMM, naive attention → flash) to bring
+> 84 s down toward probe10's 3.80 s. ② arbitrary text → image (task 2-6b: SDXL dual encoder with CLIP-G + CFG + negative prompt).
 
 > Full roadmap in [`docs/roadmap.md`](docs/roadmap.md); the rationale behind the HW roles is in
 > "What we learned" below.
@@ -80,10 +86,13 @@ Key takeaways from 10 probes plus the Phase 2 hand-written kernels. **Conclusion
    of 16 GB — leaving headroom up to ~1536px long edge. The generator lives on the GPU while the NPU/CPU
    fill its idle time with CLIP encoding and tagging in parallel.
 
-5. **Hand-written CUDA kernels (no ML framework) already reach usable throughput.**
+5. **A full diffusion pipeline of hand-written CUDA kernels (no ML framework) runs and produces real images.**
    Phase 2 implements GEMM / activation / GroupNorm / Conv2d / Attention from scratch, each validated
-   against a CPU reference with golden tests. Even the correctness-first *direct* implementations hit
-   GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS.
+   against a CPU reference with golden tests (GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS).
+   On top of those, a custom VAE decode (final SSIM 0.999992) and custom SDXL UNet (noise_pred SSIM 0.999998)
+   are wired to the Euler scheduler to **generate a real 1024² image in 20 steps (84 s)**. Correctness is
+   there — speed (bound by direct conv + naive attention, 22× slower than probe10) is the next focus, with
+   Tensor-Core / flash kernels as the main lever.
 
 → **"Use all the hardware" is not wishful thinking — measurements show it holds.** The key is not direct
 interconnects but *temporal* cooperation: assign each device the task it's best at, and fill the GPU's
@@ -194,10 +203,11 @@ The iGPU's VAE encode (79 ms) runs in parallel with the CPU's LLM generation (~2
 
 ```
 src/
-├── core/        — Tensor (STL-based), allocator (CPU / pinned / VRAM)
-├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention (custom CUDA) + BitNet ternary GEMM (planned)
-├── infer/       — CLIP (NPU, OpenVINO), WD14 (CPU), UNet (planned)
-└── server/      — Winsock2 + OpenAI-compatible API (planned)
+├── core/        — Tensor (STL-based), allocator (CPU / pinned / VRAM), CharacterBible + prompt compose + color mode
+├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention, VAE decode (custom CUDA) + BitNet ternary GEMM (planned)
+├── infer/       — CLIP (NPU, OpenVINO), WD14 (CPU), SDXL UNet, Euler scheduler, full diffusion loop
+├── io/          — safetensors loader, PNG character-metadata round-trip
+└── server/      — cpp-httplib + OpenAI-compatible API, PipelineGenerator (DI with stub fallback)
 ```
 
 **Used:** STL / CUDA API / Winsock2 — **Not used:** PyTorch / OpenVINO (probes only) / diffusers / llama.cpp.
@@ -209,9 +219,10 @@ character-consistency design, and full roadmap, see **[README_jp.md](README_jp.m
 
 ## Build (C++)
 
-> Status: the C++ parts that build today are the core, the CLIP (NPU) / WD14 (CPU) inference glue, the
-> threaded pipeline skeleton, and the Phase 2 CUDA kernels with their tests. There is no end-to-end image
-> generation yet.
+> Status: builds today include the core, CLIP (NPU) / WD14 (CPU) inference glue, the threaded pipeline
+> skeleton, the full Phase 2 CUDA stack (kernels + VAE decode + SDXL UNet + Euler scheduler + diffusion
+> loop), and the OpenAI-compatible HTTP server, all with tests. **End-to-end image generation from golden
+> embeddings works** (84 s / 20 steps); generation from arbitrary text is task 2-6b.
 
 **Prerequisites**
 
@@ -244,7 +255,7 @@ SDXL stages you must obtain and convert the models yourself:
 - **CLIP-L text encoder** and **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU), converted via the scripts in
   `scripts/` (see the probe scripts) using `optimum-intel` / OpenVINO.
 - **Qwen2-1.5B (INT4)** for the interim LLM prompt stage.
-- **SDXL** for the diffusion stage (probe phase uses diffusers; the custom kernels are in progress).
+- **SDXL** for the diffusion stage (the custom CUDA kernels now generate images; the text front-end is task 2-6b).
 
 The project **code** is Apache-2.0 (below), but each model's **weights are governed by their own upstream
 licenses** (SDXL, CLIP-L, WD14, Qwen2, etc.). You are responsible for complying with those terms.

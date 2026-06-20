@@ -320,7 +320,7 @@ endif
 | `SPSCQueue` | `test_queue.cpp` | ✅ 完了 | FIFO、満杯、タイムアウト、マルチスレッド |
 | `Tensor` | `test_tensor.cpp` | ✅ 完了 | 形状・要素数・デバイスガード・nbytes・ベンチ |
 | `UniqueBuffer` (allocator) | `test_allocator.cpp` | ✅ 完了 | RAII 解放・ムーブ後の状態・ベンチ |
-| `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・ベンチ |
+| `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・カラーモード注入・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ✅ 完了 | 出力 shape・L2 norm・全0入力・ベンチ (NPU 7.82ms) |
 | WD14 CPU 推論 | `test_wd14.cpp` | ✅ 完了 | 出力 shape・スコア値域 [0,1]・決定性・サイズガード・ベンチ |
 | アフィニティ | `test_affinity.cpp` | ✅ 完了 | 有効マスク true・mask=0 false・no-crash |
@@ -334,10 +334,20 @@ endif
 | 2-2-1 | dense FP16 GEMM | `test_gemm.cu` | ✅ 完了 | identity/square/rect/transB/alpha_beta・GFLOPS |
 | 2-2-2 | SiLU / GeLU | `test_activation.cu` | ✅ 完了 | known/random/tanh別参照/in-place・GB/s |
 | 2-2-3 | GroupNorm | `test_groupnorm.cu` | ✅ 完了 | known/random/affine/inplace/エッジ・GB/s |
-| 2-2-4 | Conv2d | `test_conv2d.cu` | ⏳ 未着手 | im2col/直接畳み込みを CPU 参照と比較 |
-| 2-2-5 | Attention (self/cross) | `test_attention.cu` | ⏳ 未着手 | known input → expected output |
+| 2-2-4 | Conv2d | `test_conv2d.cu` | ✅ 完了 | direct 畳み込みを CPU 参照と tol 比較・GFLOPS |
+| 2-2-5 | Attention (self/cross) | `test_attention.cu` | ✅ 完了 | known input → expected output・GFLOPS |
+| 2-2 補助 | LayerNorm/GEGLU/time embed/bias add/elementwise | `test_layernorm/geglu/timeembed/bias_add/elementwise.cu` | ✅ 完了 | CPU 参照と tol 比較・GB/s |
 | 2-3 | safetensors ローダー | `test_safetensors.cpp` | ✅ 完了 | golden の dtype/shape/値・破損/不在で例外・load µs/op |
-| 2-4 | VAE decode | `test_vae_decode.cu` | ✅ 完了 | latent → image を golden と SSIM(11×11一様窓)突合。実測 SSIM 0.999992 / MAE 5.45e-4 / Inf-NaN=0 / decode 中央値 7.96s。中間段は VAE_DEBUG=1 で全段ダンプ確認可。timeout 300 |
+| 2-4 | VAE decode | `test_vae_decode.cu` | ✅ 完了 | latent → image を golden と SSIM(11×11一様窓)突合。実測 SSIM 0.999992 / MAE 5.45e-4 / Inf-NaN=0 / decode 中央値 7.96s。中間段は VAE_DEBUG=1 で全段ダンプ確認可。timeout 300・is_parallel:false |
+| 2-5 | SDXL UNet + Euler scheduler | `test_unet.cu` / `test_scheduler.cpp` | ✅ 完了 | UNet 24段ゴールデン突合 (noise_pred SSIM 0.999998)・scheduler は diffusers golden と sigmas/timesteps/step 突合。timeout 600・is_parallel:false |
+| 2-6a | フル拡散パイプライン + 生成器 | `test_diffusion.cu` / `test_pipeline_generator.cu` / `test_pipeline_factory.cpp` | ✅ 完了 | 2step smoke (NaN/Inf なし・[0,255]・非定数) 緑判定 + 20step は DOLLAMA_BENCH=1 で計測のみ (84s)。PipelineGenerator は実 PNG (シグネチャ/1024²)・非1024 reject。factory は不在パス→nullptr フォールバック。GPU 系 timeout 600・is_parallel:false |
+
+### Phase 3 / IO
+
+| コンポーネント | テストファイル | 状態 | 主な検証内容 |
+|---|---|---|---|
+| HTTP サーバー (OpenAI 互換) | `test_http.cpp` | ✅ 完了 | 自己リクエストで生成→PNG base64 往復・health/models・往復 2.11ms |
+| PNG メタ往復 (character-bible §7) | `test_png_meta.cpp` | ✅ 完了 | 構造体⇔§7 JSON⇔tEXt の往復・日本語 name・enum 全網羅 (Sex×Matting×ColorMode)・破損/欠落の前方互換・ベンチ |
 
 ---
 

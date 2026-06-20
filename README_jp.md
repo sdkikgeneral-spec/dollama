@@ -8,8 +8,9 @@
 ML フレームワークに頼らず C++ でフルスクラッチ実装を目指す。
 
 > ⚠️ **実装中 — 完成品ではなく研究中のプロジェクトです。**
-> 本リポジトリは現在も開発途上であり、**フル C++ パイプラインはまだ画像を生成しません** (下記の進捗表を参照)。
-> Phase 1 (骨格) と Phase 2 の CUDA primitives は完了済みですが、VAE decode・UNet・HTTP サーバは未実装です。
+> フル C++ 拡散パイプライン (自作 UNet + Euler スケジューラ + VAE decode) が **実画像 1024×1024 を生成するようになりました** (タスク 2-6a)。
+> ただし現状は (1) 速度が自作 naive カーネル律速で **20steps 84s** (PyTorch/diffusers の probe10 比 22倍遅く、Tensor Core/flash 化が次の本丸)、
+> (2) 入力は golden 埋め込みで、**任意テキスト → 画像の本結線 (CLIP-G を加えた SDXL dual encoder + CFG) は未了** (タスク 2-6b)。
 > API・ファイル構成・計測値は今後変わります。**研究プロセスの公開**を目的としており、すぐ使えるツールではありません。
 
 > **本研究は Intel 環境 (Core Ultra 9 285 — Intel AI Boost NPU + Intel Xe iGPU) と
@@ -40,9 +41,12 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | フェーズ | 内容 | 状態 |
 |---|---|---|
 | Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
-| Phase 2 | 自作 CUDA カーネル (GEMM/活性化/GroupNorm/Conv2d/Attention) | ✅ primitives 完了 → 次は VAE decode (初の実画像) |
-| Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ⏳ 未着手 |
+| Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 84s**) |
+| Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
 | Phase 4 | 自作 BitNet b1.58 LLM (ternary 重み・乗算不要) | ⏳ 未着手 |
+
+> **次の本丸**: ① 速度最適化 (direct conv → im2col/Tensor Core GEMM、naive attention → flash) で 84s → probe10 の 3.80s 同等へ。
+> ② 任意テキスト → 画像の本結線 (タスク 2-6b: CLIP-G を加えた SDXL dual encoder + CFG + negative prompt)。
 
 > 詳細なロードマップは [`docs/roadmap.md`](docs/roadmap.md)、HW 役割の根拠は下記「何が分かったか」を参照。
 
@@ -71,10 +75,12 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
    16GB 中なので長辺 ~1536px まで余裕。生成本体は GPU に集約し、NPU/CPU は生成中の遊休時間に
    CLIP・タグ抽出を並列で回す構成が成立する。
 
-5. **ML フレームワーク無しの自作 CUDA カーネルでも実用域に届く。**
+5. **ML フレームワーク無しの自作 CUDA カーネルでフル拡散パイプラインが動き、実画像が出た。**
    Phase 2 で GEMM / 活性化 / GroupNorm / Conv2d / Attention をフルスクラッチ実装し、
-   CPU 参照とのゴールデンテストで正当性を確認済み。direct 実装 (正しさ優先) の時点で
-   GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS に到達 (詳細は下表)。
+   CPU 参照とのゴールデンテストで正当性を確認 (GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS)。
+   その上で自作 VAE decode (final SSIM 0.999992) と自作 SDXL UNet (noise_pred SSIM 0.999998) を実装し、
+   Euler スケジューラと結線して **20steps で実画像 1024² を生成 (84s)**。正しさは出た — 速度 (direct conv +
+   naive attention 律速で probe10 比 22倍) が次の課題で、Tensor Core / flash 化が本丸。
 
 → 結論: **「全 HW を使い切る」は理想論ではなく、実測に基づけば成立する。** 鍵は直結ではなく
 "各 HW を得意タスクに割り当て、GPU 生成中の遊休を NPU/CPU で埋める" 時間方向の協調にある。
@@ -253,25 +259,33 @@ src/
 │   ├── tensor.hpp        ✅ 独自 Tensor (STL ベース)
 │   ├── allocator.hpp     ✅ CPU / pinned / VRAM メモリ管理
 │   ├── queue.hpp         ✅ SPSC ロックフリーキュー
-│   ├── character.hpp     ✅ キャラ台帳 (CharacterBible)
+│   ├── character.hpp     ✅ キャラ台帳 (CharacterBible) + プロンプト合成 + カラーモード
 │   └── affinity.hpp      ✅ CPU コアアフィニティ
 ├── infer/
-│   ├── clip.hpp          ✅ CLIP text encoder (NPU / OpenVINO)
-│   └── wd14.hpp          ✅ WD14 SwinV2 tagger (CPU / OpenVINO)
+│   ├── clip.hpp          ✅ CLIP-L text encoder (NPU / OpenVINO)
+│   ├── wd14.hpp          ✅ WD14 SwinV2 tagger (CPU / OpenVINO)
+│   ├── scheduler.hpp     ✅ EulerDiscreteScheduler (SDXL)
+│   ├── unet.cu/.cuh      ✅ SDXL UNet 全段 (noise_pred SSIM 0.999998)
+│   └── diffusion.cu/.cuh ✅ フル拡散ループ結線 (UNet×Nstep + Euler + VAE)
 ├── kernels/              ✅ 自作 CUDA カーネル (Phase 2)
 │   ├── gemm.cu           ✅ dense FP16 GEMM
 │   ├── activation.cu     ✅ SiLU / GeLU
 │   ├── groupnorm.cu      ✅ GroupNorm
 │   ├── conv2d.cu         ✅ direct Conv2d
 │   ├── attention.cu      ✅ scaled dot-product attention (self / cross)
+│   ├── vae_decode.cu     ✅ SDXL VAE decode (final SSIM 0.999992)
 │   └── ternary_gemm.cu   ⏳ BitNet ternary GEMM (Phase 4)
+├── io/
+│   ├── safetensors.hpp   ✅ safetensors 重みローダー (golden 突合)
+│   └── png_meta.hpp      ✅ PNG キャラ設定メタ往復 (tEXt 焼き込み)
+├── server/              ✅ cpp-httplib + OpenAI 互換 API (Phase 3)
+│   ├── api.cpp           ✅ /v1/images/generations 他
+│   ├── png.hpp           ✅ PNG エンコード
+│   ├── stub_generator.hpp        ✅ ダミー生成器 (フォールバック)
+│   └── pipeline_generator.hpp    ✅ 本生成器 (DiffusionPipeline を IImageGenerator 化)
 ├── pipeline.hpp          ✅ マルチスレッド骨格
-├── main.cpp              ✅ エントリポイント
-├── infer/unet.hpp        ⏳ SDXL UNet + スケジューラ (Phase 2)
-├── kernels/vae_decode.cu ⏳ VAE decode (Phase 2、初の実画像)
-├── io/                   ⏳ safetensors ローダー / BPE トークナイザ
-├── models/bitnet.hpp     ⏳ BitNet b1.58 推論 (Phase 4)
-└── server/               ⏳ cpp-httplib + OpenAI API 互換 (Phase 3)
+├── main.cpp              ✅ エントリポイント (生成器をフォールバック付き DI)
+└── models/bitnet.hpp     ⏳ BitNet b1.58 推論 (Phase 4)
 ```
 
 **使うもの**: STL / CUDA API / Winsock2 (HTTP/JSON はヘッダオンリーの定番ライブラリ)  
@@ -281,8 +295,9 @@ src/
 
 ## ビルド (C++)
 
-> 現状ビルドできるのは core・CLIP(NPU)/WD14(CPU) 推論グルー・スレッド骨格・Phase 2 CUDA カーネル
-> とそのテスト。**end-to-end の画像生成はまだ動きません。**
+> 現状ビルドできるもの: core・CLIP(NPU)/WD14(CPU) 推論グルー・スレッド骨格・Phase 2 CUDA カーネル群・
+> 自作 VAE decode / SDXL UNet / Euler スケジューラ・フル拡散パイプライン・OpenAI 互換 HTTP サーバ、と各テスト。
+> **golden 埋め込みからの end-to-end 画像生成は動きます** (20steps 84s)。任意テキストからの生成は 2-6b で結線予定。
 
 **前提**
 
@@ -315,7 +330,7 @@ meson test -C build            # 全単体テスト + カーネルのゴール�
 - **CLIP-L text encoder** / **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU) に `scripts/` の probe スクリプト
   (`optimum-intel` / OpenVINO 経由) で変換。
 - 暫定 LLM の **Qwen2-1.5B (INT4)**。
-- 拡散段の **SDXL** (probe 段階は diffusers、自作カーネルは実装中)。
+- 拡散段の **SDXL** (自作 CUDA カーネルで画像生成可能。任意テキストからの本結線は 2-6b)。
 
 本リポジトリの **コードは Apache-2.0** だが、各モデルの **重みは配布元それぞれのライセンスに従う**
 (SDXL / CLIP-L / WD14 / Qwen2 等)。利用者がその条件の遵守に責任を負う。
@@ -351,6 +366,12 @@ dollama/
   logs/                        # probe 実行ログ
   docs/
     roadmap.md                 # 実装ロードマップ (Phase 1-4)
+    character-bible-spec.md    # キャラ設定データ構造 (同一性/シーン/出力層・カラーモード)
+    http-api-spec.md           # OpenAI 互換 HTTP API 仕様
+    pipeline-spec.md           # パイプライン構成
+    tensor-spec.md             # Tensor 仕様
+    cpu-topology.md            # CPU コアトポロジ / アフィニティ
+    testing.md                 # テスト規約
     archives/
       investigation-log.md     # probe1-10 の詳細調査ログ
   CLAUDE.md                    # Claude Code 向けコンテキスト
