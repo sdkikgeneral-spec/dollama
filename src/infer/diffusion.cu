@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -18,6 +19,7 @@
 #include <cuda_runtime.h>
 
 #include "infer/unet.cuh"
+#include "infer/profile.cuh"
 #include "infer/scheduler.hpp"
 #include "kernels/vae_decode.cuh"
 #include "kernels/utils.cuh"
@@ -161,6 +163,10 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
                           kTxtN * sizeof(__half), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_time_ids_, h_tids.data(),
                           kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
+
+    // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
+    //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
+    unet_weights_handle_ = unet_weights_create(unet_weights_);
 }
 
 DiffusionPipeline::~DiffusionPipeline()
@@ -169,6 +175,7 @@ DiffusionPipeline::~DiffusionPipeline()
     if (d_encoder_hidden_states_ != nullptr) { cudaFree(d_encoder_hidden_states_); }
     if (d_text_embeds_ != nullptr)           { cudaFree(d_text_embeds_); }
     if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
+    if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
 }
 
 // ----------------------------------------------------------------
@@ -202,6 +209,16 @@ void DiffusionPipeline::generate(int                   steps,
     {
         throw std::runtime_error(
             "DiffusionPipeline::generate: guidance_scale != 1.0 is not supported yet (TODO)");
+    }
+
+    // --- S0 プロファイル: 総時間計測開始 + カウンタリセット (DOLLAMA_PROFILE 時のみ) ---
+    const bool prof = profile_enabled();
+    if (prof) { profile_counters().reset(); }
+    std::chrono::high_resolution_clock::time_point prof_t_total;
+    if (prof)
+    {
+        cudaDeviceSynchronize();
+        prof_t_total = std::chrono::high_resolution_clock::now();
     }
 
     // --- scheduler 構築 ---
@@ -238,6 +255,8 @@ void DiffusionPipeline::generate(int                   steps,
     // --- 拡散ループ ---
     for (int i = 0; i < steps; ++i)
     {
+        std::chrono::high_resolution_clock::time_point prof_h0;
+        if (prof) { prof_h0 = std::chrono::high_resolution_clock::now(); }
         // scale_model_input: scaled = latent / sqrt(sigma^2 + 1) (host, in-place)
         scaled_host = latent_host;
         sched.scale_model_input(scaled_host.data(), kLatentN, i);
@@ -250,8 +269,13 @@ void DiffusionPipeline::generate(int                   steps,
         CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
                               kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
 
+        if (prof)
+        {
+            const auto h1 = std::chrono::high_resolution_clock::now();
+            profile_counters().host_roundtrip_sec += std::chrono::duration<double>(h1 - prof_h0).count();
+        }
         // UNet 1 step (埋め込みは全 step 使い回し)。
-        launch_unet(unet_weights_,
+        launch_unet(unet_weights_handle_,
                     d_latent,
                     timesteps[i],
                     d_encoder_hidden_states_,
@@ -259,6 +283,8 @@ void DiffusionPipeline::generate(int                   steps,
                     d_time_ids_,
                     d_noise_pred);
 
+        std::chrono::high_resolution_clock::time_point prof_h2;
+        if (prof) { prof_h2 = std::chrono::high_resolution_clock::now(); }
         // D2H: noise_pred を FP32 へ
         CUDA_CHECK(cudaMemcpy(h_np_f16.data(), d_noise_pred,
                               kLatentN * sizeof(__half), cudaMemcpyDeviceToHost));
@@ -270,6 +296,11 @@ void DiffusionPipeline::generate(int                   steps,
         // Euler step: latent_next = step(noise, i, latent_host) (host)
         sched.step(noise_host.data(), i, latent_host.data(), latent_next.data(), kLatentN);
         latent_host.swap(latent_next);
+        if (prof)
+        {
+            const auto h3 = std::chrono::high_resolution_clock::now();
+            profile_counters().host_roundtrip_sec += std::chrono::duration<double>(h3 - prof_h2).count();
+        }
     }
 
     // --- VAE decode 用に latent を scaling_factor で割り FP16 で H2D ---
@@ -280,7 +311,11 @@ void DiffusionPipeline::generate(int                   steps,
     CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
                           kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
 
-    launch_vae_decode(vae_weights_, d_latent, d_image);
+    {
+        ScopedSyncTimer vt(prof ? &profile_counters().vae_sec : nullptr, prof);
+        launch_vae_decode(vae_weights_, d_latent, d_image);
+        vt.stop();
+    }
 
     // --- D2H: image (FP16, [-1,1] 値域) ---
     std::vector<__half> h_image(kImgN);
@@ -309,6 +344,54 @@ void DiffusionPipeline::generate(int                   steps,
                 rgb_out[dst] = static_cast<uint8_t>(q < 0 ? 0 : (q > 255 ? 255 : q));
             }
         }
+    }
+
+    // --- S0 プロファイル: 総時間確定 + 内訳テーブル出力 (DOLLAMA_PROFILE 時のみ) ---
+    if (prof)
+    {
+        cudaDeviceSynchronize();
+        const auto prof_end = std::chrono::high_resolution_clock::now();
+        ProfileCounters& pc = profile_counters();
+        pc.total_sec = std::chrono::duration<double>(prof_end - prof_t_total).count();
+
+        const double tot   = pc.total_sec > 0.0 ? pc.total_sec : 1e-9;
+        const double upl   = pc.weight_upload_sec;
+        const double unet  = pc.unet_total_sec;
+        const double pure  = unet - upl;  // UNet 純カーネル = step 全体 - 重み転送
+        const double gbyte = (double)pc.weight_upload_bytes / (1024.0 * 1024.0 * 1024.0);
+        auto pct = [&](double s) { return 100.0 * s / tot; };
+
+        std::printf("\n");
+        std::printf("==================== DOLLAMA_PROFILE (steps=%d) ====================\n",
+                    pc.unet_steps);
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "weight upload+malloc (UNet, total)", upl, pct(upl));
+        std::printf("      uploads=%llu  bytes=%.3f GB  (avg %.2f ms/upload)\n",
+                    (unsigned long long)pc.weight_upload_count, gbyte,
+                    pc.weight_upload_count ? 1000.0 * upl / (double)pc.weight_upload_count : 0.0);
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "UNet step total (all steps)", unet, pct(unet));
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "  -> UNet pure kernels (total-upl)", pure, pct(pure));
+        std::printf("      [group, wall incl. upload]\n");
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "embed",    pc.unet_embed_sec,   pct(pc.unet_embed_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "down",     pc.unet_down_sec,    pct(pc.unet_down_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "mid",      pc.unet_mid_sec,     pct(pc.unet_mid_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "up",       pc.unet_up_sec,      pct(pc.unet_up_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "conv_out", pc.unet_convout_sec, pct(pc.unet_convout_sec));
+        std::printf("      [kernel category, orthogonal to groups]\n");
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "resnet (conv/groupnorm)",
+                    pc.cat_resnet_sec, pct(pc.cat_resnet_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%\n", "transformer (attn/gemm)",
+                    pc.cat_transformer_sec, pct(pc.cat_transformer_sec));
+        std::printf("      %-30s %9.3f s  %6.2f%%  (subset of transformer)\n",
+                    "  -> attention only", pc.cat_attention_sec, pct(pc.cat_attention_sec));
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "VAE decode", pc.vae_sec, pct(pc.vae_sec));
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "host roundtrip (scale/H2D/D2H/sched)",
+                    pc.host_roundtrip_sec, pct(pc.host_roundtrip_sec));
+        std::printf("  %-34s %9.3f s  %6.2f%%\n", "TOTAL", pc.total_sec, 100.0);
+        std::printf("  (per-step UNet: %.3f s  | per-step pure: %.3f s)\n",
+                    pc.unet_steps ? unet / pc.unet_steps : 0.0,
+                    pc.unet_steps ? pure / pc.unet_steps : 0.0);
+        std::printf("====================================================================\n\n");
+        std::fflush(stdout);
     }
 
     CUDA_CHECK(cudaFree(d_latent));

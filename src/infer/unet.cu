@@ -32,6 +32,7 @@
 #include <cuda_runtime.h>
 
 #include "infer/unet.cuh"
+#include "infer/profile.cuh"
 #include "kernels/conv2d.cuh"
 #include "kernels/groupnorm.cuh"
 #include "kernels/layernorm.cuh"
@@ -46,6 +47,43 @@
 
 namespace dollama
 {
+
+// ----------------------------------------------------------------
+// プロファイラ実体 (profile.cuh の宣言に対応)。
+// ----------------------------------------------------------------
+ProfileCounters& profile_counters()
+{
+    static ProfileCounters g;
+    return g;
+}
+
+ScopedSyncTimer::ScopedSyncTimer(double* accum, bool enabled)
+    : accum_(accum), enabled_(enabled), stopped_(false)
+{
+    if (enabled_)
+    {
+        // 開始前に既存カーネルを排出してから計時開始 (壁時計の純度を上げる)。
+        cudaDeviceSynchronize();
+        t0_ = std::chrono::high_resolution_clock::now();
+    }
+}
+
+void ScopedSyncTimer::stop()
+{
+    if (enabled_ && !stopped_)
+    {
+        cudaDeviceSynchronize();
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const double sec = std::chrono::duration<double>(t1 - t0_).count();
+        if (accum_ != nullptr) { *accum_ += sec; }
+        stopped_ = true;
+    }
+}
+
+ScopedSyncTimer::~ScopedSyncTimer()
+{
+    stop();
+}
 
 // ----------------------------------------------------------------
 // 段ごとのゴールデン突合フック (テストが登録する)。
@@ -262,11 +300,39 @@ public:
         size_t nbytes = 0;
         const uint8_t* src = st_.tensor_bytes(name, nbytes);
         __half* d_ptr = nullptr;
+        // S0 プロファイル: cudaMalloc + H2D (重み転送) を CPU 時計で累積計時。
+        const bool prof = profile_enabled();
+        std::chrono::high_resolution_clock::time_point wt0;
+        if (prof) { wt0 = std::chrono::high_resolution_clock::now(); }
         CUDA_CHECK(cudaMalloc(&d_ptr, nbytes));
         CUDA_CHECK(cudaMemcpy(d_ptr, src, nbytes, cudaMemcpyHostToDevice));
+        if (prof)
+        {
+            const auto wt1 = std::chrono::high_resolution_clock::now();
+            ProfileCounters& pc = profile_counters();
+            pc.weight_upload_sec   += std::chrono::duration<double>(wt1 - wt0).count();
+            pc.weight_upload_bytes += nbytes;
+            pc.weight_upload_count += 1;
+        }
+
         ptrs_.push_back(d_ptr);
         cache_[name] = d_ptr;
         return d_ptr;
+    }
+
+    // S1: 常駐ハンドル生成時に全 FP16 重みを先読みして upload しておく。
+    // こうすると拡散ループ (generate) 内の計測区間では重み転送が一切発生せず、
+    // PROFILE の weight upload 内訳が 0 になる (= 純カーネル時間が見える)。
+    // F16 以外のテンソル (もしあれば) は UNet では使わないのでスキップする。
+    void upload_all()
+    {
+        for (const std::string& name : st_.names())
+        {
+            if (st_.dtype(name) == StDtype::F16)
+            {
+                (void)get(name);
+            }
+        }
     }
 
 private:
@@ -330,6 +396,9 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
                          const __half* d_x, int Cin, int Cout, int H, int W,
                          const __half* d_temb_silu, __half* d_out, Scratch& sc)
 {
+    // S0 カテゴリ計時: resnet_block 全体を resnet バケットへ (conv/groupnorm 主体)。
+    ScopedSyncTimer cat_t(profile_enabled() ? &profile_counters().cat_resnet_sec : nullptr,
+                          profile_enabled());
     const float eps    = 1e-5f;
     const int   groups = 32;
     const int   HW     = H * W;
@@ -415,7 +484,12 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
     launch_split_heads(d_q, d_qh, tokens, heads, Dh);
     launch_split_heads(d_k, d_kh, tokens, heads, Dh);
     launch_split_heads(d_v, d_vh, tokens, heads, Dh);
-    launch_attention(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+    {
+        // S0 計時: self-attention のみ attention バケットへ。
+        ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
+                           profile_enabled());
+        launch_attention(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+    }
     launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
     // to_out.0 (Linear + bias)
     linear(w, prefix + "attn1.to_out.0.weight", prefix + "attn1.to_out.0.bias",
@@ -436,7 +510,12 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
     launch_split_heads(d_q,  d_qh,  tokens,     heads, Dh);
     launch_split_heads(d_kc, d_kch, ctx_tokens, heads, Dh);
     launch_split_heads(d_vc, d_vch, ctx_tokens, heads, Dh);
-    launch_attention(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+    {
+        // S0 計時: cross-attention のみ attention バケットへ。
+        ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
+                           profile_enabled());
+        launch_attention(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+    }
     launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
     linear(w, prefix + "attn2.to_out.0.weight", prefix + "attn2.to_out.0.bias",
            d_o, d_norm, tokens, C, C, true);
@@ -475,6 +554,9 @@ static void transformer2d(DeviceWeights& w, const std::string& prefix,
                           const __half* d_ctx, int ctx_tokens, int ctx_dim,
                           Scratch& sc)
 {
+    // S0 カテゴリ計時: transformer2d 全体を transformer バケットへ (attention/gemm 主体)。
+    ScopedSyncTimer cat_t(profile_enabled() ? &profile_counters().cat_transformer_sec : nullptr,
+                          profile_enabled());
     const float gn_eps = 1e-6f;
     const int   groups = 32;
     const int   S      = H * W;       // tokens
@@ -545,17 +627,39 @@ struct SkipEntry
 };
 
 // ----------------------------------------------------------------
-// UNet 本体
+// UNet 本体 (S1: 重みは DeviceWeights& で受け取り、常駐/都度構築の両方から共有)
 // ----------------------------------------------------------------
-void launch_unet(const SafeTensors& weights,
-                 const __half*      d_latent,
-                 float              timestep,
-                 const __half*      d_encoder_hidden_states,
-                 const __half*      d_text_embeds,
-                 const __half*      d_time_ids,
-                 __half*            d_noise_pred_out)
+static void launch_unet_impl(DeviceWeights&     w,
+                             const __half*      d_latent,
+                             float              timestep,
+                             const __half*      d_encoder_hidden_states,
+                             const __half*      d_text_embeds,
+                             const __half*      d_time_ids,
+                             __half*            d_noise_pred_out)
 {
-    DeviceWeights w(weights);
+
+    // ============ S0 プロファイル計時 (DOLLAMA_PROFILE 有効時のみ) ============
+    // 段グループ別の壁時計 (重み転送込み)。prof_lap で「前のマーク以降」を加算しマーク更新。
+    const bool prof = profile_enabled();
+    ProfileCounters& pc = profile_counters();
+    std::chrono::high_resolution_clock::time_point prof_t_total;
+    std::chrono::high_resolution_clock::time_point prof_mark;
+    if (prof)
+    {
+        cudaDeviceSynchronize();
+        prof_t_total = std::chrono::high_resolution_clock::now();
+        prof_mark    = prof_t_total;
+        pc.unet_steps += 1;
+    }
+    auto prof_lap = [&](double* bucket)
+    {
+        if (!prof) { return; }
+        cudaDeviceSynchronize();
+        const auto now = std::chrono::high_resolution_clock::now();
+        *bucket += std::chrono::duration<double>(now - prof_mark).count();
+        prof_mark = now;
+    };
+
 
     const int   ctx_tokens = 77;
     const int   ctx_dim    = 2048;
@@ -610,6 +714,7 @@ void launch_unet(const SafeTensors& weights,
     __half* d_temb_silu = nullptr;
     CUDA_CHECK(cudaMalloc(&d_temb_silu, 1280 * sizeof(__half)));
     launch_silu(d_temb, d_temb_silu, 1280);
+    prof_lap(&pc.unet_embed_sec);
 
     // skip スタック (down 経路 push, up 経路 pop)。
     std::vector<SkipEntry> skips;
@@ -700,6 +805,7 @@ void launch_unet(const SafeTensors& weights,
         dbg_stat("down_block_2_out", d_cur, (size_t)C2 * H * Wd);
     }
 
+    prof_lap(&pc.unet_down_sec);
     // ============ mid_block: Resnet -> T2D[L=10] -> Resnet (1280, 32x32) ============
     {
         const int H = 32, Wd = 32, Ln = 10;
@@ -714,6 +820,7 @@ void launch_unet(const SafeTensors& weights,
         dbg_stat("mid_block_out", d_cur, (size_t)C2 * H * Wd);
     }
 
+    prof_lap(&pc.unet_mid_sec);
     // pop ヘルパ
     auto pop_skip = [&]() -> SkipEntry
     {
@@ -815,6 +922,7 @@ void launch_unet(const SafeTensors& weights,
         dbg_stat("up_block_2_out", d_cur, (size_t)C0 * HW);
     }
 
+    prof_lap(&pc.unet_up_sec);
     // ============ conv_norm_out (GN32 eps1e-5) -> SiLU -> conv_out (3x3 pad1, 320->4) ============
     {
         const int H = 128, Wd = 128;
@@ -831,6 +939,12 @@ void launch_unet(const SafeTensors& weights,
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
+    prof_lap(&pc.unet_convout_sec);
+    if (prof)
+    {
+        const auto prof_end = std::chrono::high_resolution_clock::now();
+        pc.unet_total_sec += std::chrono::duration<double>(prof_end - prof_t_total).count();
+    }
     // 残った skip があれば解放 (正常時は空)。
     for (SkipEntry& e : skips)
     {
@@ -839,6 +953,59 @@ void launch_unet(const SafeTensors& weights,
     CUDA_CHECK(cudaFree(d_cur));
     CUDA_CHECK(cudaFree(d_temb));
     CUDA_CHECK(cudaFree(d_temb_silu));
+}
+
+// ----------------------------------------------------------------
+// 後方互換 public API: 呼び出しごとに DeviceWeights を構築 (= 全重み都度転送)。
+// test_unet が使用。常駐版が無かった頃と完全同一の挙動。
+// ----------------------------------------------------------------
+void launch_unet(const SafeTensors& weights,
+                 const __half*      d_latent,
+                 float              timestep,
+                 const __half*      d_encoder_hidden_states,
+                 const __half*      d_text_embeds,
+                 const __half*      d_time_ids,
+                 __half*            d_noise_pred_out)
+{
+    DeviceWeights w(weights);
+    launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
+                     d_text_embeds, d_time_ids, d_noise_pred_out);
+}
+
+// ----------------------------------------------------------------
+// 常駐重みハンドル API (S1)。
+//   DeviceWeights を 1 個ヒープに確保して不透明ポインタとして返す。get() の
+//   name->デバイスポインタ キャッシュにより、初回 launch で全重みを upload した後は
+//   以降の step で再 malloc / 再 H2D が一切発生しない。
+// ----------------------------------------------------------------
+UnetWeightsHandle unet_weights_create(const SafeTensors& weights)
+{
+    DeviceWeights* w = new DeviceWeights(weights);
+    // 全重みをデバイスへ常駐させる (一度きり)。以降の get() は即返し。
+    w->upload_all();
+    return static_cast<UnetWeightsHandle>(w);
+}
+
+void unet_weights_destroy(UnetWeightsHandle handle)
+{
+    if (handle == nullptr)
+    {
+        return;
+    }
+    delete static_cast<DeviceWeights*>(handle);
+}
+
+void launch_unet(UnetWeightsHandle  handle,
+                 const __half*      d_latent,
+                 float              timestep,
+                 const __half*      d_encoder_hidden_states,
+                 const __half*      d_text_embeds,
+                 const __half*      d_time_ids,
+                 __half*            d_noise_pred_out)
+{
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
+                     d_text_embeds, d_time_ids, d_noise_pred_out);
 }
 
 } // namespace dollama

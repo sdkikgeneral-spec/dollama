@@ -52,7 +52,40 @@ namespace dollama
 using UnetStageHook = void (*)(const char* name, const __half* d_buf, size_t n);
 void unet_set_stage_hook(UnetStageHook hook);
 
+// 後方互換: 呼び出しごとに全重みをデバイスへ転送する版 (test_unet が使用)。
 void launch_unet(const SafeTensors& weights,
+                 const __half*      d_latent,
+                 float              timestep,
+                 const __half*      d_encoder_hidden_states,
+                 const __half*      d_text_embeds,
+                 const __half*      d_time_ids,
+                 __half*            d_noise_pred_out);
+
+// ----------------------------------------------------------------
+// デバイス常駐重みハンドル (S1 最適化)
+// ----------------------------------------------------------------
+// 上記 launch_unet(const SafeTensors&, ...) は呼び出しごとに全重み (5.1GB) を
+// cudaMalloc + H2D 転送するため、拡散ループ (20step) では同じ重みを 20 回
+// 再転送してしまう。これを避けるため、重みを一度だけデバイスへ常駐させて全 step で
+// 使い回すハンドル API を提供する。
+//
+//   handle = unet_weights_create(weights);   // 全重みをデバイスへ常駐 (初回 launch で upload)
+//   for step: launch_unet(handle, ...);      // 重み転送ゼロ・キャッシュ済みを使い回す
+//   unet_weights_destroy(handle);            // 全デバイス重みを解放
+//
+// ハンドルは不透明ポインタ (内部実装 = DeviceWeights) で公開し、ヘッダ露出を最小化する。
+// 注意: ハンドルは create に渡した SafeTensors の生存期間内でのみ有効
+//       (内部で SafeTensors& を保持し、初回 launch 時に各重みを遅延 upload するため)。
+using UnetWeightsHandle = void*;
+
+// 重み常駐ハンドルを生成する。weights の生存期間より短く使うこと。
+UnetWeightsHandle unet_weights_create(const SafeTensors& weights);
+
+// ハンドルが保持する全デバイス重みを解放する。nullptr は無視。
+void unet_weights_destroy(UnetWeightsHandle handle);
+
+// 常駐重みハンドルを使う launch_unet。重み転送/再 malloc は発生しない (2step 目以降)。
+void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
