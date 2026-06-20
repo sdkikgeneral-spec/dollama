@@ -94,6 +94,35 @@ inline MattingMode str_to_matting(const std::string& s)
     return MattingMode::Segment;
 }
 
+// ColorMode enum → 固定文字列 (spec §7: color/greyscale/lineart)。
+inline const char* color_mode_to_str(ColorMode c)
+{
+    switch (c)
+    {
+    case ColorMode::Color:
+        return "color";
+    case ColorMode::Greyscale:
+        return "greyscale";
+    case ColorMode::Lineart:
+        return "lineart";
+    }
+    return "color";  // 到達しない (安全側デフォルト)
+}
+
+// 文字列 → ColorMode。逆引き不明は安全側デフォルト ColorMode::Color。
+inline ColorMode str_to_color_mode(const std::string& s)
+{
+    if (s == "greyscale")
+    {
+        return ColorMode::Greyscale;
+    }
+    if (s == "lineart")
+    {
+        return ColorMode::Lineart;
+    }
+    return ColorMode::Color;
+}
+
 // JSON から「キーがあり、型が期待どおりなら」取り出す小物群。
 // 欠落・型不一致時は dst を変更せず (= 構造体デフォルトのまま) 残す (欠落許容)。
 inline void get_str(const nlohmann::json& j, const char* key, std::string& dst)
@@ -185,7 +214,7 @@ inline bool check_png_signature(const std::vector<uint8_t>& png)
 //   identity{name,age,sex,canonical_tags,forbidden_tags,digits_per_hand,
 //            embedding_slot,seed}
 //   scene{pose_tags,expression_tags,composition,scene_seed}
-//   output{matting,isolation_tag,emit_alpha}
+//   output{matting,color_mode,isolation_tag,emit_alpha}
 //   identity_features 等スキーマ外フィールドは焼かない。
 // ----------------------------------------------------------------
 inline nlohmann::json bible_to_json(const CharacterIdentity& id,
@@ -215,6 +244,7 @@ inline nlohmann::json bible_to_json(const CharacterIdentity& id,
 
     nlohmann::json jo;
     jo["matting"]       = detail::matting_to_str(out.matting);
+    jo["color_mode"]    = detail::color_mode_to_str(out.color_mode);
     jo["isolation_tag"] = out.isolation_tag;
     jo["emit_alpha"]    = out.emit_alpha;
     j["output"]         = jo;
@@ -297,6 +327,13 @@ inline bool json_to_bible(const nlohmann::json& j,
             if (!matting_str.empty())
             {
                 out.matting = detail::str_to_matting(matting_str);
+            }
+            // color_mode は欠落時に構造体デフォルト (Color) のまま残す (前方互換)。
+            std::string color_str;
+            detail::get_str(jo, "color_mode", color_str);
+            if (!color_str.empty())
+            {
+                out.color_mode = detail::str_to_color_mode(color_str);
             }
             detail::get_str(jo, "isolation_tag", out.isolation_tag);
             detail::get_bool(jo, "emit_alpha", out.emit_alpha);

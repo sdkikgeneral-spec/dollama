@@ -321,6 +321,113 @@ static bool test_digits_default()
 }
 
 // ----------------------------------------------------------------
+// color_mode_tags ヘルパ単体: 各モードの注入タグ内容を直接検証する
+// ----------------------------------------------------------------
+static bool test_color_mode_tags()
+{
+    if (!color_mode_tags(ColorMode::Color).empty())
+    {
+        std::cerr << "[test_color_mode_tags] Color が空でない\n";
+        return false;
+    }
+    if (color_mode_tags(ColorMode::Greyscale) !=
+        std::vector<std::string>{"monochrome", "greyscale"})
+    {
+        std::cerr << "[test_color_mode_tags] Greyscale タグが想定外\n";
+        return false;
+    }
+    if (color_mode_tags(ColorMode::Lineart) !=
+        std::vector<std::string>{"lineart", "monochrome", "sketch"})
+    {
+        std::cerr << "[test_color_mode_tags] Lineart タグが想定外\n";
+        return false;
+    }
+    std::cout << "[test_color_mode_tags] PASSED\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
+// compose_prompt: 色モードタグが canonical 直後・scene タグの前に注入される。
+// Color は無注入。OutputSpec デフォルトは Color (既存挙動維持)。
+// ----------------------------------------------------------------
+static bool test_compose_color_mode()
+{
+    CharacterIdentity id;
+    id.canonical_tags = {"silver hair", "red eyes"};
+
+    SceneSpec scene;
+    scene.pose_tags       = {"sitting"};
+    scene.expression_tags = {"smile"};
+    scene.composition     = "upper body";
+
+    // Color (デフォルト): 何も注入されない
+    {
+        OutputSpec out;  // color_mode = Color, isolation_tag = "simple background"
+        PromptParts p = compose_prompt(id, scene, out);
+        std::vector<std::string> expected = {
+            "silver hair", "red eyes",
+            "sitting", "smile", "upper body", "simple background",
+        };
+        if (p.positive != expected)
+        {
+            std::cerr << "[test_compose_color_mode] Color で注入が発生した\n";
+            return false;
+        }
+    }
+
+    // Greyscale: canonical 直後に monochrome, greyscale
+    {
+        OutputSpec out;
+        out.color_mode = ColorMode::Greyscale;
+        PromptParts p = compose_prompt(id, scene, out);
+        std::vector<std::string> expected = {
+            "silver hair", "red eyes",          // canonical (先頭固定)
+            "monochrome", "greyscale",          // 色モード (canonical 直後)
+            "sitting", "smile", "upper body", "simple background",
+        };
+        if (p.positive != expected)
+        {
+            std::cerr << "[test_compose_color_mode] Greyscale 注入位置/内容が想定外\n";
+            for (const auto& t : p.positive)
+            {
+                std::cerr << "  got: " << t << "\n";
+            }
+            return false;
+        }
+    }
+
+    // Lineart: canonical 直後に lineart, monochrome, sketch
+    {
+        OutputSpec out;
+        out.color_mode = ColorMode::Lineart;
+        PromptParts p = compose_prompt(id, scene, out);
+        std::vector<std::string> expected = {
+            "silver hair", "red eyes",                   // canonical (先頭固定)
+            "lineart", "monochrome", "sketch",           // 色モード (canonical 直後)
+            "sitting", "smile", "upper body", "simple background",
+        };
+        if (p.positive != expected)
+        {
+            std::cerr << "[test_compose_color_mode] Lineart 注入位置/内容が想定外\n";
+            for (const auto& t : p.positive)
+            {
+                std::cerr << "  got: " << t << "\n";
+            }
+            return false;
+        }
+        // 同一性 #1 維持: 先頭は依然 canonical 先頭であること
+        if (p.positive.front() != "silver hair")
+        {
+            std::cerr << "[test_compose_color_mode] 先頭が canonical でない\n";
+            return false;
+        }
+    }
+
+    std::cout << "[test_compose_color_mode] PASSED\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
 // ベンチ: compose_prompt のスループット (ns/op)
 // PASS/FAIL 判定はせず数値のみ出力する。
 // ----------------------------------------------------------------
@@ -406,6 +513,8 @@ int main()
     ok = dollama::test_compose_empty_skip() && ok;
     ok = dollama::test_quality_negatives()  && ok;
     ok = dollama::test_digits_default()     && ok;
+    ok = dollama::test_color_mode_tags()     && ok;
+    ok = dollama::test_compose_color_mode()  && ok;
 
     // ベンチ (PASS/FAIL 判定には含めない。数値出力のみ)
     dollama::bench_compose_prompt();

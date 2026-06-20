@@ -39,8 +39,8 @@ static bool scene_eq(const SceneSpec& a, const SceneSpec& b)
 
 static bool output_eq(const OutputSpec& a, const OutputSpec& b)
 {
-    return a.matting == b.matting && a.isolation_tag == b.isolation_tag &&
-           a.emit_alpha == b.emit_alpha;
+    return a.matting == b.matting && a.color_mode == b.color_mode &&
+           a.isolation_tag == b.isolation_tag && a.emit_alpha == b.emit_alpha;
 }
 
 // テスト用に最小の正規 PNG (2x2 RGB) を作る。
@@ -353,35 +353,45 @@ static bool test_enum_coverage()
 {
     Sex sexes[3] = {Sex::Female, Sex::Male, Sex::Other};
     MattingMode mattings[3] = {MattingMode::None, MattingMode::Segment, MattingMode::Native};
+    ColorMode colors[3] = {ColorMode::Color, ColorMode::Greyscale, ColorMode::Lineart};
 
     for (Sex s : sexes)
     {
         for (MattingMode m : mattings)
         {
-            CharacterIdentity id;
-            id.name = "E";
-            id.sex  = s;
-            OutputSpec out;
-            out.matting = m;
-            std::vector<uint8_t> with =
-                write_bible_png(make_dummy_png(), id, SceneSpec{}, out);
-            CharacterIdentity id2;
-            SceneSpec s2;
-            OutputSpec o2;
-            if (!read_bible_png(with, id2, s2, o2))
+            for (ColorMode c : colors)
             {
-                std::cerr << "[test_enum_coverage] 読み戻し失敗\n";
-                return false;
-            }
-            if (id2.sex != s)
-            {
-                std::cerr << "[test_enum_coverage] Sex 不一致\n";
-                return false;
-            }
-            if (o2.matting != m)
-            {
-                std::cerr << "[test_enum_coverage] MattingMode 不一致\n";
-                return false;
+                CharacterIdentity id;
+                id.name = "E";
+                id.sex  = s;
+                OutputSpec out;
+                out.matting    = m;
+                out.color_mode = c;
+                std::vector<uint8_t> with =
+                    write_bible_png(make_dummy_png(), id, SceneSpec{}, out);
+                CharacterIdentity id2;
+                SceneSpec s2;
+                OutputSpec o2;
+                if (!read_bible_png(with, id2, s2, o2))
+                {
+                    std::cerr << "[test_enum_coverage] 読み戻し失敗\n";
+                    return false;
+                }
+                if (id2.sex != s)
+                {
+                    std::cerr << "[test_enum_coverage] Sex 不一致\n";
+                    return false;
+                }
+                if (o2.matting != m)
+                {
+                    std::cerr << "[test_enum_coverage] MattingMode 不一致\n";
+                    return false;
+                }
+                if (o2.color_mode != c)
+                {
+                    std::cerr << "[test_enum_coverage] ColorMode 不一致\n";
+                    return false;
+                }
             }
         }
     }
@@ -392,6 +402,7 @@ static bool test_enum_coverage()
         j["dollama_bible_version"] = 1;
         j["identity"]["sex"]       = "alien";
         j["output"]["matting"]     = "magic";
+        j["output"]["color_mode"]  = "rainbow";
         CharacterIdentity id2;
         SceneSpec s2;
         OutputSpec o2;
@@ -400,9 +411,31 @@ static bool test_enum_coverage()
             std::cerr << "[test_enum_coverage] フォールバック json 受理失敗\n";
             return false;
         }
-        if (id2.sex != Sex::Female || o2.matting != MattingMode::Segment)
+        if (id2.sex != Sex::Female || o2.matting != MattingMode::Segment ||
+            o2.color_mode != ColorMode::Color)
         {
             std::cerr << "[test_enum_coverage] 不明文字列のフォールバック不正\n";
+            return false;
+        }
+    }
+
+    // color_mode 欠落 JSON → 既定 Color のまま (前方互換)。
+    {
+        nlohmann::json j;
+        j["dollama_bible_version"] = 1;
+        j["output"]["matting"]     = "segment";  // color_mode は意図的に欠落
+        CharacterIdentity id2;
+        SceneSpec s2;
+        OutputSpec o2;
+        o2.color_mode = ColorMode::Lineart;  // 欠落時に上書きされないことを確認するため汚す
+        if (!json_to_bible(j, id2, s2, o2))
+        {
+            std::cerr << "[test_enum_coverage] 欠落 color_mode json 受理失敗\n";
+            return false;
+        }
+        if (o2.color_mode != ColorMode::Lineart)
+        {
+            std::cerr << "[test_enum_coverage] 欠落 color_mode が既定で上書きされた\n";
             return false;
         }
     }

@@ -138,9 +138,23 @@ enum class MattingMode
 //   白髪・白服キャラで白背景がコントラスト不足になる場合に備え可変フィールドとし、
 //   最終的な既定色は probe で決定する。
 // ------------------------------------------------------------
+// 色モード (方式A: プロンプトタグ注入)
+//   AI 絵の均質な塗りの違和感を避けたいとき、白黒/線画で出して CLIP Studio で
+//   人が塗る運用を可能にする。方式A は danbooru タグを positive に注入するだけで、
+//   新モデルや後処理は持たない。
+//   注: 方式B (線画抽出 HW ステージ: Anime2Sketch 等) はバックログ (§9 参照、
+//       matting と並ぶ出力段候補)。
+enum class ColorMode
+{
+    Color,       // 通常 (タグ注入なし)
+    Greyscale,   // monochrome, greyscale
+    Lineart,     // lineart, monochrome, sketch
+};
+
 struct OutputSpec
 {
     MattingMode matting           = MattingMode::Segment;
+    ColorMode   color_mode        = ColorMode::Color;    // 方式A: 色モード (タグ注入)
     std::string isolation_tag     = "simple background"; // 抜きやすい背景 (可変・probe 判断)
     std::string matting_device    = "";                  // "iGPU"/"NPU"/"CPU" — probe で決定
     bool        emit_alpha        = true;                // RGBA PNG で出力
@@ -209,6 +223,7 @@ private:
 
 ```
 positive = canonical_tags          // 不変外見が最優先 (CLIP 前方トークンが効く)
+         + color_mode_tags(output.color_mode)  // 方式A 色モード (canonical 直後・scene 前)
          + scene.pose_tags
          + scene.expression_tags
          + [scene.composition]      // 空文字なら追加しない
@@ -222,6 +237,17 @@ seed     = identity.seed (!=0) ? identity.seed : scene.scene_seed
 
 `canonical_tags` を **先頭** に置くのがブレ止めの肝 (CLIP は前方トークンの寄与が強い)。
 体型・外見年齢も canonical_tags に含まれるため、別途の age 展開は不要。
+
+**色モードタグの注入位置 (方式A)**: `output.color_mode` に応じた画風タグを
+`canonical_tags` の**直後・scene タグの前**に挿入する。同一性 (#1 canonical) を
+最優先に保ちつつ、画風タグは前方トークンに置いて画像全体へ効かせる狙い。
+`Color` は何も足さない (既定・既存挙動と同一)。タグは `color_mode_tags()` が返す:
+
+| color_mode | 注入タグ |
+|---|---|
+| `Color` | (なし) |
+| `Greyscale` | `monochrome`, `greyscale` |
+| `Lineart` | `lineart`, `monochrome`, `sketch` |
 
 品質ネガティブは**本数非依存の崩れ**だけを叩く (指の本数は §10 の解剖固定で扱う)。
 `extra fingers`/`fewer digits` のような「本数を仮定する語」は入れない。
@@ -268,6 +294,7 @@ inline std::vector<std::string> default_quality_negatives()
   },
   "output": {
     "matting": "Segment",
+    "color_mode": "color",
     "isolation_tag": "simple background",
     "emit_alpha": true
   }
@@ -291,6 +318,7 @@ inline std::vector<std::string> default_quality_negatives()
 - `identity_features` の次元・抽出元: WD14 (1536dim) か CLIP pooler (768dim) か
 - `embedding_slot` の NPU 埋め込みテーブル構造 (案B の常駐方式)
 - 道A (LayerDiffuse 透過生成) の自作カーネル化可否
+- 方式B (線画抽出 HW ステージ: Anime2Sketch 等) はバックログ。matting と並ぶ出力段候補 (現状はタグ注入の方式A のみ実装)
 - 手検出モデル (§10 L2/L3) の選定と HW (NPU/CPU)、指数カウント手法
 - 将来: 背景・合成のプラグイン化。透過PNG境界を交換物として、背景生成は差し替え可能な
   外部バックエンド (Grok/Gemini/SD 等) に委譲し自動合成する任意パス。コアの芯 (ローカルHWで

@@ -22,6 +22,34 @@ enum class MattingMode
     Native,      // 道A: LayerDiffuse で RGBA 直接生成 (将来研究)
 };
 
+// 色モード (方式A: プロンプトタグ注入)
+// AI 絵の均質な塗りの違和感を避けたいとき、白黒/線画で出して
+// CLIP Studio で人が塗る運用を可能にする。新モデルや後処理は無し。
+// 注: 方式B (線画抽出 HW ステージ: Anime2Sketch 等) はバックログ
+//   (matting と並ぶ出力段候補)。
+enum class ColorMode
+{
+    Color,       // 通常 (タグ注入なし)
+    Greyscale,   // monochrome, greyscale
+    Lineart,     // lineart, monochrome, sketch
+};
+
+// color_mode に応じて positive へ注入する danbooru タグを返す。
+// Color は空 (何も足さない)。テストから直接参照できるよう独立ヘルパにする。
+inline std::vector<std::string> color_mode_tags(ColorMode mode)
+{
+    switch (mode)
+    {
+    case ColorMode::Color:
+        return {};
+    case ColorMode::Greyscale:
+        return {"monochrome", "greyscale"};
+    case ColorMode::Lineart:
+        return {"lineart", "monochrome", "sketch"};
+    }
+    return {};  // 到達しない (安全側: 無注入)
+}
+
 // ------------------------------------------------------------
 // CharacterIdentity: キャラクター同一性層 (authored)
 // 一度決めたらコマ間で「不変」に保つべき設定。
@@ -86,6 +114,7 @@ struct SceneSpec
 struct OutputSpec
 {
     MattingMode matting           = MattingMode::Segment;
+    ColorMode   color_mode        = ColorMode::Color;    // 方式A: 色モード (タグ注入)
     std::string isolation_tag     = "simple background"; // 抜きやすい背景 (可変・probe 判断)
     std::string matting_device    = "";                  // "iGPU"/"NPU"/"CPU" — probe で決定
     bool        emit_alpha        = true;                // RGBA PNG で出力
@@ -151,6 +180,8 @@ struct PromptParts
 // canonical_tags を先頭に置くのがブレ止めの肝 (CLIP は前方トークンが効く)。
 // age は外見へ自動変換しない (compile_age_tags は存在しない, spec §5)。
 // composition / isolation_tag は空文字なら positive に追加しない。
+// 色モードタグ (方式A) は canonical_tags の直後・scene タグの前に注入する
+//   (同一性 #1 を維持しつつ、画風タグを前方に置いて全体に効かせる)。
 // ------------------------------------------------------------
 inline PromptParts compose_prompt(const CharacterIdentity& identity,
                                   const SceneSpec& scene,
@@ -158,11 +189,17 @@ inline PromptParts compose_prompt(const CharacterIdentity& identity,
 {
     PromptParts parts;
 
-    // positive = canonical_tags + pose_tags + expression_tags
+    // positive = canonical_tags + [color_mode_tags] + pose_tags + expression_tags
     //          + [composition] + [isolation_tag]
     parts.positive.insert(parts.positive.end(),
                           identity.canonical_tags.begin(),
                           identity.canonical_tags.end());
+
+    // 色モードタグ注入: canonical 直後・scene タグの前 (Color は空なので無注入)
+    const auto color_tags = color_mode_tags(output.color_mode);
+    parts.positive.insert(parts.positive.end(),
+                          color_tags.begin(), color_tags.end());
+
     parts.positive.insert(parts.positive.end(),
                           scene.pose_tags.begin(), scene.pose_tags.end());
     parts.positive.insert(parts.positive.end(),
