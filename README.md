@@ -52,7 +52,7 @@ other's wait time.
 | Phase 1 | C++ pipeline skeleton (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/threads) | ✅ Done (9.13 frames/s) |
 | Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — **84 s / 20 steps**) |
 | Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
-| Phase 4 | Custom BitNet b1.58 LLM (ternary weights, multiply-free) | ⏳ Not started |
+| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ Dataset & model def done (#1/#2) |
 
 > **Next up:** ① speed optimization (direct conv → im2col/Tensor-Core GEMM, naive attention → flash) to bring
 > 84 s down toward probe10's 3.80 s. ② arbitrary text → image (task 2-6b: SDXL dual encoder with CLIP-G + CFG + negative prompt).
@@ -120,7 +120,7 @@ generation window with NPU/CPU work.
 | **NPU** | CLIP-L text encoder (fixed 77 tokens) | **7.85 ms** — 2.5× faster than CPU |
 | **NPU** | WD14 SwinV2 tagger (448×448, fixed) | 268 ms (runs in parallel during GPU generation) |
 | **iGPU** | VAE encode — img2img only (image → latent) | **79 ms** — faster than CPU's 117 ms |
-| **CPU** | LLM prompt generation (Qwen2-1.5B for now → custom BitNet b1.58 later) | 64–71 tok/s |
+| **CPU** | LLM prompt generation (Qwen2-1.5B for now → custom tag-generation LM bitnet.hpp later) | 64–71 tok/s |
 | **RTX5080** | SDXL UNet (20 steps) + VAE decode | **3.80 s** / 1024×1024 |
 
 ### Device selection rationale
@@ -139,7 +139,7 @@ generation window with NPU/CPU work.
 ### txt2img
 
 ```
-[CPU] Qwen2-1.5B (interim) / later: custom BitNet b1.58 on NPU
+[CPU] Qwen2-1.5B (interim) / later: custom tag-generation LM (bitnet.hpp 33M, GPU-first via custom CUDA kernels / CPU ok / NPU excluded)
   natural language → danbooru tag list (~2s / future <10ms)
     │
     ▼
@@ -204,7 +204,7 @@ The iGPU's VAE encode (79 ms) runs in parallel with the CPU's LLM generation (~2
 ```
 src/
 ├── core/        — Tensor (STL-based), allocator (CPU / pinned / VRAM), CharacterBible + prompt compose + color mode
-├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention, VAE decode (custom CUDA) + BitNet ternary GEMM (planned)
+├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention, VAE decode (custom CUDA) + ternary GEMM (compression experiment, planned)
 ├── infer/       — CLIP (NPU, OpenVINO), WD14 (CPU), SDXL UNet, Euler scheduler, full diffusion loop
 ├── io/          — safetensors loader, PNG character-metadata round-trip
 └── server/      — cpp-httplib + OpenAI-compatible API, PipelineGenerator (DI with stub fallback)
@@ -212,7 +212,7 @@ src/
 
 **Used:** STL / CUDA API / Winsock2 — **Not used:** PyTorch / OpenVINO (probes only) / diffusers / llama.cpp.
 
-For the future custom LLM (BitNet b1.58, ternary weights {-1, 0, +1}, multiply-free), the pipeline structure,
+For the future custom tag-generation LM (bitnet.hpp 33M; ternary {-1, 0, +1} is a later compression experiment, not the goal), the pipeline structure,
 character-consistency design, and full roadmap, see **[README_jp.md](README_jp.md)** and `docs/`.
 
 ---

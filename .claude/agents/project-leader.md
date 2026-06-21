@@ -58,7 +58,7 @@ probe1〜11 で全 HW の計測が完了済み。Python プロトタイプは作
 4. **スレッド骨格 + アフィニティ** (main.cpp にパイプライン結合) → `cpp-implementer` に依頼
 5. **ternary GEMM カーネル** (src/kernels/ternary_gemm.cu) → `cuda-kernel-dev` に依頼
 6. **HTTP サーバー** (src/server/http.cpp, Winsock2) → `cpp-implementer` に依頼
-7. **BitNet b1.58 訓練データ収集** → 別途検討
+7. **自作タグ生成 LM (旧 BitNet)** — データ収集 #1 / モデル定義 #2 完了。次: tokenizer / 訓練 (Qwen2・DanTagGen 蒸留) / 同一性条件付け / アニメ品質スコアラ。ternary は圧縮実験
 
 ## タスク分割の原則
 

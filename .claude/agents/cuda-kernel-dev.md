@@ -1,6 +1,6 @@
 ---
 name: cuda-kernel-dev
-description: dollama の CUDA カーネル実装を担当する。BitNet b1.58 ternary GEMM・SDXL UNet・VAE decode の自作 CUDA カーネル開発を行う。src/kernels/*.cu を書くときに使う。
+description: dollama の CUDA カーネル実装を担当する。ternary GEMM (タグ生成 LM の圧縮実験)・SDXL UNet・VAE decode の自作 CUDA カーネル開発を行う。src/kernels/*.cu を書くときに使う。
 tools:
   - Bash
   - Read
@@ -60,7 +60,7 @@ src/kernels/
   utils.cuh            — CUDA エラーチェック・共通ユーティリティ
 ```
 
-## BitNet b1.58 Ternary GEMM の仕様
+## Ternary GEMM の仕様 (タグ生成 LM の圧縮実験・旧 BitNet b1.58)
 
 - 重み: `int8_t` にパック ({-1,0,+1} → {0xFF, 0x00, 0x01} 等)
 - 活性化: FP16 (half)

@@ -43,7 +43,7 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
 | Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 84s**) |
 | Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
-| Phase 4 | 自作 BitNet b1.58 LLM (ternary 重み・乗算不要) | ⏳ 未着手 |
+| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ データ/モデル定義済 (#1/#2) |
 
 > **次の本丸**: ① 速度最適化 (direct conv → im2col/Tensor Core GEMM、naive attention → flash) で 84s → probe10 の 3.80s 同等へ。
 > ② 任意テキスト → 画像の本結線 (タスク 2-6b: CLIP-G を加えた SDXL dual encoder + CFG + negative prompt)。
@@ -107,7 +107,7 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | **NPU** | CLIP-L text encoder (77token 固定) | **7.85ms** ← CPU の 2.5倍速 |
 | **NPU** | WD14 SwinV2 tagger (448×448 固定) | 268ms (GPU 生成中に並列実行) |
 | **iGPU** | VAE encode — img2img 用 (入力画像→latent) | **79ms** ← CPU 117ms より速い |
-| **CPU** | LLM プロンプト生成 (暫定 Qwen2-1.5B → 将来 自作 BitNet b1.58) | 64-71 tok/s |
+| **CPU** | LLM プロンプト生成 (暫定 Qwen2-1.5B → 将来 自作タグ生成 LM bitnet.hpp) | 64-71 tok/s |
 | **RTX5080** | SDXL UNet (20steps) + VAE decode | **3.80s** / 1024×1024 |
 
 ### NPU の得意 / 不得意
@@ -125,7 +125,7 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 ### txt2img
 
 ```
-[CPU] Qwen2-1.5B (暫定) / 将来: 自作 BitNet b1.58 on NPU
+[CPU] Qwen2-1.5B (暫定) / 将来: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)
   自然文 → danbooru タグ列 (~2s / 将来 <10ms)
     │
     ▼
@@ -216,24 +216,27 @@ RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。
 
 ---
 
-## LLM の将来像 — 自作 BitNet b1.58
+## LLM の将来像 — 自作タグ生成 LM
 
-汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) を目的特化の超軽量モデルに置き換える:
+汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) を目的特化の超軽量モデルに置き換える。
+核は `src/models/bitnet.hpp` (decoder-only LLaMA 系 **33M**, モデル定義+ホスト参照は実装済)。
 
-```
-重み W ∈ {-1, 0, +1}  (log₂3 ≈ 1.58 bit)
-演算: y = x_pos - x_neg  ← multiply 不要、XNOR + popcount
-```
-
-| | Qwen2-1.5B (現状) | 自作 BitNet (目標) |
+| | Qwen2-1.5B (現状) | 自作タグ生成 LM (目標) |
 |---|---|---|
-| パラメータ | 1.5B | 30-100M |
-| サイズ | 873MB | ~20MB |
-| デバイス | CPU | NPU (固定形状) |
-| レイテンシ | ~2s | <10ms |
+| パラメータ | 1.5B | 33M (30-100M) |
+| サイズ | 873MB | ~66MB (FP16) / ~20MB (ternary 実験時) |
+| デバイス | CPU | GPU 主 (CUDA カーネル流用) / CPU 可・NPU 不可 |
+| レイテンシ | ~2s | 目標 <10ms |
 | タスク | 汎用 | user text → danbooru タグ特化 |
 
-訓練データ: Danbooru キャプション + Qwen2 蒸留
+訓練データ: Danbooru タグ共起 + Qwen2 / DanTagGen 蒸留 (先行実装 DanTagGen 400M / TIPO を教師・品質基準に)
+
+**ternary (b1.58) は圧縮の研究軸** (目的ではない): まず FP16/INT8 dense で品質を出し、
+重み W ∈ {-1,0,+1} (≈1.58bit, `y = x_pos − x_neg` で乗算不要) は後段の圧縮実験として
+被せる (`src/kernels/ternary_gemm.cu`)。33M 規模では旨味は限定的。
+
+**2D 特化の独自性**: ① キャラ同一性条件付きタグ生成 (character-bible 入力・DanTagGen に無い)
+② アニメ品質スコアラ (NPU・固定形状)。詳細は `docs/roadmap.md` Phase 4。
 
 ---
 
@@ -274,7 +277,7 @@ src/
 │   ├── conv2d.cu         ✅ direct Conv2d
 │   ├── attention.cu      ✅ scaled dot-product attention (self / cross)
 │   ├── vae_decode.cu     ✅ SDXL VAE decode (final SSIM 0.999992)
-│   └── ternary_gemm.cu   ⏳ BitNet ternary GEMM (Phase 4)
+│   └── ternary_gemm.cu   ⏳ ternary GEMM 圧縮実験 (Phase 4)
 ├── io/
 │   ├── safetensors.hpp   ✅ safetensors 重みローダー (golden 突合)
 │   └── png_meta.hpp      ✅ PNG キャラ設定メタ往復 (tEXt 焼き込み)
@@ -285,7 +288,7 @@ src/
 │   └── pipeline_generator.hpp    ✅ 本生成器 (DiffusionPipeline を IImageGenerator 化)
 ├── pipeline.hpp          ✅ マルチスレッド骨格
 ├── main.cpp              ✅ エントリポイント (生成器をフォールバック付き DI)
-└── models/bitnet.hpp     ⏳ BitNet b1.58 推論 (Phase 4)
+└── models/bitnet.hpp     ✅ タグ生成 LM 定義+ホスト参照 (Phase 4-2) / 推論 ⏳
 ```
 
 **使うもの**: STL / CUDA API / Winsock2 (HTTP/JSON はヘッダオンリーの定番ライブラリ)  

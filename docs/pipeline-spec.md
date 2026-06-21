@@ -8,7 +8,7 @@ txt2img / img2img の推論パイプラインを実現する。
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Thread: llm_thread  (CPU — P-core, mask=0x00C03C03)        │
-│  自作 BitNet b1.58: user text → danbooru tags (<10ms)       │
+│  自作タグ生成 LM: user text → danbooru tags (<10ms)         │
 │         ↓  tags (string)                                     │
 │         put → llm_to_clip_queue                             │
 └─────────────────────────────────────────────────────────────┘
@@ -85,14 +85,15 @@ Qwen2-1.5B は Python probe 専用で C++ に持ち込まない (LibTorch 不使
 
 モデル重みのロード: GGUF or safetensors を独自パーサーで読む。
 
-### Phase 3 — 自作 BitNet b1.58 LLM
+### Phase 4 — 自作タグ生成 LM (旧 BitNet b1.58)
 
 | 実装物 | 備考 |
 |---|---|
-| 訓練データ収集 (user text → danbooru tags) | |
-| モデル定義 30-100M params, ~20MB | |
-| NPU 向け推論 (固定形状 / encoder として切り出し) | |
-| CPU 推論 (ternary GEMM カーネル流用) | |
+| 訓練データ収集 (user text → danbooru tags) | ✅ #1 完了 |
+| モデル定義 30-100M params (bitnet.hpp 33M) | ✅ #2 完了 |
+| GPU 推論 (自己回帰・CUDA カーネル流用が第一) / CPU 代替 | NPU は自己回帰不可で除外。NPU 化は非自己回帰版が要る・未確定 |
+| ternary GEMM カーネル | dense が動いた後の圧縮実験 (目的ではない) |
+| 同一性条件付け / アニメ品質スコアラ | 2D 特化の独自スコープ (A/B) |
 
 ---
 

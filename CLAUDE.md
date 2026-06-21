@@ -24,7 +24,7 @@
 
 txt2img:
 ```
-CPU: Qwen2-1.5B (暫定) / 将来: 自作 BitNet b1.58 on NPU
+CPU: Qwen2-1.5B (暫定) / 将来: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)
   自然文 → danbooru タグ列 (~2s / 将来 <10ms)
     │
     ▼
@@ -56,6 +56,28 @@ iGPU の VAE encode は CPU LLM と並列に走るため待ち時間ゼロ。
 - WD14: CPU 101ms < iGPU 104ms < NPU 268ms → **CPU 採用** (Window Attention が NPU に不向き)
 - VAE decode: CPU 126ms << iGPU 995ms → **RTX5080 採用**
 - VAE encode: iGPU 79ms < CPU 117ms → **iGPU 採用** (img2img パスのみ)
+
+**VRAM 収支と多 HW の根拠 (重要)**
+
+RTX5080 = **16GB**。常駐物の概算:
+
+| 常駐物 | VRAM |
+|---|---|
+| SDXL 20steps ピーク (probe10) | **10.49GB** (実質ここが全部食う) |
+| CLIP-L (123M FP16) | ~0.25GB |
+| CLIP-G (694M FP16) | ~1.4GB |
+| 自作タグ生成 LM (33M FP16) | ~0.066GB (誤差) |
+| 合計 | ~12.2GB < 16GB |
+
+- **LM に関して VRAM はボトルネックですらない** (33M=66MB)。GPU-only は 5080 で既に成立し、
+  大容量 VRAM カードは不要。VRAM が効くのは「大型モデルを大量同時常駐」する別世界の話。
+- **多 HW に逃がす理由は VRAM 不足の回避ではない**: ① 速度・並列 (CLIP は NPU 7.85ms で、
+  拡散で詰まる数秒の裏で走り GPU を空ける) ② 拡散中に遊休の NPU/CPU/iGPU を使い切る
+  ③ 研究そのもの (プロジェクトの芯)。
+- **CPU/NPU offload = 金をかけずに容量を増やす手**: CPU 側専門家はシステム RAM (安・大量)、
+  NPU はオンチップメモリを使う → VRAM を買い足さずモデルを足せる。「VRAM が高い」という
+  制約への回答が、この「小型専門モデル + 全 HW 協調」設計そのもの。
+- 関連: CPU+GPU マルチ LM / アンサンブル → roadmap バックログ「MoE × HW 分散配置」。
 
 ## 環境
 
@@ -130,7 +152,7 @@ iGPU の VAE encode は CPU LLM と並列に走るため待ち時間ゼロ。
 
 ```cpp
 // GIL なし真のマルチスレッド、STL + CUDA API のみ
-std::thread llm_thread([&]  { /* CPU: 自作 BitNet b1.58 */   });
+std::thread llm_thread([&]  { /* CPU: 自作タグ生成 LM (bitnet.hpp) */   });
 std::thread clip_thread([&] { /* NPU: 自作 CLIP 推論 */       });
 std::thread sdxl_thread([&] { /* GPU: 自作 UNet CUDA カーネル */ });
 std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
@@ -157,8 +179,12 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 ### LLM の将来像
 
 - 現在: Qwen2-1.5B (Python probe 用) — CPU 64-71 tok/s
-- 目標: **自作 BitNet b1.58** — 重み {-1,0,+1}、multiply 不要、NPU 対応
-  - 30-100M params、~20MB、user text → danbooru タグ生成特化
+- 自作モデル: **小型タグ生成 LM** (`src/models/bitnet.hpp`, decoder-only LLaMA 系 33M, 実装済み・test 緑)
+  - 30-100M params、user text → danbooru タグ生成特化
+  - **置き場は GPU が第一** (速度 + **既存の自作 CUDA カーネル gemm/attention/layernorm/geglu をそのまま流用**)。LM は拡散の上流で逐次実行 → GPU 競合ほぼ無し・33M は VRAM も誤差。**CPU は代替** (複数フレームのパイプライン並列時に拡散の裏で先行生成する用)。**NPU は自己回帰不可で除外** (probe6 で Phi-3 がオンチップメモリ超過・investigation-log。NPU 化は非自己回帰版が要る・未確定)
+  - **ternary (b1.58) は目的ではなく圧縮の研究軸**: まず FP16/INT8 dense で品質を出し、ternary は乗算削減の実験として後段で被せる (`ternary_gemm.cu`)。33M 規模では ternary の旨味は限定的
+  - **先行実装あり**: DanTagGen (400M LLaMA) / TIPO が「自然文+タグ → danbooru タグ」を既に実現 → 蒸留教師・品質基準として活用 (Qwen2 蒸留と同じ役割)
+  - **新規性の方向 (2D 特化・独自)**: ① キャラ**同一性条件付き**タグ生成 (character-bible を条件入力・DanTagGen に無い) ② アニメ**品質スコアラ** (NPU・固定形状, §11)。詳細・経緯は roadmap Phase 4
 
 ## 計測ベースライン
 
@@ -224,8 +250,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - **次 (タスク 2-6 最適化)**: 84s → 3.80s が速度の本丸。**direct conv → im2col/Tensor Core GEMM**・**naive attention (per-row) → flash** が UNet/VAE 両方の律速。FP16 Tensor Core (cuBLAS フォールバック許容) で大幅短縮見込み
 - **2-6b (テキスト→画像の本結線・別タスク)**: 現状 2-6a は golden 埋め込み使い回し・CFG なし。本物の txt2img には ① **CLIP-G の OV 化** (SDXL dual encoder: CLIP-L 768 + CLIP-G 1280 → concat 2048・pooled 1280) ② CFG (negative prompt) でバッチ2相当の 2 回 UNet ③ prompt→embeds 結線 (PipelineGenerator の TODO(2-6b)) が要る。model-converter + npu-benchmarker + cpp-implementer を巻き込む
 - 部位構造化プロンプト ([[project-part-structured-prompt]], character-bible-spec §1 改訂) — 2-6 後に §11 QA ループ・案B embedding と一緒に設計
-- `src/kernels/ternary_gemm.cu` — BitNet ternary GEMM CUDA カーネル (Phase 4)
-- 自作 BitNet b1.58 の訓練データ収集・学習 (Phase 4)
+- **Phase 4 (自作タグ生成 LM)**: bitnet.hpp 33M を土台に ① BPE tokenizer ② 訓練 (Qwen2/DanTagGen 蒸留) ③ CPU/GPU 推論 ④ **同一性条件付き化** (character-bible 入力) ⑤ アニメ**品質スコアラ** (NPU, §11)。ternary GEMM (`src/kernels/ternary_gemm.cu`) は dense が動いた後の圧縮実験に降格。方向性の経緯は roadmap Phase 4
 
 ## 実装作業のルール
 

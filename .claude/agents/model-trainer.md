@@ -1,6 +1,6 @@
 ---
 name: model-trainer
-description: dollama の自作モデルを PyTorch で訓練・蒸留する。BitNet b1.58 (user text → danbooru タグ) の訓練、Qwen2 蒸留による訓練データ収集、CharacterMemory fine-tune、蒸留 QA スコアラの学習を担当する。新規モデルの「訓練」「蒸留」「データ収集」を任せるときに使う (既存の重み変換は model-converter)。
+description: dollama の自作モデルを PyTorch で訓練・蒸留する。自作タグ生成 LM (bitnet.hpp, user text → danbooru タグ) の訓練、Qwen2/DanTagGen 蒸留による訓練データ収集、CharacterMemory fine-tune、アニメ品質スコアラの学習を担当する。新規モデルの「訓練」「蒸留」「データ収集」を任せるときに使う (既存の重み変換は model-converter)。
 tools:
   - Bash
   - Read
@@ -18,7 +18,8 @@ PyTorch 訓練ループ・蒸留・訓練データ収集を回す**のがあな�
 
 | 対象 | 内容 | フェーズ |
 |---|---|---|
-| **自作 BitNet b1.58** | 重み {-1,0,+1}・30-100M params・user text → danbooru タグ生成特化。`scripts/train_bitnet.py` | Phase 4 |
+| **自作タグ生成 LM** (`bitnet.hpp`) | 33M (30-100M) params・user text → danbooru タグ生成特化。まず FP16/INT8 dense で品質を出す。`scripts/train_bitnet.py` | Phase 4 |
+| ternary 圧縮版 (b1.58) | 重み {-1,0,+1}。dense が動いた後の**圧縮実験**。`ternary_gemm.cu` のパック形式と一致させる | Phase 4 (後段) |
 | 訓練データ収集 | user text ↔ danbooru タグのペア。Danbooru + **Qwen2-1.5B 蒸留**で初期データ確保 | Phase 4 |
 | BPE トークナイザー学習 | タグ語彙向けの BPE。成果は `src/io/tokenizer.hpp` が読む形式で出力 | Phase 4 |
 | `CharacterMemory` fine-tune | 生成→学習→FB ループ (seed/pose 蓄積・重心 → fine-tune)。spec §11 | Phase 2/3 |
@@ -30,19 +31,20 @@ PyTorch 訓練ループ・蒸留・訓練データ収集を回す**のがあな�
 - 訓練は RTX5080。NPU/iGPU は推論専用 (訓練には使わない)
 - スクリプトは `scripts/dollma_*.py` 命名・コメントは日本語
 - 重み出力は **safetensors** (C++ 側 `src/io/safetensors.hpp` が読む)。dtype は推論側に合わせる
-  (BitNet 重みは ternary パック、活性化スケールは別テンソルで保存)
+  (ternary 圧縮版は重みを ternary パック、活性化スケールは別テンソルで保存)
 
-## BitNet b1.58 訓練の要点
+## タグ生成 LM 訓練の要点 (ternary 圧縮版)
 
-- 重みは {-1,0,+1} の ternary。前向きは量子化重み、後ろ向きは STE (straight-through estimator)
+- **まず FP16/INT8 dense で品質を出す**のが基線。ternary は乗算削減の圧縮実験で、目的ではない。
+- ternary 圧縮版: 重みは {-1,0,+1}。前向きは量子化重み、後ろ向きは STE (straight-through estimator)
 - multiply 不要 (加減算のみ) → `src/kernels/ternary_gemm.cu` が推論を担う。**訓練時の量子化方式は
   この推論カーネルのパック形式と必ず一致させる** (cuda-kernel-dev と取り決める)
-- 目標: user text → danbooru タグ列、レイテンシ <10ms。品質は Qwen2-1.5B (現行 stub) に遜色なきこと
-- 規模 30-100M params / ~20MB を厳守 (NPU/CPU で軽く回すため)
+- 目標: user text → danbooru タグ列、レイテンシ <10ms。品質は Qwen2-1.5B / DanTagGen 蒸留基準に遜色なきこと
+- 規模 30-100M params を厳守 (CPU で軽く回すため。自己回帰なので NPU 不可)
 
 ## 蒸留の方針
 
-- 教師: Qwen2-1.5B INT4 (CPU, 64-71 tok/s)。生徒: 自作 BitNet b1.58
+- 教師: Qwen2-1.5B INT4 (CPU, 64-71 tok/s) / DanTagGen (400M) / TIPO。生徒: 自作タグ生成 LM (bitnet.hpp)
 - Danbooru の実タグ分布を正解信号に、Qwen2 出力を補助ラベルに使う
 - NPU 採点器は静的形状のみ → 分類/回帰ヘッドで固定 shape に保つ (token-level dynamic routing 不可)
 

@@ -56,13 +56,15 @@ cuBLAS/cuDNN フォールバックを許容 (自作版に後で置換可能な�
 | 2-5 | **SDXL UNet** + スケジューラ (Euler/DDIM) | `src/infer/unet.cu`/`.cuh`, `src/infer/scheduler.hpp` | 1step ごと latent を PyTorch 比較 | ✅ 完了 (noise_pred SSIM 0.999998 / 24段ゴールデン全緑 / 1step ~9.2s。Euler scheduler max_err≤5e-6) |
 | 2-6a | フル C++ 拡散パイプライン結線 (UNet×Nstep+Euler+VAE) + PipelineGenerator/HTTP DI + 対 3.80s 計測 | `src/infer/diffusion.cu`, `src/server/pipeline_generator.hpp` + factory, `src/main.cpp` | test_diffusion (2step smoke 緑 / 20step DOLLAMA_BENCH) + test_pipeline_generator + test_pipeline_factory | ✅ 完了 (20step 実画像 **84.07s** = probe10 3.80s 比 22.1x。golden 埋め込み・CFG なし) |
 | 2-6 最適化 | direct conv→im2col/Tensor Core GEMM・naive attention→flash で 84s→3.80s | `unet.cu` / `vae_decode.cu` / `conv2d.cu` / `attention.cu` | 既存 golden 突合維持 + 速度再計測 | ⏳ 速度の本丸 |
-| 2-6b | 本 txt2img: CLIP-G OV 化 (dual encoder 2048+pooled1280) + CFG (negative) + prompt→embeds 結線 | `infer/clip*` 拡張, `pipeline_generator.hpp` TODO(2-6b) | golden 突合 + 生成確認 | ⏳ (model-converter/npu-benchmarker/cpp-implementer) |
+| 2-6b | 本 txt2img: CLIP-G OV 化 (dual encoder 2048+pooled1280) + CFG (negative) + prompt→embeds 結線 (**prompt 供給元は将来 Phase 4 A の自作タグ生成 LM**。Phase1 縦通しの stub を差し替え) | `infer/clip*` 拡張, `pipeline_generator.hpp` TODO(2-6b) | golden 突合 + 生成確認 | ⏳ (model-converter/npu-benchmarker/cpp-implementer) |
 
 **最初の "絵が出る" 山は 2-4 (VAE decode)**。UNet より小さく自己完結で、probe10 の
 latent を入力に正解画像と比較できるため、最初の実画像マイルストーンに置く。
 
 **Phase 2 完了の定義**: フル C++ パイプラインで 1024×1024 画像が生成されること。
 目標: probe10 ベースライン (3.80s / 20steps) と同等以上。
+**Phase 2 後の接続**: 生成画像は §11 品質スコアラ (Phase 4 B) の入口になる (生成→採点→A へ FB)。
+Phase 2 の作業内容自体は本方針変更で増減しない (ternary は元から Phase 2 非対象)。
 
 ---
 
@@ -93,21 +95,42 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 
 ---
 
-## Phase 4 — 自作 BitNet b1.58 LLM
+## Phase 4 — 自作タグ生成 LM (旧「BitNet b1.58 LLM」)
 
 現在の LLM stub (またはQwen2 Python) を自作モデルに置き換える。
 
-| # | 実装物 | ファイル / 作業 | 状態 |
-|---|---|---|---|
-| 1 | 訓練データ収集 | user text → danbooru tags ペア (`data/bitnet/`, `scripts/dollma_{build_vocab,make_pairs}.py`, `docs/dataset-spec.md`) | ✅ 完了 (5,000 ペア / vocab 4,994 タグ / 実 danbooru タグ共起 + 合成テンプレ / OOV0・負語0・順序0・リーク0 / tokenizer 往復 UNK0) |
-| 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ✅ 完了 (decoder-only LLaMA系: BitLinear(ternary absmean + 活性int8 absmax)/RMSNorm/RoPE/SwiGLU/causal attn・embed tied。確定アーキ d_model=512/n_layers=8/n_heads=8/ffn=1792/vocab=4999/max_seq=64 = **32.98M params**。純ホスト参照 forward (4-5/4-6 のゴールデン基準)・test_bitnet 全緑) |
-| 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
-| 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 |
-| 5 | Ternary GEMM (重み{-1,0,+1}・乗算不要) | `src/kernels/ternary_gemm.cu` | ⏳ 未着手 (Phase 2 から移動) |
-| 6 | C++ 推論 (ternary GEMM 流用) | `src/infer/bitnet.hpp` | ⏳ 未着手 |
+> **方向性レビュー (2026-06)**: 当初は「BitNet b1.58 を作る」が目的だったが見直した。
+> 経緯・論点 (要点):
+> - **核は decoder-only 小型タグ生成 LM** (`bitnet.hpp` 33M, #1/#2 実装済み)。これは維持。
+> - **ternary (b1.58) は目的ではなく圧縮の研究軸に降格**。まず FP16/INT8 dense で品質を出し、
+>   ternary は後段の実験 (`ternary_gemm.cu`)。33M 規模では旨味が限定的。
+> - **置き場は GPU が第一** (速度 + 既存自作 CUDA カーネル gemm/attention/layernorm/geglu を流用。
+>   LM は拡散の上流で逐次 → GPU 競合ほぼ無し)。**CPU は代替** (フレーム並列時の裏生成用)。
+>   **NPU は自己回帰不可で除外** (probe6/investigation-log)。
+> - **先行実装あり**: DanTagGen (400M LLaMA) / TIPO が「自然文+タグ → danbooru タグ」を実現済み
+>   → 素の text→tags は新規性が薄い。これらは蒸留教師・品質基準として使う。
+> - **2D 特化の独自性 (A/B)**: ① キャラ**同一性条件付き**タグ生成 (character-bible を条件入力) /
+>   ② アニメ**品質スコアラ** (NPU・固定形状, §11) — ここが DanTagGen に無い価値。
 
-**Phase 4 完了の定義**: user text → danbooru タグ変換が C++ で動き、
-Qwen2 Python に対して遜色ない品質であること。目標レイテンシ: <10ms (BitNet b1.58)。
+本線は「**dense で動くタグ生成 LM**」。その上に 拡張(A)・評価(B)・圧縮(#5 ternary) を積む。
+番号は実装 ID で不変 (`bitnet.hpp` 等が 4-5=ternary / 4-6=推論 を参照するため)。
+
+| 段 | # | 実装物 | ファイル / 作業 | 状態 |
+|---|---|---|---|---|
+| 基盤 | 1 | 訓練データ収集 | user text → danbooru tags ペア (`data/bitnet/`, `scripts/dollma_{build_vocab,make_pairs}.py`, `docs/dataset-spec.md`) | ✅ 完了 (5,000 ペア / vocab 4,994 タグ / 実 danbooru タグ共起 + 合成テンプレ / OOV0・負語0・順序0・リーク0 / tokenizer 往復 UNK0) |
+| 基盤 | 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ✅ 完了 (decoder-only LLaMA系: BitLinear(ternary absmean + 活性int8 absmax)/RMSNorm/RoPE/SwiGLU/causal attn・embed tied。確定アーキ d_model=512/n_layers=8/n_heads=8/ffn=1792/vocab=4999/max_seq=64 = **32.98M params**。純ホスト参照 forward (4-5/4-6 のゴールデン基準)・test_bitnet 全緑) |
+| dense 本線 | 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
+| dense 本線 | 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 (Qwen2 / DanTagGen 蒸留を教師に) |
+| dense 本線 | 6 | C++ 推論 (**GPU=CUDA カーネル流用が第一** / CPU 代替) | `src/infer/bitnet.hpp` | ⏳ 未着手。**まず FP16/INT8 dense** |
+| 拡張 (A) | A | **同一性条件付きタグ生成** (character-bible を条件入力) | `bitnet.hpp` 拡張 + `character.hpp` 結線 + **同一性条件付きデータ** (dataset-spec §13) | ⏳ 新規・2D 特化の核 |
+| 評価 (B) | B | **アニメ品質スコアラ** = §11 蒸留 QA スコアラ (生成画像を採点 → A へ FB) | `src/infer/` + OV (clip.hpp/wd14.hpp グルー流用) | ⏳ **Phase 2+ 並行** (画像が出てから)。conv 系のため **NPU 実行性は要 probe** (不可なら CPU) |
+| 圧縮 | 5 | Ternary GEMM (重み{-1,0,+1}) — **圧縮実験** (目的ではない) | `src/kernels/ternary_gemm.cu` | ⏳ 降格 (dense が動いた後の研究軸) |
+
+**Phase 4 完了の定義**: user text → danbooru タグ変換が C++ (CPU/GPU) で動き、品質が
+DanTagGen / Qwen2 蒸留基準に遜色ないこと。さらに **A (同一性条件付け)** が character-bible
+入力で機能し、**B (= §11 蒸留 QA スコアラ)** が FB ループを閉じること。ternary 化は完了条件
+には含めない (圧縮実験として別評価)。NPU は **CLIP-L 専任が確定**、B を NPU に載せるかは
+conv probe 次第。
 
 ---
 
@@ -122,7 +145,7 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 | 切り抜き (マッティング) | 透過 PNG 出力。anime-segmentation (isnet 系)。乗せる HW は probe 比較 | §3, §9 | Phase 2 |
 | 手指 L1 (予防) | 品質ネガティブ注入 (`default_quality_negatives`) | §10 | ✅ 完了 (器) |
 | 手指 L2/L3 (修復・検査) | 手検出→インペイント再生成 / 指数を `digits_per_hand` と照合し再生成 | §10 | Phase 2 |
-| 学習層 `CharacterMemory` | 生成→学習→FB ループ。記憶層 (seed/pose 蓄積・重心) → 蒸留 QA スコアラ (NPU) → fine-tune | §11 | Phase 2/3 |
+| 学習層 `CharacterMemory` | 生成→学習→FB ループ。記憶層 (seed/pose 蓄積・重心) → **蒸留 QA スコアラ (= Phase 4 B。NPU 載せは conv probe 次第)** → fine-tune | §11 | Phase 2/3 |
 | 背景プラグイン | 外部背景生成 (Grok/Gemini/SD) + 自動合成。宿主は HTTP サーバ層 | §9 | Phase 3 |
 
 ---
@@ -134,7 +157,7 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 | **M1** | Phase 1 完了: C++ でタグ抽出ループが動く | Phase 1 全完了後 |
 | **M2** | Phase 2 完了: フル C++ で画像生成 | SDXL カーネル完成後 |
 | **M3** | Phase 3 完了: HTTP 経由で画像生成 | サーバー完成後 |
-| **M4** | Phase 4 完了: フル自作スタックで end-to-end | BitNet 訓練後 |
+| **M4** | Phase 4 完了: 自作タグ生成 LM (dense) + A 同一性条件付け + B 品質スコアラ込みの end-to-end | dense 訓練 → A/B 後 |
 
 ---
 
@@ -143,7 +166,10 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 | 項目 | リスク | 対策 |
 |---|---|---|
 | SDXL UNet 自作カーネル | 実装規模が最大・デバッグが困難 | 小さいモデル (64×64 latent) で動作確認してからスケール |
-| BitNet b1.58 訓練データ | quality / quantity が未確定 | Danbooru + Qwen2 蒸留で初期データを確保 |
+| ~~タグ生成 LM 基礎データ~~ | quality / quantity 未確定 | ✅ #1 で 5,000 ペア確保・解消 |
+| A 同一性条件付けデータ | 現 dataset は同一性を target 除外 (dataset-spec §4) → 条件付きペアが無い | dataset-spec §13 で新規設計 (dataset-curator) |
+| B 品質スコアラの正解ラベル | 「良い絵」の教師信号をどう得るか (難問) | §11 の合格/不合格蓄積 + 大型評価器を teacher に蒸留 |
+| B の NPU 実行性 | conv 系は NPU で遅い前科 (iGPU 8x・probe4) | 要 probe。不可なら CPU に載せる |
 | safetensors パーサー | バイナリ仕様の正確な実装が必要 | 既存仕様書とテストファイルで検証 |
 | Linux 対応 (HTTP) | ~~Winsock2/POSIX 二重実装~~ | cpp-httplib がクロスプラットフォーム吸収 → 解消 |
 
@@ -155,9 +181,9 @@ Qwen2 Python に対して遜色ない品質であること。目標レイテン�
 
 | テーマ | 概要 | 評価 |
 |---|---|---|
-| **MoE × HW 分散配置** | MoE のエキスパートは独立計算できるため、NPU/iGPU/CPU/RTX5080 に**エキスパートを分散配置**し協調効率を研究する。dollama の芯 (全 HW 協調) に直結する固有テーマ。**◎ 価値高** | 時期未定 |
+| **MoE × HW 分散配置 / アンサンブル・オブ・スペシャリスト** | **得意分野の違う完結 LM を HW ごとに分散**し並列協調する (例: Qwen2/CPU=NL 意図解釈・自作 LM/GPU=タグ語彙共起・A=同一性注入)。dollama の芯 (全 HW 協調) に直結。**◎ 価値高**。設計の要点: ① 強みが**相補的**であること (出力を側面で分担=外見/ポーズ構図/同一性 → character-bible 層構造と対応)、② **束ね役**が要る (concat / 多数決 / **アービタ = Model B 品質スコアラ**)、③ 「別完結モデルを丸ごと配置」する粗粒度 MoE なので**古典 MoE のトークン単位動的ルーティング (NPU 静的形状で不可) を回避**できる。④ 導入順: **まず GPU 本線 A を動かして弱点を実測 → 穴を埋める専門家だけ B で束ねて足す** (穴を知る前のメッシュ化は過剰投資)。⑤ 注意: 全待ち設計だとレイテンシ=最遅モデル・強み重複は冗長 | 時期未定 (A 計測後) |
 | 拡散 UNet の timestep-expert | eDiff-I / DiT-MoE 系。20step を「初期=構図 / 後期=ディテール」で別エキスパートに分割。Phase 2 で dense を動かした後に検討。 | ◯ |
-| タグ生成 LLM の MoE 化 | 単体では 30–100M 規模に対し過剰 (MoE は数B〜で真価)。ルーティング損失・分岐コストが見合わない。 | △ 過剰 |
+| タグ生成 LLM の **内部** MoE 化 | **1モデル内部にエキスパート+トークン単位ルーティング**を持つ古典 MoE の話 (上行の「別完結モデル分散」とは別物)。単体 30–100M 規模には過剰 (MoE は数B〜で真価)・ルーティング損失/分岐コストが見合わない・NPU 静的形状とも非両立。**得意分野別の協調がしたいなら上行 (別完結 LM の HW 分散) を採る**。 | △ 過剰 |
 | **NPU 骨格/部位検出による解剖メタ整合検査** | 生成画像を NPU で部位検出し、**「数・位相」だけ**を `CharacterIdentity` の宣言値と照合 (指数/四肢の本数・有無/重複欠損/左右の本数対称)。**角度・比率・ポーズ自然さは見ない** (2D のパース・デフォルメで誤検出するため)。L3 指数検査の一般化。NPU は拡散中 3.8s ほぼ遊休 → 裏で実質ゼロコスト採点。詳細は character-bible-spec §11。 | **◎ 価値高 (Phase 2)** |
 | **MCP 公開 / Claude 連携** | (a) dollama を **MCP サーバとして公開** → Claude 等が画像生成をツール呼び出し。Phase 3 の OpenAI 互換 HTTP サーバ (cpp-httplib) の薄いラッパで済み、自作・単一バイナリの美学と両立。(b) **プロンプト解析を Claude に**やらせる案は研究コア (自作 BitNet) の代替ではなく、BitNet の**訓練データ収集 / 品質上限の評価基準**として位置づける (Qwen2 蒸留と同じ役割)。 | (a) ◎ Phase 3 / (b) Phase 4 のデータ・評価文脈 |
 

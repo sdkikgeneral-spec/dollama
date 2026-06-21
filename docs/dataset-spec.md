@@ -1,6 +1,6 @@
-# dollama BitNet 訓練データセット仕様 (Phase 4 #1)
+# dollama タグ生成 LM 訓練データセット仕様 (Phase 4 #1)
 
-自作 BitNet b1.58 が学習する **「user text (自然文) → danbooru タグ列」** ペアの
+自作タグ生成 LM (`src/models/bitnet.hpp`) が学習する **「user text (自然文) → danbooru タグ列」** ペアの
 データセット仕様。`scripts/train_bitnet.py` (model-trainer) と
 `src/io/tokenizer.hpp` (cpp-implementer) が消費する。
 
@@ -95,7 +95,7 @@ scripts/dollma_make_pairs.py      — 共起取得 → 射影 → 自然文逆�
 | `source` | string | `"synthetic"` (本段)。**将来拡張**: `"llm_distill"` (§12)。 |
 | `meta`   | object | `rating` (g/s/q/e)・`post_id` (出典 danbooru post id・再現用)・`n_tags`・`tmpl` (使用テンプレ variant 0..2)。NSFW フラグは `meta.rating` で分離。 |
 
-- `text` は学習入力、`tags` が target。BitNet は text を読んで tags 列を自己回帰生成する。
+- `text` は学習入力、`tags` が target。タグ生成 LM は text を読んで tags 列を自己回帰生成する (GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)。
 - `post_id` はリーク防止チェック (同一投稿が train/val に跨らない) と再現に使う。
 - `tmpl` は §3.3 のテンプレ多様化 variant。`post_id % 3` で決定的に選ばれる (再現的)。
 
@@ -166,7 +166,7 @@ scripts/dollma_make_pairs.py      — 共起取得 → 射影 → 自然文逆�
 
 - danbooru の `tag_string_character` (例 `elysia_(honkai_impact)`) は **target tags に展開しない**。
   CharacterBible の `name` は「拡散へ渡す文字列ではなく台帳の主キー」(spec §1) であり、
-  BitNet が固有キャラ名を生成する設計ではないため。
+  タグ生成 LM が固有キャラ名を生成する設計ではないため。
 - vocab には character カテゴリ (cat 4) を**含めてよい** (tokenizer 語彙の網羅性のため) が、
   本データセットの target からは除外する。将来キャラ条件付き生成を扱う場合に再検討する。
 - これにより「同一キャラの train/val リーク」も target レベルでは発生しない
@@ -206,7 +206,7 @@ danbooru の生タグは順不同なので、各タグを以下のバケット�
   - 変換: タグ名中の「英数字に挟まれた `_`」のみ ` ` (半角スペース) に置換。
   - 例外: 顔文字系タグ (`^_^`, `>_<` 等) は記号に隣接する `_` を保持 (置換しない)。
 - tokenizer.hpp はこの**スペース区切り正規形**でタグを完全一致引きする。
-  compose_prompt 出力 (スペース区切り) がそのまま BitNet 入力語彙と一致する。
+  compose_prompt 出力 (スペース区切り) がそのままタグ生成 LM の入力語彙と一致する。
 
 ## 7. 必達制約 (CharacterBible 整合)
 
@@ -284,3 +284,18 @@ python scripts/dollma_make_pairs.py --n 4500 --val 500 --seed 20260620 \
   そのまま適用する。`meta.tmpl` は LLM 由来では省略または `-1` とする。
 - 検証 (`validate_pairs`) は source 非依存で全件に適用。OOV/負語/順序は同基準。
 - CPU 推論 64-71 tok/s (CLAUDE.md probe7) を前提に、バッチ時間を見積もって段階投入する。
+
+## 13. 将来拡張 — 同一性条件付きペア (Phase 4 A)
+
+Phase 4 A (同一性条件付きタグ生成) 用のデータ。本段 (#1) は「user text → tags」のみで、
+§4 のとおりキャラ同一性タグ (`tag_string_character`) を target から除外している。A は
+キャラ同一性を**条件入力**にするため、別形式のペアが要る:
+
+- **入力**: `CharacterIdentity` (同一性層。bible の主キーで参照) + scene 記述 (自然文)。
+- **target**: 同一性を保持した danbooru タグ列 (同一性由来タグ + シーン由来タグ)。
+- 既存 #1 ペアに character-bible の同一性条件を付与する形 (例: `meta.identity` 等で拡張) を想定し、
+  **既存スキーマ・検証 (`validate_pairs`) を壊さない後方互換**で追加する。
+- リーク防止は §8 を踏襲 (同一キャラが train/val に跨らない・`post_id`/`text` チェック)。
+- B (アニメ品質スコアラ) の正解ラベルもここで扱うか別仕様にするかは設計時に決める
+  (§11 の合格/不合格蓄積を教師に蒸留する案)。
+- 設計は別タスク (dataset-curator)。確定時に §3 スキーマへ正式追加する。
