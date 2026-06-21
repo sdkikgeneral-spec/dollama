@@ -43,7 +43,7 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
 | Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 84s**) |
 | Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
-| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ データ/モデル定義済 (#1/#2) |
+| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ データ/モデル定義/トークナイザ済 (#1〜#3) |
 
 > **次の本丸**: ① 速度最適化 (direct conv → im2col/Tensor Core GEMM、naive attention → flash) で 84s → probe10 の 3.80s 同等へ。
 > ② 任意テキスト → 画像の本結線 (タスク 2-6b: CLIP-G を加えた SDXL dual encoder + CFG + negative prompt)。
@@ -220,6 +220,7 @@ RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。
 
 汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) を目的特化の超軽量モデルに置き換える。
 核は `src/models/bitnet.hpp` (decoder-only LLaMA 系 **33M**, モデル定義+ホスト参照は実装済)。
+語彙はタグ単位完全一致トークナイザ `src/io/tokenizer.hpp` (vocab.json 駆動・実装済, Phase 4-3) が担う。
 
 | | Qwen2-1.5B (現状) | 自作タグ生成 LM (目標) |
 |---|---|---|
@@ -280,7 +281,8 @@ src/
 │   └── ternary_gemm.cu   ⏳ ternary GEMM 圧縮実験 (Phase 4)
 ├── io/
 │   ├── safetensors.hpp   ✅ safetensors 重みローダー (golden 突合)
-│   └── png_meta.hpp      ✅ PNG キャラ設定メタ往復 (tEXt 焼き込み)
+│   ├── png_meta.hpp      ✅ PNG キャラ設定メタ往復 (tEXt 焼き込み)
+│   └── tokenizer.hpp     ✅ タグ単位完全一致トークナイザ (vocab.json 駆動, Phase 4-3)
 ├── server/              ✅ cpp-httplib + OpenAI 互換 API (Phase 3)
 │   ├── api.cpp           ✅ /v1/images/generations 他
 │   ├── png.hpp           ✅ PNG エンコード

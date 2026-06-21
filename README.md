@@ -52,7 +52,7 @@ other's wait time.
 | Phase 1 | C++ pipeline skeleton (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/threads) | ✅ Done (9.13 frames/s) |
 | Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — **84 s / 20 steps**) |
 | Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
-| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ Dataset & model def done (#1/#2) |
+| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ Dataset / model def / tokenizer done (#1–#3) |
 
 > **Next up:** ① speed optimization (direct conv → im2col/Tensor-Core GEMM, naive attention → flash) to bring
 > 84 s down toward probe10's 3.80 s. ② arbitrary text → image (task 2-6b: SDXL dual encoder with CLIP-G + CFG + negative prompt).
@@ -206,7 +206,7 @@ src/
 ├── core/        — Tensor (STL-based), allocator (CPU / pinned / VRAM), CharacterBible + prompt compose + color mode
 ├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention, VAE decode (custom CUDA) + ternary GEMM (compression experiment, planned)
 ├── infer/       — CLIP (NPU, OpenVINO), WD14 (CPU), SDXL UNet, Euler scheduler, full diffusion loop
-├── io/          — safetensors loader, PNG character-metadata round-trip
+├── io/          — safetensors loader, PNG character-metadata round-trip, tokenizer (tag-level exact-match)
 └── server/      — cpp-httplib + OpenAI-compatible API, PipelineGenerator (DI with stub fallback)
 ```
 

@@ -64,7 +64,7 @@ OpenVINO C++ API で動くパーツから実装する。SPSC キューが全体�
 | SPSC lock-free queue | `src/core/queue.hpp` | STL のみ |
 | CLIP NPU 推論 | `src/infer/clip.hpp` | OpenVINO C++ |
 | WD14 CPU 推論 | `src/infer/wd14.hpp` | OpenVINO C++ |
-| スレッド骨格 + アフィニティ | `src/main.cpp` 拡張 | STL thread |
+| スレッド骨格 + アフィニティ | `src/pipeline.hpp` + `src/core/affinity.hpp` | STL thread (各ワーカーが起動時に自己ピン留め) |
 
 LLM スレッドはこの時点で **スタブ** (ユーザー入力をそのまま tags として渡す)。
 Qwen2-1.5B は Python probe 専用で C++ に持ち込まない (LibTorch 不使用方針)。
@@ -91,6 +91,7 @@ Qwen2-1.5B は Python probe 専用で C++ に持ち込まない (LibTorch 不使
 |---|---|
 | 訓練データ収集 (user text → danbooru tags) | ✅ #1 完了 |
 | モデル定義 30-100M params (bitnet.hpp 33M) | ✅ #2 完了 |
+| トークナイザ (タグ単位完全一致, tokenizer.hpp) | ✅ #3 完了 |
 | GPU 推論 (自己回帰・CUDA カーネル流用が第一) / CPU 代替 | NPU は自己回帰不可で除外。NPU 化は非自己回帰版が要る・未確定 |
 | ternary GEMM カーネル | dense が動いた後の圧縮実験 (目的ではない) |
 | 同一性条件付け / アニメ品質スコアラ | 2D 特化の独自スコープ (A/B) |
