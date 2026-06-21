@@ -142,6 +142,29 @@ t_i8 I8[3]={-128,0,127} / t_bf16 BF16[2]={1.0,-2.5}。
 | `bench_forward_latency` | ベンチ | seq=32, warmup1+N=5 中央値 ms/forward (実測: 中央値 ~18,982ms。naive 参照・速度目標なし) |
 
 
+### `src/tests/test_tokenizer.cpp` — Tokenizer (Phase 4-3)
+
+`meson test` 名: `tokenizer`
+
+純 C++・CUDA/OpenVINO 不要・常時実行。対象は `src/io/tokenizer.hpp` (vocab.json 駆動の
+タグ単位完全一致トークナイザ。旧称「BPE」だがサブワードではない)。fixture パス
+(vocab.json / pairs.*.jsonl) は meson の `-DVOCAB_PATH=` / `-DPAIRS_TRAIN_PATH=` /
+`-DPAIRS_VAL_PATH=` で埋め込む (cwd 非依存)。pairs 不在は real_pairs のみ [SKIP]。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_load` | 機能 | vocab ロード: 総語彙 4999・id 連番・specials id 0..4 固定 |
+| `test_invalid_vocab` | エラー | specials 不整合・id 非連番の vocab で例外 |
+| `test_encode_decode_roundtrip` | 機能 | target タグ列 encode→decode で UNK 0・完全一致復元 |
+| `test_unknown_tag` | 機能 | 未知タグ → `<unk>`(4) |
+| `test_normalize` | 機能 | §6 正規化: `long_hair`→`long hair` で id 7・顔文字 `^_^`/`>_<` の `_` 保持 |
+| `test_encode_text` | 機能 | greedy 最長一致: 埋め込みタグ回収・接続語スキップ・"long hair" 非分割 |
+| `test_framing` | 機能 | `<bos>`/`<sep>`/`<eos>`/`<pad>` の配置 |
+| `test_boundaries` | 境界 | 空入力・空タグ列・max_len 打ち切り |
+| `test_real_pairs` | 機能 | 実 pairs.train+val (5,000行/77,195タグ) 全 target を encode し UNK 0 を実走確認 |
+| `bench` | ベンチ | encode/decode/encode_text の ns/op (実測: 365 / 168 / 2655 ns/op) |
+
+
 ### `src/tests/test_clip.cpp` — ClipEncoder (NPU)
 
 `meson test` 名: `clip`
@@ -374,6 +397,7 @@ endif
 | # | コンポーネント | テストファイル | 状態 | 主な検証内容 |
 |---|---|---|---|---|
 | 4-2 | タグ生成 LM モデル定義 (bitnet.hpp 32.98M) | `test_bitnet.cpp` | ✅ 完了 | param 範囲・ternary/int8 量子化・RMSNorm・embed tied・決定的 forward・logit 健全性・forward ベンチ |
+| 4-3 | トークナイザー (タグ単位完全一致) | `test_tokenizer.cpp` | ✅ 完了 | vocab ロード検証・encode/decode 往復 UNK 0・未知→unk・§6 正規化・greedy 最長一致・実 pairs UNK 0・ベンチ |
 
 ---
 

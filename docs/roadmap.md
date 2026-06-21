@@ -119,7 +119,7 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 |---|---|---|---|---|
 | 基盤 | 1 | 訓練データ収集 | user text → danbooru tags ペア (`data/bitnet/`, `scripts/dollma_{build_vocab,make_pairs}.py`, `docs/dataset-spec.md`) | ✅ 完了 (5,000 ペア / vocab 4,994 タグ / 実 danbooru タグ共起 + 合成テンプレ / OOV0・負語0・順序0・リーク0 / tokenizer 往復 UNK0) |
 | 基盤 | 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ✅ 完了 (decoder-only LLaMA系: BitLinear(ternary absmean + 活性int8 absmax)/RMSNorm/RoPE/SwiGLU/causal attn・embed tied。確定アーキ d_model=512/n_layers=8/n_heads=8/ffn=1792/vocab=4999/max_seq=64 = **32.98M params**。純ホスト参照 forward (4-5/4-6 のゴールデン基準)・test_bitnet 全緑) |
-| dense 本線 | 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
+| dense 本線 | 3 | トークナイザー (タグ単位完全一致・旧称「BPE」) | `src/io/tokenizer.hpp` | ✅ 完了 (vocab.json 駆動・ヘッダオンリー純ホスト C++。specials id 0..4 + tags[i].id==5+i 検証ロード・encode/decode/encode_text(greedy 最長一致)・§6 正規化(`long_hair`→`long hair`・顔文字 `_` 保持)。実 pairs 5,000行/77,195タグ **UNK 0**・往復完全一致。encode 365 / decode 168 / encode_text 2655 ns/op。test_tokenizer 全緑。サブワード BPE は VOCAB_SIZE 再設計を伴う別タスクとして切離) |
 | dense 本線 | 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 (Qwen2 / DanTagGen 蒸留を教師に) |
 | dense 本線 | 6 | C++ 推論 (**GPU=CUDA カーネル流用が第一** / CPU 代替) | `src/infer/bitnet.hpp` | ⏳ 未着手。**まず FP16/INT8 dense** |
 | 拡張 (A) | A | **同一性条件付きタグ生成** (character-bible を条件入力) | `bitnet.hpp` 拡張 + `character.hpp` 結線 + **同一性条件付きデータ** (dataset-spec §13) | ⏳ 新規・2D 特化の核 |

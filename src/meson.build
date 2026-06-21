@@ -233,6 +233,24 @@ test_bitnet_exe = executable('test_bitnet',
 # ベンチ (5 回 forward x ~19s) を含めると ~2 分かかる。既定 30s を大きく超えるため延伸。
 test('bitnet', test_bitnet_exe, timeout : 600)
 
+# タグトークナイザテスト (純 C++・CUDA/OpenVINO 非依存、Phase 4 dense #3)
+# vocab.json は data/bitnet/ にリポジトリ追跡済 (必須・不在なら fail)。
+# pairs.*.jsonl は実回帰用 (不在時は test 側で [SKIP])。パスは -D 埋め込み (cwd 非依存)。
+tok_vocab_path = meson.project_source_root() / 'data' / 'bitnet' / 'vocab.json'
+tok_train_path = meson.project_source_root() / 'data' / 'bitnet' / 'pairs.train.jsonl'
+tok_val_path   = meson.project_source_root() / 'data' / 'bitnet' / 'pairs.val.jsonl'
+test_tokenizer_exe = executable('test_tokenizer',
+  sources             : files('tests/test_tokenizer.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DVOCAB_PATH="' + tok_vocab_path + '"',
+    '-DPAIRS_TRAIN_PATH="' + tok_train_path + '"',
+    '-DPAIRS_VAL_PATH="' + tok_val_path + '"',
+  ],
+)
+test('tokenizer', test_tokenizer_exe, timeout : 120)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled
