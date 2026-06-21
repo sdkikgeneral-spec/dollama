@@ -68,6 +68,10 @@ public:
     // 内部で 4 スレッド (llm/clip/sdxl/wd14) を立て、stop_token で停止する。
     // タイムアウト・例外時はシャットダウンフラグを立てて全スレッド join し、
     // cerr にログを出して握り潰さない。
+    //
+    // CPU アフィニティは各ワーカーが起動直後に自分自身へ設定する
+    // (llm/sdxl = P-core、clip/wd14 = E-core)。失敗は警告ログのみで続行する
+    // (性能最適化が効かないだけで機能には影響しないため abort_flag は立てない)。
     // ------------------------------------------------------------
     std::vector<TagString> run(int frames)
     {
@@ -92,6 +96,12 @@ public:
         std::jthread llm_thread(
             [&](std::stop_token st)
             {
+                // 自スレッドを P-core に固定 (失敗は警告のみで続行)
+                if (!set_current_thread_affinity(kPCoreMask))
+                {
+                    std::cerr << "[pipeline] 警告: llm_thread のアフィニティ設定に失敗\n";
+                }
+
                 // 固定トークン列: BOS(49406) + anime(2368) + EOS(49407) + PAD(0)
                 Tokens base{};
                 base[0] = 49406;
@@ -158,6 +168,12 @@ public:
         std::jthread clip_thread(
             [&](std::stop_token st)
             {
+                // 自スレッドを E-core に固定 (失敗は警告のみで続行)
+                if (!set_current_thread_affinity(kECoreMask))
+                {
+                    std::cerr << "[pipeline] 警告: clip_thread のアフィニティ設定に失敗\n";
+                }
+
                 try
                 {
                     for (int f = 0; f < frames; ++f)
@@ -203,6 +219,12 @@ public:
         std::jthread sdxl_thread(
             [&](std::stop_token st)
             {
+                // 自スレッドを P-core に固定 (失敗は警告のみで続行)
+                if (!set_current_thread_affinity(kPCoreMask))
+                {
+                    std::cerr << "[pipeline] 警告: sdxl_thread のアフィニティ設定に失敗\n";
+                }
+
                 try
                 {
                     for (int f = 0; f < frames; ++f)
@@ -260,6 +282,12 @@ public:
         std::jthread wd14_thread(
             [&](std::stop_token st)
             {
+                // 自スレッドを E-core に固定 (失敗は警告のみで続行)
+                if (!set_current_thread_affinity(kECoreMask))
+                {
+                    std::cerr << "[pipeline] 警告: wd14_thread のアフィニティ設定に失敗\n";
+                }
+
                 try
                 {
                     for (int f = 0; f < frames; ++f)
@@ -312,29 +340,9 @@ public:
                 }
             });
 
-        // CPU アフィニティを設定する (probe11 実測マスク)。
-        // llm/sdxl は P-core、clip/wd14 は E-core に固定する。
-        // 失敗 (mask=0 / API 失敗 / 非対応 OS) は性能最適化が効かないだけで
-        // 機能には影響しないため、警告ログのみ出して続行する。
-        if (!set_thread_affinity(llm_thread, kPCoreMask))
-        {
-            std::cerr << "[pipeline] 警告: llm_thread のアフィニティ設定に失敗\n";
-        }
-        if (!set_thread_affinity(clip_thread, kECoreMask))
-        {
-            std::cerr << "[pipeline] 警告: clip_thread のアフィニティ設定に失敗\n";
-        }
-        if (!set_thread_affinity(sdxl_thread, kPCoreMask))
-        {
-            std::cerr << "[pipeline] 警告: sdxl_thread のアフィニティ設定に失敗\n";
-        }
-        if (!set_thread_affinity(wd14_thread, kECoreMask))
-        {
-            std::cerr << "[pipeline] 警告: wd14_thread のアフィニティ設定に失敗\n";
-        }
-
         // jthread のデストラクタが request_stop + join を行う。
         // 全段が frames 回処理し終えるか、abort_flag が立つと各スレッドが抜ける。
+        // アフィニティは各ワーカーが起動直後に自身へ設定済み。
         llm_thread.join();
         clip_thread.join();
         sdxl_thread.join();

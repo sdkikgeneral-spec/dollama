@@ -195,11 +195,11 @@ HAVE_OPENVINO 未定義・モデル不在は [SKIP]。BOS(49406)+anime(2368)+EOS
 | `info_top_tags` | 情報 | selected_tags.csv があれば top-10 タグ名を出力 (assert 外) |
 
 
-### `src/tests/test_affinity.cpp` — set_thread_affinity
+### `src/tests/test_affinity.cpp` — set_current_thread_affinity
 
 `meson test` 名: `affinity`
 
-STL のみ・常時実行 (HAVE_OPENVINO 不要)。`std::jthread` を生かした状態でアフィニティを設定し、戻り値と no-crash を検証する。
+STL のみ・常時実行 (HAVE_OPENVINO 不要)。**自己ピン留め型** API (`set_current_thread_affinity(mask)`、呼んだスレッド自身に設定。MinGW 対応で native_handle 依存を撤廃)。ワーカースレッド内で自身に設定し、結果を `std::atomic<bool>` で親へ返して検証する。
 
 | テスト関数 | 種別 | 内容 |
 |---|---|---|
@@ -366,7 +366,7 @@ endif
 | `CharacterBible` | `test_character.cpp` | ✅ 完了 | put/find・上書き・プロンプト合成・品質ネガティブ・カラーモード注入・ベンチ |
 | CLIP NPU 推論 | `test_clip.cpp` | ✅ 完了 | 出力 shape・L2 norm・全0入力・ベンチ (NPU 7.82ms) |
 | WD14 CPU 推論 | `test_wd14.cpp` | ✅ 完了 | 出力 shape・スコア値域 [0,1]・決定性・サイズガード・ベンチ |
-| アフィニティ | `test_affinity.cpp` | ✅ 完了 | 有効マスク true・mask=0 false・no-crash |
+| アフィニティ | `test_affinity.cpp` | ✅ 完了 | 自己ピン留め (`set_current_thread_affinity`): 有効マスク true・mask=0 false・no-crash |
 | Pipeline 骨格 | `test_pipeline.cpp` | ✅ 完了 | 縦通し・非空タグ・デッドロックなし・クリーン join・スループット/レイテンシ |
 
 ### Phase 2 (CUDA カーネル)

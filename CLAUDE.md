@@ -160,6 +160,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 // SPSC lock-free queue でゼロコピー受け渡し
 ```
 
+**CPU アフィニティは自己ピン留め型** (`src/core/affinity.hpp` の `set_current_thread_affinity(mask)`)。各ワーカーが起動直後に自スレッドへ設定する。当初の「親が子 jthread の `native_handle()` を `SetThreadAffinityMask` に渡す」設計は、`std::thread::native_handle_type` が MSVC=`HANDLE` / MinGW-W64 posix=`pthread_t` で **MinGW でコンパイル不可**だったため変更 (winpthreads は `pthread_getw32threadhandle_np`/`pthread_setaffinity_np` 未提供)。`GetCurrentThread()` 擬似ハンドルで native_handle 非依存にし MSVC/MinGW 両対応・両環境で実ピン留め可。詳細は `docs/cpu-topology.md`。
+
 ### 実装方針
 
 **自作は HW を叩く研究コアに限定し、配管 (HTTP/JSON/Base64) は定番のヘッダオンリー

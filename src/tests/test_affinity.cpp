@@ -1,12 +1,12 @@
-// set_thread_affinity 単体テスト (STL のみ・常時実行)
+// set_current_thread_affinity 単体テスト (STL のみ・常時実行)
 // HAVE_OPENVINO は不要。
 // 検証:
-//   - 有効マスク (0x1) で true・クラッシュなし
+//   - 有効マスク (0x1) でワーカースレッド自身に設定 → true・クラッシュなし
 //   - mask=0 で false (境界)
 //   - 範囲外/全ビットマスクでもクラッシュしない
+// 自己ピン留め API のため、設定はワーカースレッド内で呼び、結果を親へ返す。
 // testing.md 形式: if(!cond){cerr;return false;}、main 集約、ALL PASSED。
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <thread>
@@ -15,19 +15,18 @@
 
 namespace dollama {
 
-// 短命だが起動済みのスレッドを作り、native_handle が有効な状態でテストする。
-// スレッドは stop_token が立つまで軽くスピンして生かしておく。
-static std::jthread make_live_thread(std::atomic<bool>& started)
+// 与えられたマスクをワーカースレッド内で自身に設定し、結果を返すヘルパ。
+// 自己ピン留め API のため、呼び出しは必ずワーカースレッドの中で行う。
+static bool run_self_affinity(uint64_t mask)
 {
-    return std::jthread(
-        [&started](std::stop_token st)
+    std::atomic<bool> result{false};
+    std::jthread t(
+        [&result, mask]()
         {
-            started.store(true);
-            while (!st.stop_requested())
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
+            result.store(set_current_thread_affinity(mask));
         });
+    t.join();
+    return result.load();
 }
 
 // ----------------------------------------------------------------
@@ -35,15 +34,7 @@ static std::jthread make_live_thread(std::atomic<bool>& started)
 // ----------------------------------------------------------------
 static bool test_valid_mask()
 {
-    std::atomic<bool> started{false};
-    std::jthread t = make_live_thread(started);
-    while (!started.load())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    bool ok = set_thread_affinity(t, 0x1);
-    t.request_stop();
+    bool ok = run_self_affinity(0x1);
 
     if (!ok)
     {
@@ -60,15 +51,7 @@ static bool test_valid_mask()
 // ----------------------------------------------------------------
 static bool test_zero_mask()
 {
-    std::atomic<bool> started{false};
-    std::jthread t = make_live_thread(started);
-    while (!started.load())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    bool ok = set_thread_affinity(t, 0);
-    t.request_stop();
+    bool ok = run_self_affinity(0);
 
     if (ok)
     {
@@ -83,23 +66,15 @@ static bool test_zero_mask()
 // ----------------------------------------------------------------
 // テスト3: 実マシンのマスク (P/E core) でクラッシュしないこと
 // 環境により成否は変わり得るので bool 値は問わず、no-crash のみ確認。
+// すべてワーカースレッド内で自身に設定する。
 // ----------------------------------------------------------------
 static bool test_real_masks_no_crash()
 {
-    std::atomic<bool> started{false};
-    std::jthread t = make_live_thread(started);
-    while (!started.load())
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
     // P-core / E-core マスク (probe11 実測)
-    (void)set_thread_affinity(t, 0x00C03C03ULL);
-    (void)set_thread_affinity(t, 0x003FC3FCULL);
+    (void)run_self_affinity(0x00C03C03ULL);
+    (void)run_self_affinity(0x003FC3FCULL);
     // 全ビット (存在しない論理コアを含む) でもクラッシュしないこと
-    (void)set_thread_affinity(t, ~0ULL);
-
-    t.request_stop();
+    (void)run_self_affinity(~0ULL);
 
     std::cout << "[test_real_masks_no_crash] PASSED  (no crash)\n";
     return true;
