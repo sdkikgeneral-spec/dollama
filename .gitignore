@@ -26,6 +26,9 @@ outputs/
 # scripts/dollma_make_pairs.py / dollma_build_vocab.py で再取得する。
 # 成果物 (vocab.json / pairs.*.jsonl / stats.json) は追跡する。
 data/bitnet/cache/
+# 訓練済み重み (scripts/train_bitnet.py 再生成可・大容量)。
+# vae/unet 重みと同様に追跡しない。train_stats.json (小) は追跡する。
+data/bitnet/*.safetensors
 
 # Python
 __pycache__/
