@@ -100,7 +100,7 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 | # | 実装物 | ファイル / 作業 | 状態 |
 |---|---|---|---|
 | 1 | 訓練データ収集 | user text → danbooru tags ペア (`data/bitnet/`, `scripts/dollma_{build_vocab,make_pairs}.py`, `docs/dataset-spec.md`) | ✅ 完了 (5,000 ペア / vocab 4,994 タグ / 実 danbooru タグ共起 + 合成テンプレ / OOV0・負語0・順序0・リーク0 / tokenizer 往復 UNK0) |
-| 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ⏳ 未着手 |
+| 2 | モデル定義 (30-100M params) | `src/models/bitnet.hpp` | ✅ 完了 (decoder-only LLaMA系: BitLinear(ternary absmean + 活性int8 absmax)/RMSNorm/RoPE/SwiGLU/causal attn・embed tied。確定アーキ d_model=512/n_layers=8/n_heads=8/ffn=1792/vocab=4999/max_seq=64 = **32.98M params**。純ホスト参照 forward (4-5/4-6 のゴールデン基準)・test_bitnet 全緑) |
 | 3 | BPE トークナイザー | `src/io/tokenizer.hpp` | ⏳ 未着手 |
 | 4 | 訓練スクリプト (Python) | `scripts/train_bitnet.py` | ⏳ 未着手 |
 | 5 | Ternary GEMM (重み{-1,0,+1}・乗算不要) | `src/kernels/ternary_gemm.cu` | ⏳ 未着手 (Phase 2 から移動) |

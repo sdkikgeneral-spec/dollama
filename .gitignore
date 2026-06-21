@@ -1,5 +1,5 @@
-# モデルファイル (大容量バイナリ)
-models/
+# モデルファイル (大容量バイナリ)。ルート直下のみ無視 (src/models/ のソースは追跡する)。
+/models/
 
 # VAE ゴールデンデータ (計 ~400MB, GitHub 100MB 制限超)。
 # scripts/dollma_dump_vae_golden.py で再生成する。不在時 test_vae_decode は [SKIP]。

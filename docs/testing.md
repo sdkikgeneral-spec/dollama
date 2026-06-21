@@ -122,6 +122,26 @@ t_i8 I8[3]={-128,0,127} / t_bf16 BF16[2]={1.0,-2.5}。
 | `bench_load` | ベンチ | golden を 10,000 回ロードして µs/op (実測: 19.0 µs/op) |
 
 
+### `src/tests/test_bitnet.cpp` — BitNet b1.58 モデル定義 (Phase 4-2)
+
+`meson test` 名: `bitnet`
+
+純 C++・CUDA/OpenVINO 不要・常時実行。fixture / `-D` 埋め込み不要 (固定 seed の決定的テスト)。
+対象は `src/models/bitnet.hpp` (アーキ定義 + 量子化関数 + ホスト参照 forward)。
+参照 forward が naive で重く、ベンチ込みで ~2 分かかるため `timeout : 600`。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_param_count` | 機能 | 全重み要素数合計が 30M ≤ params ≤ 100M (実数を出力。確定 32.98M) |
+| `test_ternary_quant` | 機能 | absmean α と {-1,0,+1} が手計算一致 (全正/全負/0近傍/全0 ゼロ除算回避) |
+| `test_int8_quant` | 機能 | absmax/127 スケール・round 一致 (既知値/飽和境界±127/全0 ゼロ除算回避) |
+| `test_rms_norm` | 機能 | RMSNorm 既知入力一致・weight スケール・全0 入力でゼロ除算しない |
+| `test_vocab_and_tied` | 機能 | VOCAB_SIZE==4999・embed tied (embed と lm_head が同一ポインタ) |
+| `test_forward_deterministic` | 機能 | 出力形状 [seq_len,4999]・2回実行で完全一致・NaN/Inf なし |
+| `test_logit_sanity` | 機能 | logit 非発散 (|max|<1e4)・安定 softmax 正規化和が 1 |
+| `bench_forward_latency` | ベンチ | seq=32, warmup1+N=5 中央値 ms/forward (実測: 中央値 ~18,982ms。naive 参照・速度目標なし) |
+
+
 ### `src/tests/test_clip.cpp` — ClipEncoder (NPU)
 
 `meson test` 名: `clip`
@@ -348,6 +368,12 @@ endif
 |---|---|---|---|
 | HTTP サーバー (OpenAI 互換) | `test_http.cpp` | ✅ 完了 | 自己リクエストで生成→PNG base64 往復・health/models・往復 2.11ms |
 | PNG メタ往復 (character-bible §7) | `test_png_meta.cpp` | ✅ 完了 | 構造体⇔§7 JSON⇔tEXt の往復・日本語 name・enum 全網羅 (Sex×Matting×ColorMode)・破損/欠落の前方互換・ベンチ |
+
+### Phase 4 (自作 BitNet b1.58)
+
+| # | コンポーネント | テストファイル | 状態 | 主な検証内容 |
+|---|---|---|---|---|
+| 4-2 | BitNet モデル定義 (32.98M) | `test_bitnet.cpp` | ✅ 完了 | param 範囲・ternary/int8 量子化・RMSNorm・embed tied・決定的 forward・logit 健全性・forward ベンチ |
 
 ---
 

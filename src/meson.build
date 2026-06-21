@@ -220,6 +220,19 @@ test_scheduler_exe = executable('test_scheduler',
 )
 test('scheduler', test_scheduler_exe)
 
+# BitNet b1.58 モデル定義テスト + forward ベンチ (純 C++・CUDA 不要、Phase 4 #2)
+# bitnet.hpp は STL のみで自己完結 (量子化 / RMSNorm / 参照 forward)。
+# fixture / -D 埋め込み不要 (固定 seed の決定的テスト)。
+test_bitnet_exe = executable('test_bitnet',
+  sources             : files('tests/test_bitnet.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+# 参照 forward は naive (重み毎回 re-quantize + lm_head 4999x512) で重く、
+# ベンチ (5 回 forward x ~19s) を含めると ~2 分かかる。既定 30s を大きく超えるため延伸。
+test('bitnet', test_bitnet_exe, timeout : 600)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled
