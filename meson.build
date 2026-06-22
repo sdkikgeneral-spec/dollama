@@ -106,13 +106,22 @@ if get_option('with_cuda')
   cuda_inc     = include_directories(cuda_root / 'include', is_system: true)
   cuda_lib_dir = is_win ? cuda_root / 'lib/x64' : cuda_root / 'lib64'
   cuda_rt      = cpp.find_library('cudart', dirs: [cuda_lib_dir], required: false)
+  # S3-B: transformer の巨大 Linear GEMM を cuBLAS GemmEx (FP16 in / FP32 acc) に委譲する。
+  # 自作 wmma は env DOLLAMA_GEMM=wmma で再選択できるよう残置 (kernels/gemm.cu)。
+  cuda_blas    = cpp.find_library('cublas', dirs: [cuda_lib_dir], required: false)
 
   if cuda_rt.found()
     # cpp 側 (allocator.hpp など) が cudaMalloc 等をリンクするための依存。
-    # CUDA 言語有効化前から維持する (壊さない)。
+    # CUDA 言語有効化前から維持する (壊さない)。cublas は gemm.cu が使う。
+    cuda_link = [cuda_rt]
+    if cuda_blas.found()
+      cuda_link += cuda_blas
+    else
+      warning('cublas が見つかりません。GEMM は自作 wmma にフォールバックします。')
+    endif
     cuda_dep = declare_dependency(
       include_directories : cuda_inc,
-      dependencies        : [cuda_rt],
+      dependencies        : cuda_link,
     )
 
     # .cu をコンパイルするための CUDA 言語を有効化 (nvcc 検出)。
