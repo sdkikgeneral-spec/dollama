@@ -167,6 +167,10 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
     // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
     //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
     unet_weights_handle_ = unet_weights_create(unet_weights_);
+
+    // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
+    //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
+    vae_weights_handle_ = vae_weights_create(vae_weights_);
 }
 
 DiffusionPipeline::~DiffusionPipeline()
@@ -176,6 +180,7 @@ DiffusionPipeline::~DiffusionPipeline()
     if (d_text_embeds_ != nullptr)           { cudaFree(d_text_embeds_); }
     if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
     if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
+    if (vae_weights_handle_ != nullptr)      { vae_weights_destroy(vae_weights_handle_); }
 }
 
 // ----------------------------------------------------------------
@@ -313,7 +318,7 @@ void DiffusionPipeline::generate(int                   steps,
 
     {
         ScopedSyncTimer vt(prof ? &profile_counters().vae_sec : nullptr, prof);
-        launch_vae_decode(vae_weights_, d_latent, d_image);
+        launch_vae_decode(vae_weights_handle_, d_latent, d_image);
         vt.stop();
     }
 

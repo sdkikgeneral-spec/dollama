@@ -48,4 +48,30 @@ void launch_vae_decode(const SafeTensors& weights,
                        const __half*      d_latent,
                        __half*            d_image_out);
 
+// ----------------------------------------------------------------
+// 常駐重みハンドル API (S3-D)。
+//   UNet (unet.cuh の UnetWeightsHandle) と同じパターン。VAE 全重み (~92MB /
+//   140 テンソル) を毎回 upload する後方互換版に対し、ハンドルを 1 度生成して
+//   使い回すと重み転送/再 malloc が一切発生しない (生成あたり ~3.89s 削減)。
+//
+//   handle = vae_weights_create(weights);   // 全重みをデバイスへ常駐
+//   for image: launch_vae_decode(handle, ...);  // 重み転送ゼロ
+//   vae_weights_destroy(handle);            // 全デバイス重みを解放
+//
+// ハンドルは不透明ポインタ (内部実装 = DeviceWeights)。
+// 注意: ハンドルは create に渡した SafeTensors の生存期間内でのみ有効。
+// ----------------------------------------------------------------
+using VaeWeightsHandle = void*;
+
+// 重み常駐ハンドルを生成する (全 FP16 重みをこの時点でデバイスへ upload)。
+VaeWeightsHandle vae_weights_create(const SafeTensors& weights);
+
+// ハンドルが保持する全デバイス重みを解放する。nullptr は無視。
+void vae_weights_destroy(VaeWeightsHandle handle);
+
+// 常駐重みハンドルを使う launch_vae_decode。重み転送/再 malloc は発生しない。
+void launch_vae_decode(VaeWeightsHandle handle,
+                       const __half*    d_latent,
+                       __half*          d_image_out);
+
 } // namespace dollama

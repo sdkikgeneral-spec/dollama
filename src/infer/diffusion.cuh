@@ -10,6 +10,7 @@
 
 #include "io/safetensors.hpp"
 #include "infer/unet.cuh"
+#include "kernels/vae_decode.cuh"
 
 namespace dollama
 {
@@ -88,6 +89,10 @@ private:
     // S1: UNet 全重みをデバイス常駐させたハンドル。構築時に 1 度だけ upload し、
     //     全 step で使い回す (重み再転送/再 malloc をゼロにする)。
     UnetWeightsHandle unet_weights_handle_ = nullptr;
+
+    // S3-D: VAE decoder 全重み (~92MB) を構築時に 1 度だけ upload し常駐させたハンドル。
+    //       毎回の VAE 重みアップロード (生成あたり固定 ~3.89s) を排除する。
+    VaeWeightsHandle vae_weights_handle_ = nullptr;
 
     // golden 埋め込み (全 step 使い回す)。デバイス常駐。
     __half* d_encoder_hidden_states_ = nullptr;  // [1,77,2048]

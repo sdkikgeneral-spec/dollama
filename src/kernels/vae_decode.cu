@@ -216,6 +216,21 @@ public:
         return d_ptr;
     }
 
+    // S3-D: 常駐ハンドル生成時に全 FP16 重みを先読みして upload しておく。
+    // こうすると VAE decode 本体の計測区間では重み転送が一切発生せず、
+    // 生成あたり ~3.89s の固定 cudaMalloc+H2D コストが初回 create に寄せられる。
+    // F16 以外のテンソル (もしあれば) は VAE では使わないのでスキップする。
+    void upload_all()
+    {
+        for (const std::string& name : st_.names())
+        {
+            if (st_.dtype(name) == StDtype::F16)
+            {
+                (void)get(name);
+            }
+        }
+    }
+
 private:
     const SafeTensors&             st_;
     std::map<std::string, __half*> cache_;
@@ -653,12 +668,12 @@ static void attn_block(DeviceWeights& w, const std::string& prefix,
 // ----------------------------------------------------------------
 // VAE decoder 本体
 // ----------------------------------------------------------------
-void launch_vae_decode(const SafeTensors& weights,
-                       const __half*      d_latent,
-                       __half*            d_image_out)
+// 本体ロジック (重みは DeviceWeights& を呼び出し側から受け取る)。
+// 後方互換版 launch_vae_decode と常駐ハンドル版 launch_vae_decode が共有する。
+static void launch_vae_decode_impl(DeviceWeights& w,
+                                   const __half*  d_latent,
+                                   __half*        d_image_out)
 {
-    DeviceWeights w(weights);
-
     const int   groups = 32;
     const float eps    = 1e-6f;
 
@@ -827,6 +842,49 @@ void launch_vae_decode(const SafeTensors& weights,
     CUDA_CHECK(cudaFree(f_next));
     CUDA_CHECK(cudaFree(d_cur));
     CUDA_CHECK(cudaFree(d_next));
+}
+
+// ----------------------------------------------------------------
+// 後方互換版: SafeTensors を直接受け取り、毎回ローカルに全重みを
+// upload して decode する (test_vae_decode が使用)。
+// ----------------------------------------------------------------
+void launch_vae_decode(const SafeTensors& weights,
+                       const __half*      d_latent,
+                       __half*            d_image_out)
+{
+    DeviceWeights w(weights);
+    launch_vae_decode_impl(w, d_latent, d_image_out);
+}
+
+// ----------------------------------------------------------------
+// 常駐重みハンドル API (S3-D)。
+//   DeviceWeights を 1 個ヒープに確保して不透明ポインタとして返す。create 時に
+//   upload_all() で全 FP16 重みをデバイスへ常駐させるため、以降の launch では
+//   再 malloc / 再 H2D が一切発生しない (生成あたり ~3.89s の固定コストを消す)。
+// ----------------------------------------------------------------
+VaeWeightsHandle vae_weights_create(const SafeTensors& weights)
+{
+    DeviceWeights* w = new DeviceWeights(weights);
+    // 全重みをデバイスへ常駐させる (一度きり)。以降の get() は即返し。
+    w->upload_all();
+    return static_cast<VaeWeightsHandle>(w);
+}
+
+void vae_weights_destroy(VaeWeightsHandle handle)
+{
+    if (handle == nullptr)
+    {
+        return;
+    }
+    delete static_cast<DeviceWeights*>(handle);
+}
+
+void launch_vae_decode(VaeWeightsHandle handle,
+                       const __half*    d_latent,
+                       __half*          d_image_out)
+{
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    launch_vae_decode_impl(w, d_latent, d_image_out);
 }
 
 } // namespace dollama
