@@ -142,7 +142,7 @@ conv probe 次第。
 
 | 項目 | 内容 | spec | 時期 |
 |---|---|---|---|
-| 切り抜き (マッティング) | 透過 PNG 出力。anime-segmentation (isnet 系)。乗せる HW は probe 比較 | §3, §9 | Phase 2 |
+| 切り抜き (マッティング) | 透過 PNG 出力。anime-segmentation (isnet 系)。乗せる HW は probe 比較 | §3, §9 | 🔄 CPU 完了 (M0-4): **ISNet-anime 採用** (CPU 1.14s vs BiRefNet 15.7s・髪 soft α 最適・Apache-2.0)。OV IR FP32/FP16 静的化 (ONNX↔OV 6.1e-6)、`encode_png_rgba8` 追加、`src/infer/matting.hpp` Matter グルー + compose_rgba (soft α・ストレート) + test_matting (golden IoU/MAE は OV 有効ビルドで実走)。**残: M-5 NPU/iGPU HW 比較・matting_device 確定 / M-6 PipelineGenerator 結線 = 研究機** |
 | 手指 L1 (予防) | 品質ネガティブ注入 (`default_quality_negatives`) | §10 | ✅ 完了 (器) |
 | 手指 L2/L3 (修復・検査) | 手検出→インペイント再生成 / 指数を `digits_per_hand` と照合し再生成 | §10 | Phase 2 |
 | 学習層 `CharacterMemory` | 生成→学習→FB ループ。記憶層 (seed/pose 蓄積・重心) → **蒸留 QA スコアラ (= Phase 4 B。NPU 載せは conv probe 次第)** → fine-tune | §11 | Phase 2/3 |
