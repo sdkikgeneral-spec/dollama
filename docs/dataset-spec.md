@@ -318,6 +318,22 @@ synthetic 4500 + distill 3000 = 7500 を train 混合 (val は #1 と同一 500�
 - 原因: train が 1.67x 増で同 epoch の勾配ステップ過多 + Qwen2 自由文が synthetic val 分布と乖離。
   hard CE 混合だけでは正則化にならない。次は soft-label KL 蒸留 (温度付き教師 logits) を検討。
 
+### 12.3 D5 — 案A 共起 soft teacher (新ペアではない・D2/D4 hard 混合とは別物)
+
+D5 (soft-label KL 蒸留・training-spec §11) の案A teacher は、**新しいペアファイルを一切作らない**。
+既存 `cache/danbooru_posts.jsonl` (8,200 posts・タグ + rating のみ・画像非取得・§1.2/§1.3) の
+**タグ共起経験分布**から、各 target 位置の**正解分布を軟化**する (prefix 条件付き soft label =
+意味づけされたラベルスムージング)。`pairs.*.jsonl` も `tags` (実共起の正準順序 target) も**不変**で、
+学習時に target one-hot を共起ベースの soft 分布へ置き換えるだけ。
+
+- **D2/D4 (§12.1/§12.2) との違い**: D2/D4 は Qwen2 で自然文を多様化した**新規ペア**
+  (`pairs.distill.train.jsonl` 3,000 行) を train に**混合** (入力側データ拡張・hard CE のまま)。
+  D5 は**ペアを増やさず**既存 corpus の共起で**ラベル側を軟化**する (出力側 soft label)。
+  別軸の手法であり、D5 は新しい JSONL を生成しない。
+- 共起テーブルは `cache/danbooru_posts.jsonl.cooc.npz` (COO int32・pickle なし) にキャッシュして
+  再利用する (再現的)。dataset としての新ファイルは増えない。
+- A/B 結果・採否は training-spec §11 (採用せず・ただし過学習/gap は明確に改善する正の機構)。
+
 ## 13. 同一性条件付きペア (Phase 4 A・A1 確定版)
 
 Phase 4 A (同一性条件付きタグ生成) 用のデータ。#1 (§1-§12) は「user text → tags」のみで、

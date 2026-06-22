@@ -163,9 +163,15 @@ class RMSNorm(nn.Module):
 
 
 class Block(nn.Module):
-    """1 層: pre-RMSNorm attention + pre-RMSNorm SwiGLU FFN。bias なし。"""
+    """1 層: pre-RMSNorm attention + pre-RMSNorm SwiGLU FFN。bias なし。
 
-    def __init__(self):
+    dropout (D5 / training-spec §11) は **訓練時正則化専用**。残差に足す attention 出力 /
+    FFN 出力に置く (LLaMA 系 residual dropout)。eval 時 (model.eval()) は nn.Dropout が
+    恒等になるため **forward は dropout=0 と完全一致** = #4/#6/A3 golden 非回帰。
+    既定 dropout=0.0 なら訓練時も恒等 → 従来挙動と完全一致。
+    """
+
+    def __init__(self, dropout=0.0):
         super().__init__()
         self.attn_norm = RMSNorm(D_MODEL)
         self.wq = nn.Linear(D_MODEL, D_MODEL, bias=False)
@@ -176,6 +182,9 @@ class Block(nn.Module):
         self.w_gate = nn.Linear(D_MODEL, FFN_DIM, bias=False)
         self.w_up = nn.Linear(D_MODEL, FFN_DIM, bias=False)
         self.w_down = nn.Linear(FFN_DIM, D_MODEL, bias=False)
+        # dropout=0.0 のとき nn.Dropout は恒等 (train/eval とも) → 従来と完全一致。
+        self.attn_drop = nn.Dropout(dropout)
+        self.ffn_drop = nn.Dropout(dropout)
 
     def forward(self, h, cos, sin, attn_mask):
         B, S, _ = h.shape
@@ -192,21 +201,27 @@ class Block(nn.Module):
         probs = F.softmax(scores, dim=-1)
         ctx = torch.matmul(probs, v)  # [B,H,S,Dh]
         ctx = ctx.transpose(1, 2).contiguous().view(B, S, D_MODEL)
-        h = h + self.wo(ctx)
+        h = h + self.attn_drop(self.wo(ctx))
         # --- FFN (SwiGLU) ---
         x = self.ffn_norm(h)
         inter = F.silu(self.w_gate(x)) * self.w_up(x)
-        h = h + self.w_down(inter)
+        h = h + self.ffn_drop(self.w_down(inter))
         return h
 
 
 class BitNetDense(nn.Module):
-    """bitnet.hpp の dense (FP) 等価モデル。embed tied lm_head。"""
+    """bitnet.hpp の dense (FP) 等価モデル。embed tied lm_head。
 
-    def __init__(self):
+    dropout は訓練時正則化専用 (D5 / training-spec §11・§1)。eval 時は恒等になり
+    forward は dropout=0 と完全一致 → golden 非回帰。既定 0.0 で従来挙動。
+    """
+
+    def __init__(self, dropout=0.0):
         super().__init__()
         self.embed = nn.Embedding(VOCAB_SIZE, D_MODEL)
-        self.layers = nn.ModuleList([Block() for _ in range(N_LAYERS)])
+        # embed 直後の residual dropout (dropout=0.0 なら恒等)。
+        self.embed_drop = nn.Dropout(dropout)
+        self.layers = nn.ModuleList([Block(dropout) for _ in range(N_LAYERS)])
         self.final_norm = RMSNorm(D_MODEL)
         self._rope_cache = {}
         self._init_weights()
@@ -234,7 +249,7 @@ class BitNetDense(nn.Module):
     def forward(self, tokens):
         # tokens: [B, S] long
         B, S = tokens.shape
-        h = self.embed(tokens)  # [B,S,D]
+        h = self.embed_drop(self.embed(tokens))  # [B,S,D] (dropout=0.0/eval で恒等)
         cos, sin = self._rope(S, tokens.device)
         # causal mask [1,1,S,S]: j>i を -inf
         mask = torch.full((S, S), float("-inf"), device=tokens.device)
@@ -429,6 +444,207 @@ def make_batches(dataset, batch_size, shuffle, rng):
 
 
 # ==============================================================
+# D5: 案A 共起 soft-label teacher (training-spec §11 / dataset-spec §12.2)
+# ==============================================================
+#
+# 動機 (D2/D4 の負の結果を踏まえて):
+#   D2/D4 の hard CE 混合蒸留は「入力側データ拡張」に過ぎず student がソフト知識を
+#   一切見ていないのが欠陥だった (§10.4)。D5 は target を hard one-hot のままにせず、
+#   **各 target 位置の正解分布そのものを軟化** する soft-label KL 蒸留。
+#
+# teacher (案A):
+#   新しいペアは作らない。既存 cache/danbooru_posts.jsonl の **タグ共起経験分布** から
+#   teacher を構築する。各 target 位置で gold 次タグ g を予測するとき:
+#     - 主質量 main_mass を g に置く。
+#     - 残余 (1-main_mass) を「現プレフィクス (= その系列で既に出た target タグ集合) と
+#       corpus 上で共起するタグ」へ温度 T_cooc 付きで配る。
+#   = 意味づけされた (共起で裏打ちされた) ラベルスムージング。プレフィクス条件付きなので
+#     単なる一様スムージングより情報量が高い。
+#
+# 共起テーブル: post 内タグ集合の **無向ペア共起回数** を vocab id 空間で集計
+#   (cooc[a][b] = a と b が同一 post に共起した回数)。on-the-fly 構築 (キャッシュは
+#   .npz に保存して 2 回目以降は再利用)。新規ペアファイルは作らない。
+class CoOccurrenceTeacher:
+    """danbooru 共起から prefix 条件付き soft target を作る案A teacher。
+
+    パラメータ (train_stats_kl.json に記録):
+      main_mass  : gold 次タグに置く主質量 (残余 = 1-main_mass を共起候補へ)。
+      t_cooc     : 共起スコア softmax の温度 (大きいほど平坦)。
+      topn       : 残余を配る共起候補の上位件数 (プレフィクス和スコア上位)。
+    """
+
+    def __init__(self, tok, posts_path, main_mass=0.85, t_cooc=2.0, topn=32):
+        self.tok = tok
+        self.main_mass = float(main_mass)
+        self.t_cooc = float(t_cooc)
+        self.topn = int(topn)
+        self.posts_path = posts_path
+        # cooc[a] = {b: count} (a,b は vocab id・本体タグのみ 5..VOCAB-1)。
+        self.cooc = {}
+        self._build()
+
+    def _build(self):
+        import collections
+        npz = self.posts_path + ".cooc.npz"
+        # npz キャッシュ (再現的・軽量)。存在すれば読む。
+        if os.path.exists(npz):
+            try:
+                import numpy as np
+                z = np.load(npz)  # int32 配列のみ (pickle 不要)
+                rows = z["rows"]; cols = z["cols"]; cnts = z["cnts"]
+                for a, b, c in zip(rows.tolist(), cols.tolist(), cnts.tolist()):
+                    self.cooc.setdefault(a, {})[b] = c
+                print(f"[teacher] cooc cache 読込 {npz} (entries={len(rows)})")
+                return
+            except Exception as e:
+                print(f"[teacher] cooc cache 読込失敗 ({e}) → 再構築")
+                self.cooc = {}
+        n_posts = 0
+        with open(self.posts_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                raw = obj.get("tags_general", "")
+                # post 内タグを vocab id 化 (空白区切り・<unk> は除外)。
+                ids = set()
+                for t in raw.split():
+                    tid = self.tok.tag_to_id_lookup(t)
+                    if tid >= 5:  # 本体タグのみ (specials/unk 除外)
+                        ids.add(tid)
+                ids = sorted(ids)
+                for i in range(len(ids)):
+                    a = ids[i]
+                    da = self.cooc.setdefault(a, {})
+                    for j in range(len(ids)):
+                        if i == j:
+                            continue
+                        b = ids[j]
+                        da[b] = da.get(b, 0) + 1
+                n_posts += 1
+        print(f"[teacher] cooc 構築: posts={n_posts} 中心タグ数={len(self.cooc)}")
+        # npz 保存 (COO 形式)。
+        try:
+            import numpy as np
+            rows = []; cols = []; cnts = []
+            for a, d in self.cooc.items():
+                for b, c in d.items():
+                    rows.append(a); cols.append(b); cnts.append(c)
+            np.savez_compressed(npz, rows=np.array(rows, dtype=np.int32),
+                                cols=np.array(cols, dtype=np.int32),
+                                cnts=np.array(cnts, dtype=np.int32))
+            print(f"[teacher] cooc cache 保存 {npz} (entries={len(rows)})")
+        except Exception as e:
+            print(f"[teacher] cooc cache 保存スキップ ({e})")
+
+    def soft_target(self, prefix_ids, gold_id):
+        """1 target 位置の soft 分布 (dict {id: prob}) を返す。
+
+        prefix_ids : その系列で gold より前に出た target タグ id 列 (本体タグのみ有効)。
+        gold_id    : 正解次タグ id。
+        分布: gold に main_mass、残余を prefix と共起するタグ上位 topn へ温度付きで配る。
+          共起候補が無い (prefix 空 or 共起ゼロ) 場合は gold に全質量 (= hard と同じ)。
+        """
+        import math as _m
+        if gold_id < 5:
+            # specials (<eos>/<sep> 等) を予測する位置: 軟化しない (構造トークンは hard)。
+            return {gold_id: 1.0}
+        # prefix 本体タグの共起和スコアを集める。
+        score = {}
+        for p in prefix_ids:
+            if p < 5:
+                continue
+            d = self.cooc.get(p)
+            if not d:
+                continue
+            for b, c in d.items():
+                if b == gold_id or b < 5:
+                    continue
+                score[b] = score.get(b, 0.0) + c
+        if not score:
+            return {gold_id: 1.0}
+        # 上位 topn を温度付き softmax (log スケールで安定化)。
+        items = sorted(score.items(), key=lambda kv: kv[1], reverse=True)[: self.topn]
+        logs = [(_m.log(s + 1.0) / self.t_cooc) for _, s in items]
+        mx = max(logs)
+        exps = [_m.exp(l - mx) for l in logs]
+        Z = sum(exps)
+        resid = 1.0 - self.main_mass
+        out = {gold_id: self.main_mass}
+        for (b, _), e in zip(items, exps):
+            out[b] = out.get(b, 0.0) + resid * (e / Z)
+        return out
+
+
+def compute_sample_soft(teacher, ids, tags_start, max_len):
+    """1 サンプルの target 位置ごとの soft 分布を疎リストで返す (事前計算用)。
+
+    返り値: list of (t, dict{id: prob})。t は collate の target index
+    (= ids-position pos - 1)。loss_mode="tags" で実際に残る位置のみ作る
+    (start_t = max(tags_start-1, 0) 未満は -100 でマスクされるため不要)。
+    prefix = tags_start 以降で当該位置より前に出た本体タグ列 (build_soft_target_tensor
+    と同一の prefix 規則)。teacher は決定的なので epoch 不変 = 1 度計算で足りる。
+    """
+    ids = ids[:max_len]
+    n = len(ids)
+    start_t = max(tags_start - 1, 0)
+    out = []
+    prefix = []
+    for t in range(n - 1):  # collate の有効 target は index 0..n-2
+        pos = t + 1
+        gold = ids[pos]
+        if pos >= tags_start and gold >= 5:
+            # この位置は loss 対象 (本体タグ)。soft を作る。
+            if t >= start_t:
+                out.append((t, teacher.soft_target(prefix, gold)))
+            prefix.append(gold)
+        else:
+            # 構造トークン / tags_start 未満。prefix には本体タグのみ積む。
+            if pos >= tags_start and gold >= 5:
+                prefix.append(gold)
+    return out
+
+
+def precompute_soft_targets(teacher, dataset, max_len):
+    """dataset 全サンプルの soft 分布を事前計算し {id(ids_list): sparse} を返す。
+
+    ids_list (= dataset.samples[i][0]) はオブジェクト同一性が安定なのでキーに使える。
+    毎 epoch・毎バッチ再計算していた Python ループをこの 1 度に畳む (数値は不変)。
+    """
+    cache = {}
+    for s in dataset.samples:
+        ids, tags_start = s[0], s[1]
+        cache[id(ids)] = compute_sample_soft(teacher, ids, tags_start, max_len)
+    return cache
+
+
+def build_soft_target_tensor(teacher, batch, tgt, max_len, soft_cache=None):
+    """バッチの target 位置に対し teacher soft 分布 [B, L-1, V] を作る (疎→密)。
+
+    soft_cache 指定時はサンプル単位の事前計算 (precompute_soft_targets) を引いて
+    密テンソルへ展開するだけ (高速)。未指定時は従来どおりその場計算 (smoke 等)。
+    teacher 未使用位置 (ignore) は all-zero 行 (KL 側で valid マスクし無視)。
+    """
+    B, Lm1 = tgt.shape
+    soft = torch.zeros((B, Lm1, VOCAB_SIZE), dtype=torch.float32)
+    for bi, sample in enumerate(batch):
+        ids, tags_start = sample[0], sample[1]
+        if soft_cache is not None:
+            sparse = soft_cache.get(id(ids))
+            if sparse is None:
+                sparse = compute_sample_soft(teacher, ids, tags_start, max_len)
+        else:
+            sparse = compute_sample_soft(teacher, ids, tags_start, max_len)
+        for t, dist in sparse:
+            if t >= Lm1:
+                continue
+            for k, v in dist.items():
+                soft[bi, t, k] = v
+    return soft
+
+
+# ==============================================================
 # 評価: top-k tag recall (teacher forcing)
 # ==============================================================
 @torch.no_grad()
@@ -609,6 +825,57 @@ def eval_identity_retention(model, tok, val_rows, device, max_len=MAX_SEQ_LEN):
     mean_ret = ret_sum / max(n, 1)
     return mean_ret, n, details
 
+
+@torch.no_grad()
+def eval_generation_diversity(model, tok, val_rows, device, max_len=MAX_SEQ_LEN,
+                              max_cases=200):
+    """val prompt から greedy 生成し、生成多様性 (§10.3 同等) を測る。
+
+    返り値 dict:
+      corpus_unique_tags     : 全 val 生成にわたる本体 tag id のユニーク数。
+      mean_per_seq_unique    : 系列内ユニーク率 (unique本体tag数/本体tag数) の平均。
+      norm_entropy           : 生成本体タグ頻度分布の正規化エントロピー (H/log(ユニーク数))。
+      n_cases / total_gen_tags。
+    prompt は synthetic と同じ <bos> + encode_text_greedy(text) + <sep> (#1 と同条件)。
+    """
+    import math as _m
+    model.eval()
+    freq = {}
+    per_seq_unique = []
+    total = 0
+    n = 0
+    for row in val_rows:
+        if n >= max_cases:
+            break
+        text_ids = encode_text_greedy(tok, row["text"])
+        prompt = [TOK_BOS] + text_ids + [TOK_SEP]
+        if len(prompt) >= max_len:
+            continue
+        gen = _greedy_generate(model, prompt, device, max_len)
+        body = [g for g in gen if g >= 5]  # 本体タグのみ (specials 除外)
+        if not body:
+            n += 1
+            continue
+        per_seq_unique.append(len(set(body)) / len(body))
+        for g in body:
+            freq[g] = freq.get(g, 0) + 1
+        total += len(body)
+        n += 1
+    corpus_unique = len(freq)
+    if total > 0 and corpus_unique > 1:
+        Z = sum(freq.values())
+        H = -sum((c / Z) * _m.log(c / Z) for c in freq.values())
+        norm_h = H / _m.log(corpus_unique)
+    else:
+        norm_h = 0.0
+    mean_psu = (sum(per_seq_unique) / len(per_seq_unique)) if per_seq_unique else 0.0
+    return {
+        "corpus_unique_tags": corpus_unique,
+        "mean_per_seq_unique": mean_psu,
+        "norm_entropy": norm_h,
+        "n_cases": n,
+        "total_gen_tags": total,
+    }
 
 
 # ==============================================================
@@ -1223,6 +1490,30 @@ def main():
                          "出力は bitnet_dense_distill* / train_stats_distill.json (別名・"
                          "#1/#4/#6 の重み・golden は無改変)。--identity 未指定時は "
                          "synthetic(4500)+distill を混合 (#1 系の蒸留版)。")
+    # --- D5: soft-label KL 蒸留 (案A 共起 teacher) ---
+    ap.add_argument("--distill-kl", action="store_true",
+                    help="D5: soft-label KL 蒸留 (案A 共起 teacher)。新規ペアは作らず "
+                         "cache/danbooru_posts.jsonl の共起から target 分布を軟化し "
+                         "L=alpha*T^2*KL(student||teacher)+(1-alpha)*hardCE で学習。"
+                         "出力は bitnet_dense_kl* / train_stats_kl.json (別名・"
+                         "#1/#4/#6/distill/identity は無改変)。val は #1 と同一 (不変)。"
+                         "synthetic(4500) のみを train とする (案A は target 軟化なので "
+                         "ペア数は増やさない)。")
+    ap.add_argument("--kl-alpha", type=float, default=0.5,
+                    help="D5: KL 損失の重み alpha (0=従来 hardCE 完全一致・1=KL のみ)")
+    ap.add_argument("--kl-temp", type=float, default=2.0,
+                    help="D5: KL 蒸留温度 T (student/teacher logits を T で割って softmax・"
+                         "勾配スケール補正に T^2 を乗ずる)。teacher は確率分布なので "
+                         "teacher^(1/T) を再正規化して温度を反映する。")
+    ap.add_argument("--cooc-main-mass", type=float, default=0.85,
+                    help="D5 案A teacher: gold 次タグに置く主質量 (残余を共起候補へ)")
+    ap.add_argument("--cooc-temp", type=float, default=2.0,
+                    help="D5 案A teacher: 共起スコア softmax 温度 (大=平坦)")
+    ap.add_argument("--cooc-topn", type=int, default=32,
+                    help="D5 案A teacher: 残余を配る共起候補の上位件数")
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="D5 (②): 訓練時 residual dropout 率 (eval で恒等=golden 非回帰)。"
+                         "既定 0.0 で従来挙動。")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
@@ -1301,6 +1592,17 @@ def main():
         print(f"[data] DISTILL-MIXED train={len(train_rows)} "
               f"(synthetic={n_syn_tr} llm_distill={n_dis_tr}) "
               f"val={len(val_rows)} (synthetic・不変) loss_mode={args.loss_mode}")
+    elif args.distill_kl:
+        # D5: synthetic(4500) のみ。案A は target 分布を軟化するのでペア数は増やさない。
+        #   val は #1 と同一 (固定 val 500・不変・#1 との突合用)。
+        train_rows = syn_train
+        val_rows = syn_val
+        if args.smoke:
+            train_rows = train_rows[:128]
+            val_rows = val_rows[:64]
+            args.epochs = 1
+        print(f"[data] KL-DISTILL train={len(train_rows)} val={len(val_rows)} "
+              f"loss_mode={args.loss_mode} (synthetic only・target は案A 共起 teacher で軟化)")
     else:
         train_rows = syn_train
         val_rows = syn_val
@@ -1319,13 +1621,35 @@ def main():
     print(f"[data] seq_len min={min(lens)} max={max(lens)} "
           f"mean={sum(lens)/len(lens):.1f}")
 
-    model = BitNetDense().to(device)
+    model = BitNetDense(dropout=args.dropout).to(device)
+    if args.dropout > 0.0:
+        print(f"[model] dropout={args.dropout} (訓練時のみ・eval で恒等=golden 非回帰)")
     n_params = sum(p.numel() for p in model.parameters())
     # embed tied: lm_head は別パラメータでないので二重カウントなし。
     print(f"[model] params={n_params:,} (bitnet.hpp param_count=32,976,896)")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
                             weight_decay=args.weight_decay, betas=(0.9, 0.95))
+
+    # --- D5: 案A 共起 teacher を 1 度だけ構築 (KL 蒸留時のみ) ---
+    teacher = None
+    soft_cache = None
+    if args.distill_kl:
+        posts_path = os.path.join(data_dir, "cache", "danbooru_posts.jsonl")
+        if not os.path.exists(posts_path):
+            raise FileNotFoundError(
+                f"{posts_path} が無い (案A 共起 teacher の供給源)。dataset-spec §1.2 参照。")
+        teacher = CoOccurrenceTeacher(
+            tok, posts_path, main_mass=args.cooc_main_mass,
+            t_cooc=args.cooc_temp, topn=args.cooc_topn)
+        print(f"[teacher] 案A 共起 teacher 構築済 "
+              f"(main_mass={args.cooc_main_mass} t_cooc={args.cooc_temp} "
+              f"topn={args.cooc_topn}) | KL alpha={args.kl_alpha} T={args.kl_temp}")
+        import time as _t
+        _ts = _t.time()
+        soft_cache = precompute_soft_targets(teacher, train_ds, args.max_len)
+        print(f"[teacher] soft target 事前計算 {len(soft_cache)} サンプル "
+              f"({_t.time()-_ts:.1f}s・以後 epoch で再計算しない)")
 
     n_train_batches = (len(train_ds) + args.batch_size - 1) // args.batch_size
     total_steps = n_train_batches * args.epochs
@@ -1352,9 +1676,34 @@ def main():
             inp = inp.to(device)
             tgt = tgt.to(device)
             logits = model(inp)
-            loss = F.cross_entropy(
-                logits.reshape(-1, VOCAB_SIZE), tgt.reshape(-1),
-                ignore_index=-100)
+            if teacher is not None:
+                # D5: L = alpha*T^2*KL(student||teacher) + (1-alpha)*hardCE。
+                #   target 区間マスク (tgt!=-100) を hardCE/KL とも共有 (§9.2 厳守)。
+                hard_ce = F.cross_entropy(
+                    logits.reshape(-1, VOCAB_SIZE), tgt.reshape(-1),
+                    ignore_index=-100)
+                T = args.kl_temp
+                soft_t = build_soft_target_tensor(
+                    teacher, batch, tgt.cpu(), args.max_len,
+                    soft_cache=soft_cache).to(device)  # [B,L-1,V]
+                # teacher を温度 T で軟化: teacher^(1/T) を再正規化 (確率分布 teacher 版の温度)。
+                valid = (tgt != -100)                       # [B,L-1]
+                Bb, Lm1 = tgt.shape
+                logp_s = F.log_softmax(logits / T, dim=-1)  # [B,L-1,V]
+                soft_pow = soft_t.clamp_min(0).pow(1.0 / T)
+                soft_norm = soft_pow / soft_pow.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+                # KL(teacher||student) = sum teacher*(log teacher - log p_s)。
+                # 定数 (teacher エントロピー) は勾配に効かないので学生側 cross 項のみで十分だが
+                # 値の解釈性のため完全 KL を計算する (valid 位置のみ平均)。
+                logt = torch.log(soft_norm.clamp_min(1e-12))
+                kl_pos = (soft_norm * (logt - logp_s)).sum(dim=-1)  # [B,L-1]
+                nval = valid.sum().clamp_min(1)
+                kl = (kl_pos * valid).sum() / nval
+                loss = args.kl_alpha * (T * T) * kl + (1.0 - args.kl_alpha) * hard_ce
+            else:
+                loss = F.cross_entropy(
+                    logits.reshape(-1, VOCAB_SIZE), tgt.reshape(-1),
+                    ignore_index=-100)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -1411,7 +1760,10 @@ def main():
     #   identity 版 (--identity) は #4 純 dense と別名 (bitnet_dense_identity*) に分ける:
     #     #4 の bitnet_dense_fp32.safetensors は #6 golden 突合に使われており壊せない。
     #     混合訓練したモデルは別物なので名前を分け、#4 と #6 を保全する (設計判断)。
-    if args.identity and args.distill:
+    if args.distill_kl:
+        base = "bitnet_dense_kl"
+        stats_base = "train_stats_kl"
+    elif args.identity and args.distill:
         base = "bitnet_dense_identity_distill"
         stats_base = "train_stats_identity_distill"
     elif args.distill:
@@ -1466,6 +1818,31 @@ def main():
         "train_time_s": round(train_time, 1),
     }
 
+    # ---- D5: val_loss 反転(底) epoch + 生成多様性 (§10.3 同等) ----
+    if args.distill_kl:
+        vls = [h["val_loss"] for h in history]
+        argmin_ep = int(min(range(len(vls)), key=lambda i: vls[i])) if vls else None
+        diversity = eval_generation_diversity(
+            model, tok, val_rows, device, args.max_len)
+        result["val_loss_inversion_epoch"] = argmin_ep
+        result["val_loss_min"] = (min(vls) if vls else None)
+        result["final_train_val_gap"] = (history[-1]["train_val_gap"]
+                                         if history else None)
+        result["generation_diversity"] = diversity
+        result["kl_settings"] = {
+            "kl_alpha": args.kl_alpha, "kl_temp": args.kl_temp,
+            "cooc_main_mass": args.cooc_main_mass, "cooc_temp": args.cooc_temp,
+            "cooc_topn": args.cooc_topn, "dropout": args.dropout,
+            "weight_decay": args.weight_decay,
+            "teacher": "案A 共起 (cache/danbooru_posts.jsonl・prefix 条件付き soft label)",
+        }
+        print(f"[D5] val_loss 反転(底) epoch={argmin_ep} (min={min(vls):.4f}) "
+              f"final gap={result['final_train_val_gap']:.4f}")
+        print(f"[D5] 生成多様性: unique_tags={diversity['corpus_unique_tags']} "
+              f"per_seq_unique={diversity['mean_per_seq_unique']:.3f} "
+              f"norm_entropy={diversity['norm_entropy']:.3f} "
+              f"(n_cases={diversity['n_cases']})")
+
     # ---- A2: source 別 val 指標 + identity retention rate ----
     by_source = None
     retention = None
@@ -1499,7 +1876,8 @@ def main():
         "seed": seed,
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
-        "mode": ("identity_distill_mixed" if (args.identity and args.distill)
+        "mode": ("kl_distill_cooc" if args.distill_kl
+                 else "identity_distill_mixed" if (args.identity and args.distill)
                  else "distill_mixed" if args.distill
                  else "identity_mixed" if args.identity
                  else "synthetic_only"),

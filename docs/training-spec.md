@@ -24,6 +24,12 @@
   訓練に入れない。** ternary 圧縮は dense が動いた後の #5 で後段被せ。
 - bias は全 Linear で無し (bitnet.hpp BitLinear も bias 無し)。
 - RMSNorm は重み乗算あり・bias 無し。mean(x^2) は FP32 で蓄積 (参照実装が double 蓄積のため)。
+- **推論アーキは bitnet.hpp 等価・dropout 等の訓練時正則化は別 (D5 / §11)**: `--dropout`
+  で入る residual dropout は **訓練時のみ** の正則化。`nn.Dropout` は `model.eval()` で恒等
+  写像になるため **eval forward は dropout 率に依らず bitwise 完全一致** (実測 dropout 0.0 vs
+  0.3 の eval forward max abs diff = 0.0)。golden dump は常に eval で走るので #4/#6/A3 golden は
+  非回帰。dropout はアーキにも safetensors 重みにも痕跡を残さない (bitnet.hpp は dropout を
+  持たない=推論等価)。既定 `--dropout 0.0` は従来と完全一致。
 
 ### RoPE — GPT-NeoX 系ペアリング (最重要整合点)
 
@@ -396,3 +402,117 @@ py -3.12 scripts/train_bitnet.py --data-dir <scratch> --epochs 6   # / --epochs 
 # smoke (疎通・本番を上書きしない)
 py -3.12 scripts/train_bitnet.py --distill --smoke
 ```
+
+## 11. D5 — soft-label KL 蒸留 (案A 共起 teacher)
+
+`scripts/train_bitnet.py --distill-kl`。D2/D4 の hard CE 混合蒸留 (§10・採用せず) の
+**欠陥 = target が hard one-hot のまま (入力側データ拡張で student がソフト知識を見ていない)**
+を直す路線 (§10.4 ①)。**新規ペアは作らず**、各 target 位置の**正解分布そのものを軟化**する
+soft-label KL 蒸留。②dropout / weight_decay 増・③蒸留分布 val 検討も同時投入。出力は
+**別名** `bitnet_dense_kl{,_fp32}.safetensors` / `train_stats_kl.json` (#1/#4/#6/distill/identity
+の重み・golden・stats は無改変・mtime で確認済み)。val は #1 と同一 `pairs.val.jsonl` 500 で**不変**。
+seed 20260620・FP32・GTX1080Ti。
+
+### 11.1 損失機構
+
+```
+L = alpha * T^2 * KL(teacher_softened || student_T) + (1 - alpha) * hardCE
+```
+
+- **target 区間マスク共有**: hardCE / KL とも `collate(loss_mode="tags")` の `tgt != -100`
+  (= `tags_start-1` 未満を ignore) でマスクした **同じ位置のみ**に加算 (§9.2 厳守)。
+  synthetic 1-`<sep>` / identity 2-`<sep>` どちらの形式でも tags_start が「最後の構造区切りの次」
+  なので原則は崩れない (D5 本評価は synthetic のみ)。
+- **温度 T**: 学生は `log_softmax(logits / T)`。teacher は確率分布なので `teacher^(1/T)` を
+  再正規化して温度を反映 (logits を持たない teacher 版の温度)。勾配スケールを hardCE と
+  揃えるため `T^2` を乗ずる (Hinton 蒸留の慣例)。
+- **alpha=0 は従来 hardCE と bitwise 完全一致** (非回帰チェック・§11.4)。
+
+### 11.2 案A 共起 teacher (prefix 条件付き soft label)
+
+- teacher 分布 = `cache/danbooru_posts.jsonl` (8,200 posts) の**タグ共起経験分布**。各 target
+  位置で gold 次タグ g を予測するとき: **主質量 `main_mass` を g に置き、残余 (1-main_mass) を
+  「現プレフィクス (その系列で既に出た target 本体タグ集合) と corpus 上で共起するタグ」上位
+  `topn` 件へ温度 `cooc_temp` 付き softmax で配る** (= 意味づけされた・共起で裏打ちされた
+  ラベルスムージング)。共起候補が無い位置・specials (`<eos>`/`<sep>`) 予測位置は g に全質量
+  (= hard と同じ)。
+- 共起テーブル = post 内タグの無向ペア共起回数を vocab id 空間で集計 (8,200 posts → 中心タグ
+  3,596・entries 1,570,314)。`cache/danbooru_posts.jsonl.cooc.npz` に COO 形式 (int32 配列・
+  pickle なし) でキャッシュし再利用。**新規ペアファイルは作らない** (D2/D4 hard 混合とは別物)。
+- soft target はサンプル単位で**1 度だけ事前計算**しキャッシュ (4,500 サンプル ~208s)。teacher は
+  決定的なので epoch 不変 → 毎 epoch 再計算しない (数値不変・高速化のみ)。
+- **採用ハイパラ (代表)**: alpha=0.2 / T=2.0 / main_mass=0.92 / cooc_temp=2.0 / topn=24 /
+  dropout=0.0 / weight_decay=0.02。残余を入れすぎると正準順序学習が崩れるため main_mass は
+  高め・alpha は控えめに置いた (探索の結論)。
+
+### 11.3 A/B 評価 (固定 val 500・#1 6ep=2.41/0.777 基準)
+
+代表 3 config を 6ep cosine (#1 採用 epoch) で比較 (XL は 10ep も併記し反転を観察)。
+
+| 指標 | #1 6ep (本線) | D5 重 (a0.5/mm0.85/dp0.1/wd0.05) 10ep | D5-L (a0.3/mm0.9/dp0.05/wd0.02) 6ep | D5-XL (a0.2/mm0.92/dp0.0/wd0.02) 6ep | D5-XL 10ep |
+|---|---|---|---|---|---|
+| 最終 val_loss | 2.411 | 3.113 | 2.730 | 2.606 | 3.145 |
+| **最良 val_loss (底)** | **2.382 (ep4)** | 3.081 (ep6) | 2.730 (ep5) | **2.579 (ep4)** | 2.602 (ep4) |
+| 最終 top10 recall | **0.7767** | 0.6970 | 0.7302 | 0.7515 | 0.6673 |
+| **最良 recall** | **0.7767** | 0.7022 | 0.7309 | **0.7584 (ep4)** | 0.7606 (ep4) |
+| val_loss 反転(底) epoch | ep4 | ep6 | **ep5+ (未反転)** | ep4 | ep4 |
+| 最終 train-val gap | 1.091 | 0.625 | **-0.210** | 0.269 | 2.235 |
+
+生成多様性 (val prompt greedy・本体 tag・§10.3 同等):
+
+| | #1 6ep | D5-L 6ep | D5-XL 6ep | D5-XL 10ep |
+|---|---|---|---|---|
+| コーパス unique tag 数 | 386 | 231 | 273 | **352** |
+| 平均 per-seq unique 率 | 0.945 | 0.924 | 0.933 | 0.944 |
+| 正規化エントロピー | 0.839 | **0.864** | **0.869** | 0.841 |
+
+### 11.4 判定 — 過学習・多様性は改善するが recall は #1 に届かず (採用しない)
+
+- **過学習 (本評価の主軸) は改善**: soft-label KL は **train-val gap を一貫して縮める**
+  (#1 1.09 → D5-XL 0.27 / D5-L は **-0.21 = 過学習消失**)。重め config は **反転を ep4→ep6 へ
+  後退**させる。D5 は §10.4 が掲げた「過学習抑制」を**実際に達成**する (D2/D4 が両軸悪化させたのと対照的)。
+- **だが top10 recall は #1 (0.777) を超えない** (最良 D5-XL 0.758)。soft target に合わせる
+  学習は one-hot val 上の hard-CE / recall を構造的に押し上げ/押し下げる: 軽くすれば recall は
+  #1 に近づくが反転は ep4 に戻り、重くすれば反転は遅れるが recall が落ちる。**recall と
+  反転後退はトレードオフ**で、両取りはできなかった。
+- **多様性は中立〜微改善**: 正規化エントロピーは僅かに上 (0.839→0.86-0.87)・unique tag は
+  config 次第 (重め長め 10ep で 352)。D4 ほどの大幅 unique 増は出ない (案A は target 軟化
+  であって入力多様化ではないため)。
+- **方針**: **#1 (6ep synthetic hard CE) を本線維持**・D5 (soft-label KL) は**採用しない**。
+  ただし D2/D4 と違い D5 は過学習・gap・反転を**明確に改善する正の機構**で、データを増やせず
+  汎化を底上げしたい将来局面 (例: より小規模 split・early-stopping 前提運用) で**再利用価値がある**。
+  残路線 ③ (蒸留分布 val 追加) は本評価では固定 val 500 を不変に保つ制約から導入せず
+  (案A は新ペアを作らないため「蒸留分布 val」は corpus 共起そのもので、固定 val とは別軸)。
+- **負の結果ではなく「採用見送りの正の機構」**: 過学習を消せる代わりに recall を 0.02 落とす
+  という性質が明確に切り分けられた。
+
+### 11.5 dropout の golden 非回帰 (機構レベル実証)
+
+- `BitNetDense(dropout=r)` は eval (`model.eval()`) で `nn.Dropout` が恒等になり、**dropout 率
+  に依らず eval forward が bitwise 一致** (dropout 0.0 vs 0.3 の eval forward max abs diff = 0.0
+  を実測)。train モードでのみ mask が効く。golden dump は常に eval なので #4/#6/A3 golden 非回帰。
+- 実装: attention 出力・FFN 出力 (残差加算前) + embed 直後の residual dropout。dropout=0.0 なら
+  train でも恒等で従来挙動と完全一致。
+
+### 11.6 検証 (ルール#4・Python のため C++ meson test 対象外)
+
+- ① `--distill-kl --smoke`: 疎通・本番非破壊 (smoke 別名 `bitnet_dense_kl_smoke*` へ出力)。
+- ② **alpha=0 非回帰**: scratch data-dir で plain hardCE と `--distill-kl --kl-alpha 0` を
+  同 seed 3ep 比較し、**train_loss/val_loss/recall が全 epoch bitwise 一致**を確認
+  (8.3855/7.9328・7.6663/7.3642・7.1030/6.8621)。
+- ③ A/B 数値 (§11.3) + dropout eval 不変 (§11.5)。
+
+### 11.7 再現手順
+
+```sh
+# 採用代表 (D5-XL・10ep・本番別名へ出力)
+py -3.12 scripts/train_bitnet.py --distill-kl --kl-alpha 0.2 --kl-temp 2.0 \
+    --cooc-main-mass 0.92 --cooc-temp 2.0 --cooc-topn 24 \
+    --dropout 0.0 --weight-decay 0.02 --epochs 10 --batch-size 32 --lr 3e-4
+# alpha=0 非回帰チェック (scratch dir 推奨・plain と全 epoch 一致するはず)
+py -3.12 scripts/train_bitnet.py --data-dir <scratch> --epochs 3                 # plain
+py -3.12 scripts/train_bitnet.py --data-dir <scratch> --distill-kl --kl-alpha 0 --epochs 3
+# smoke (疎通・本番を上書きしない)
+py -3.12 scripts/train_bitnet.py --distill-kl --smoke
+```
+
