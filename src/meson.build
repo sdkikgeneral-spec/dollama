@@ -251,6 +251,26 @@ test_tokenizer_exe = executable('test_tokenizer',
 )
 test('tokenizer', test_tokenizer_exe, timeout : 120)
 
+# BitNet dense (FP32) 推論テスト (純 C++・CUDA/OpenVINO 非依存、Phase 4 dense #6)
+# dense forward + greedy デコードを PyTorch golden と数値突合する。
+# 重み (bitnet_dense_fp32.safetensors) / golden (golden/*.safetensors) は gitignore 対象。
+# パスは -D 埋め込み (cwd 非依存)。いずれか不在なら test 側で [SKIP] (CI でビルド緑維持)。
+# naive 参照 forward を greedy で複数ステップ回すため重い (既定 30s 超) -> timeout 延伸。
+bn_weights_path = meson.project_source_root() / 'data' / 'bitnet' / 'bitnet_dense_fp32.safetensors'
+bn_logits_path  = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'logits_golden.safetensors'
+bn_gen_path     = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'gen_golden.safetensors'
+test_bitnet_infer_exe = executable('test_bitnet_infer',
+  sources             : files('tests/test_bitnet_infer.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DWEIGHTS_PATH="' + bn_weights_path + '"',
+    '-DLOGITS_GOLDEN_PATH="' + bn_logits_path + '"',
+    '-DGEN_GOLDEN_PATH="' + bn_gen_path + '"',
+  ],
+)
+test('bitnet_infer', test_bitnet_infer_exe, timeout : 600)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled
