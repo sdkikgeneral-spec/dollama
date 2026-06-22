@@ -259,6 +259,12 @@ test('tokenizer', test_tokenizer_exe, timeout : 120)
 bn_weights_path = meson.project_source_root() / 'data' / 'bitnet' / 'bitnet_dense_fp32.safetensors'
 bn_logits_path  = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'logits_golden.safetensors'
 bn_gen_path     = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'gen_golden.safetensors'
+# Phase 4 A (A3) 同一性条件付き版: 別重み + identity_ 別 golden + vocab.json。
+# vocab は generate_with_identity の prompt 組み立て (tag_to_id + scene greedy) に必要。
+bn_id_weights_path = meson.project_source_root() / 'data' / 'bitnet' / 'bitnet_dense_identity_fp32.safetensors'
+bn_id_logits_path  = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'logits_golden_identity.safetensors'
+bn_id_gen_path     = meson.project_source_root() / 'data' / 'bitnet' / 'golden' / 'gen_golden_identity.safetensors'
+bn_vocab_path      = meson.project_source_root() / 'data' / 'bitnet' / 'vocab.json'
 test_bitnet_infer_exe = executable('test_bitnet_infer',
   sources             : files('tests/test_bitnet_infer.cpp'),
   include_directories : src_inc,
@@ -267,6 +273,10 @@ test_bitnet_infer_exe = executable('test_bitnet_infer',
     '-DWEIGHTS_PATH="' + bn_weights_path + '"',
     '-DLOGITS_GOLDEN_PATH="' + bn_logits_path + '"',
     '-DGEN_GOLDEN_PATH="' + bn_gen_path + '"',
+    '-DIDENTITY_WEIGHTS_PATH="' + bn_id_weights_path + '"',
+    '-DIDENTITY_LOGITS_GOLDEN_PATH="' + bn_id_logits_path + '"',
+    '-DIDENTITY_GEN_GOLDEN_PATH="' + bn_id_gen_path + '"',
+    '-DVOCAB_PATH="' + bn_vocab_path + '"',
   ],
 )
 test('bitnet_infer', test_bitnet_infer_exe, timeout : 600)

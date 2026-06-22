@@ -21,6 +21,13 @@
 //
 // 純ホスト C++ (CUDA / OpenVINO 非依存・STL + safetensors.hpp/tokenizer.hpp のみ)。
 // 内部の積和は double 蓄積 (golden の FP32 突合で誤差を抑える)。
+//
+// ──────────────────────────────────────────────────────────────────
+// Phase 4 A (A3) 同一性条件付き生成:
+//   #6 の forward / greedy デコード経路をそのまま流用し、prompt 組み立てだけを
+//   2-<sep> 方式に拡げた generate_with_identity を追加 (重み・アーキは不変)。
+//   identity 対応重み bitnet_dense_identity_fp32.safetensors も同じ 74 テンソル
+//   [out,in] レイアウトなので、本クラスのコンストラクタでそのままロードできる。
 
 #include <cmath>
 #include <cstddef>
@@ -66,6 +73,8 @@ public:
     };
 
     // safetensors ファイルから全重みをロードする (FP32 のみ受け付ける)。
+    // synthetic 重み (bitnet_dense_fp32) / identity 重み (bitnet_dense_identity_fp32)
+    // とも同一 74 テンソル [out,in] レイアウトなので、どちらもこの 1 系統でロードできる。
     explicit BitNetDenseInfer(const std::string& weights_path)
     {
         SafeTensors st(weights_path);
@@ -216,6 +225,55 @@ public:
         }
         prompt.push_back(TOK_SEP);
         return generate(prompt);
+    }
+
+    // ── 同一性条件付き prompt 組み立て (Phase 4 A / A3) ─────────────────
+    // 条件付け機構 = (a-1) prompt prefix + <sep>(id=3) を 2 回流用
+    // (dataset-spec §13.1 / training-spec §9.1)。生成 prompt:
+    //   <bos> [identity ids] <sep> [scene_text の greedy 一致タグ] <sep>
+    // この prompt を generate() に渡すと、続きに
+    //   [生成 target ...] <eos>
+    // を greedy で吐く。生成 tag id 列 (pure な生成部・<eos> を含まない) を返す。
+    //
+    // identity_tags は tokenizer の tag_to_id で直接 id 化する (語彙に無いタグは
+    // <unk>(=4) になる。manifest の全ケースは語彙内タグのみで <unk> は出ない)。
+    // scene_text は encode_text (greedy 最長一致) の <bos>/<eos> を除いた中身だけ使う
+    // (推論時 prompt は自然文しか来ないため scene 条件も自然文由来トークンで揃える)。
+    // 生成は既存 generate() の greedy デコード経路をそのまま流用する
+    // (GREEDY_STOP_RULE: 最終位置 argmax・tie は小 id・<eos> 停止/除外・MAX_SEQ 打切)。
+    std::vector<int> build_identity_prompt(
+        const Tokenizer& tok,
+        const std::vector<std::string>& identity_tags,
+        const std::string& scene_text) const
+    {
+        std::vector<int> prompt;
+        prompt.push_back(TOK_BOS);
+
+        // identity 区間: 各タグを tag_to_id で id 化して直接積む。
+        for (const std::string& t : identity_tags)
+        {
+            prompt.push_back(tok.tag_to_id(t));
+        }
+        prompt.push_back(TOK_SEP);
+
+        // scene 区間: 自然文を greedy 最長一致でタグ化。<bos>/<eos> を剥がして中身だけ。
+        std::vector<int> framed = tok.encode_text(scene_text, MAX_SEQ_LEN);
+        for (size_t i = 1; i + 1 < framed.size(); ++i)
+        {
+            prompt.push_back(framed[i]);
+        }
+        prompt.push_back(TOK_SEP);
+
+        return prompt;
+    }
+
+    // 同一性条件付き生成: prompt を組んで既存 greedy デコードへ流す便宜関数。
+    std::vector<int> generate_with_identity(
+        const Tokenizer& tok,
+        const std::vector<std::string>& identity_tags,
+        const std::string& scene_text) const
+    {
+        return generate(build_identity_prompt(tok, identity_tags, scene_text));
     }
 
     const float* embed_weight() const
