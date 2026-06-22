@@ -16,9 +16,10 @@
 //   - self / cross は同一カーネルで扱う。違いは Sq と Sk (および Dh) のみ。
 //   - reduction ヘルパー (warp/block の sum/max) は本 TU 内に閉じる (utils.cuh 不変)。
 //   - 経路選択は launch_attention で Dh により行う:
-//       Dh が 16 の倍数かつ <=128 → flash+wmma (C)
+//       Dh が 16 の倍数 かつ wmma flash の shared が SM 上限内 → flash+wmma (C)
+//         (S3-A: VAE mid_block Dh=512 もここに乗せる。shared 81.6KB を opt-in 確保)
 //       それ以外で Dh<=128       → flash (B)
-//       Dh>128 (VAE mid Dh=512)  → naive (A)
+//       上記いずれにも乗らない    → naive (A) フォールバック
 #include "kernels/attention.cuh"
 #include "kernels/utils.cuh"
 
@@ -372,7 +373,9 @@ __global__ void attention_flash_fp16(const __half* __restrict__ q,
 //     パディング列は -INF にして exp→0 にし、softmax に混入させない (マスク処理)。
 //   - 末尾 query 行タイル (Sq が 16 の倍数でない) も行マスクで書き戻しを抑止。
 //
-// 対応範囲: Dh が 16 の倍数 かつ Dh<=128。UNet self/cross の Dh=64 が主役。
+// 対応範囲: Dh が 16 の倍数。UNet self/cross の Dh=64 が主役。S3-A で VAE
+//   mid_block の Dh=512 もここで処理する (acc/K/V/P を動的 shared に持つため Dh
+//   非依存。上限は確保できる shared バイト数のみ。launch 側で判定)。
 // ----------------------------------------------------------------
 
 using namespace nvcuda;
@@ -383,7 +386,8 @@ static constexpr int WM_N   = 16; // K 行タイル (= スコア列)
 static constexpr int WM_K   = 16; // 内積分割幅 (Dh / 16 回)
 static constexpr int WM_BQ  = 16; // 1 ブロックが担当する query 行数 (= WM_M)
 static constexpr int WM_BK  = 16; // K/V タイル行数 (= WM_N)
-// shared に置く最大 Dh (acc[16][Dh] と K/V/P タイルのため)。Dh<=128 を想定。
+// (旧) wmma flash の Dh 上限。S3-A で shared バイト数判定に置き換え未使用化。
+//   定義は履歴と FLASH_MAX_DH との対比のため残す。
 static constexpr int WM_MAX_DH = 128;
 
 __global__ void attention_flash_wmma_fp16(const __half* __restrict__ q,
@@ -605,17 +609,15 @@ void launch_attention(const __half* d_q, const __half* d_k, const __half* d_v,
     }
 
     // ---- 経路選択 ----
-    // (C) flash+wmma: Dh が 16 の倍数 かつ Dh<=128。UNet self/cross の Dh=64 主役。
+    // (C) flash+wmma: Dh が 16 の倍数 かつ wmma flash の shared が SM 上限に収まる。
+    //     UNet self/cross の Dh=64 主役。S3-A で VAE mid_block の Dh=512 もここに乗せる
+    //     (kernel は Dh を動的 shared から取るため Dh 汎用。WM_MAX_DH 制約は撤廃し、
+    //      実際に確保できる shared バイト数だけで判定する)。
     // (B) flash:      その他 Dh<=128。
-    // (A) naive:      Dh>128 (VAE mid Dh=512)。
-    if (Dh <= WM_MAX_DH && (Dh % WM_K) == 0)
+    // (A) naive:      上記いずれにも乗らない Dh (フォールバック)。
+    if ((Dh % WM_K) == 0)
     {
-        // グリッド: x = query 行タイル数 (16 行), y = B*H。各ブロック 1 warp (32 スレッド)。
-        const int  qtiles = (Sq + WM_BQ - 1) / WM_BQ;
-        const dim3 grid(static_cast<unsigned>(qtiles),
-                        static_cast<unsigned>(static_cast<long>(B) * H), 1);
-
-        // shared サイズ:
+        // wmma flash の動的 shared サイズ:
         //   __half: Q(WM_BQ*Dh) + K(WM_BK*Dh) + V(WM_BK*Dh) + P(WM_BQ*WM_BK)
         //   float : S(WM_BQ*WM_BK) + acc(WM_BQ*Dh) + m(WM_BQ) + l(WM_BQ)
         const size_t half_elems =
@@ -626,10 +628,34 @@ void launch_attention(const __half* d_q, const __half* d_k, const __half* d_v,
             + 2 * static_cast<size_t>(WM_BQ);
         const size_t shmem = half_elems * sizeof(__half) + float_elems * sizeof(float);
 
-        attention_flash_wmma_fp16<<<grid, 32, shmem>>>(d_q, d_k, d_v, d_out,
-                                                       B, H, Sq, Sk, Dh, scale);
-        CUDA_CHECK_KERNEL();
-        return;
+        // sm_120 の SM あたり shared 上限 (~227KB) を超える Dh は wmma flash に乗せられない
+        // ため naive へフォールバックさせる。現行モデルの最大 Dh=512 は 81.6KB で収まる。
+        constexpr size_t kMaxOptinShmem = 224u * 1024u;
+        if (shmem <= kMaxOptinShmem)
+        {
+            // グリッド: x = query 行タイル数 (16 行), y = B*H。各ブロック 1 warp (32 スレッド)。
+            const int  qtiles = (Sq + WM_BQ - 1) / WM_BQ;
+            const dim3 grid(static_cast<unsigned>(qtiles),
+                            static_cast<unsigned>(static_cast<long>(B) * H), 1);
+
+            // 動的 shared が既定 48KB を超える Dh (=128 で 49KB / VAE mid Dh=512 で 81.6KB)
+            // は cudaFuncSetAttribute で MaxDynamicSharedMemorySize を引き上げる (opt-in は
+            // 冪等)。48KB 以下のときは呼ばない (UNet Dh=64 の既存挙動を不変に保つ)。
+            constexpr size_t kDefaultShmemLimit = 48u * 1024u;
+            if (shmem > kDefaultShmemLimit)
+            {
+                CUDA_CHECK(cudaFuncSetAttribute(
+                    attention_flash_wmma_fp16,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize,
+                    static_cast<int>(shmem)));
+            }
+
+            attention_flash_wmma_fp16<<<grid, 32, shmem>>>(d_q, d_k, d_v, d_out,
+                                                           B, H, Sq, Sk, Dh, scale);
+            CUDA_CHECK_KERNEL();
+            return;
+        }
+        // shmem 超過時は下の flash / naive へフォールバック。
     }
 
     if (Dh <= FLASH_MAX_DH)
