@@ -52,4 +52,17 @@ void launch_conv2d_direct(const __half* d_in, const __half* d_weight, const __ha
                           int stride_h, int stride_w, int pad_h, int pad_w,
                           int dilation_h, int dilation_w);
 
+// ----------------------------------------------------------------
+// FP32 im2col + GEMM conv (S3-E)。VAE up2/up3 用 (FP32 中間必須段)。
+//   活性 in/out は float、重み d_weight・bias d_bias は __half (safetensors のまま)。
+//   1x1=GEMM / 3x3 等=im2col+GEMM を内部選択 (N==1 前提)。GEMM は cuBLAS FP32
+//   (TF32 既定 / env DOLLAMA_VAE_GEMM=fp32 で純 FP32) に委譲する。
+//   重みは内部で FP32 スクラッチへ変換 (cudaMalloc/cudaFree)。im2col 中間も内部確保。
+//   レイアウトは launch_conv2d (FP16 版) と同一 row-major。bias は GEMM 後に行加算。
+// ----------------------------------------------------------------
+void launch_conv2d_f32_gemm(const float* d_in, const __half* d_weight, const __half* d_bias,
+                            float* d_out, int N, int Cin, int H, int W, int Cout, int KH, int KW,
+                            int stride_h, int stride_w, int pad_h, int pad_w,
+                            int dilation_h, int dilation_w);
+
 } // namespace dollama

@@ -557,13 +557,13 @@ static void resnet_block_f32(DeviceWeights& w, const std::string& prefix,
     launch_group_norm_f32(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
                           d_tmp_a, 1, Cin, H, W, groups, eps);
     launch_silu_f32(d_tmp_a, d_tmp_a, (long)Cin * HW);
-    launch_conv2d_f32(d_tmp_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
+    launch_conv2d_f32_gemm(d_tmp_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
                       d_tmp_b, 1, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 
     launch_group_norm_f32(d_tmp_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
                           d_tmp_a, 1, Cout, H, W, groups, eps);
     launch_silu_f32(d_tmp_a, d_tmp_a, (long)Cout * HW);
-    launch_conv2d_f32(d_tmp_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
+    launch_conv2d_f32_gemm(d_tmp_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
                       d_out, 1, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 
     if (Cin == Cout)
@@ -572,7 +572,7 @@ static void resnet_block_f32(DeviceWeights& w, const std::string& prefix,
     }
     else
     {
-        launch_conv2d_f32(d_x, w.get(prefix + "conv_shortcut.weight"),
+        launch_conv2d_f32_gemm(d_x, w.get(prefix + "conv_shortcut.weight"),
                           w.get(prefix + "conv_shortcut.bias"),
                           d_tmp_b, 1, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
         launch_add_f32(d_out, d_tmp_b, d_out, (long)Cout * HW);
@@ -794,7 +794,7 @@ static void launch_vae_decode_impl(DeviceWeights& w,
         const int H2 = H << 1, W2 = W << 1;
         float* d_up = sc.alloc(static_cast<size_t>(Cout) * H2 * W2);
         launch_upsample2x_f32(d_r, d_up, 1, Cout, H, W);
-        launch_conv2d_f32(d_up, w.get("decoder.up_blocks.2.upsamplers.0.conv.weight"),
+        launch_conv2d_f32_gemm(d_up, w.get("decoder.up_blocks.2.upsamplers.0.conv.weight"),
                           w.get("decoder.up_blocks.2.upsamplers.0.conv.bias"),
                           f_next, 1, Cout, H2, W2, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
     }
@@ -831,7 +831,7 @@ static void launch_vae_decode_impl(DeviceWeights& w,
         dbg_stat_f32("conv_norm_out_out", d_n, (size_t)128*1024*1024);
         // conv_out: 128 -> 3。FP32 で計算し、出力を直接 FP16 image へ書く。
         float* d_img32 = sc.alloc(static_cast<size_t>(3) * H * W);
-        launch_conv2d_f32(d_n, w.get("decoder.conv_out.weight"), w.get("decoder.conv_out.bias"),
+        launch_conv2d_f32_gemm(d_n, w.get("decoder.conv_out.weight"), w.get("decoder.conv_out.bias"),
                           d_img32, 1, C, H, W, 3, 3, 3, 1, 1, 1, 1, 1, 1);
         launch_f2h(d_img32, d_image_out, static_cast<long>(3) * H * W);
         dbg_stat("final_image", d_image_out, (size_t)3*1024*1024);

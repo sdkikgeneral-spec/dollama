@@ -433,6 +433,63 @@ static void gemm_cublas(const __half* d_A,
 }
 
 // ----------------------------------------------------------------
+// FP32 cuBLAS GEMM 経路 (S3-E)。
+//   VAE up2/up3 の im2col + GEMM 用。活性は FP32 (重み FP16 は呼び出し側で
+//   FP32 化してから A に渡す前提)。FP16 版 gemm_cublas と同じ row-major →
+//   col-major C^T 変換ロジック。compute type だけが違う:
+//     既定 = CUBLAS_COMPUTE_32F_FAST_TF32 (TF32 Tensor Core, 高速)。
+//     env DOLLAMA_VAE_GEMM=fp32 で CUBLAS_COMPUTE_32F (純 FP32) にフォールバック。
+//   TF32 は仮数 10bit で VAE SSIM 要件 (0.99998) を満たすかは要検証。割れたら
+//   env で純 FP32 に落とす。transA=true は本経路非対応 (VAE で不使用)。
+// ----------------------------------------------------------------
+
+// env DOLLAMA_VAE_GEMM=fp32 で TF32 を無効化し純 FP32 compute にする。
+static bool vae_gemm_pure_fp32()
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* e = std::getenv("DOLLAMA_VAE_GEMM");
+        cached = (e != nullptr && std::strcmp(e, "fp32") == 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+static void gemm_cublas_f32(const float* d_A,
+                            const float* d_B,
+                            float*       d_C,
+                            int          M,
+                            int          N,
+                            int          K,
+                            float        alpha,
+                            float        beta,
+                            bool         transB)
+{
+    cublasHandle_t h = cublas_handle();
+
+    const cublasOperation_t opB = transB ? CUBLAS_OP_T : CUBLAS_OP_N;
+    const int ldB = transB ? K : N; // transB=true: B[N,K] ld=K / false: B[K,N] ld=N
+    const int ldA = K;              // A row-major [M,K] = col-major [K,M] ld=K
+    const int ldC = N;              // C row-major [M,N] = col-major [N,M] ld=N
+
+    // 既定は TF32 Tensor Core。env で純 FP32 に落とせる。
+    const cublasComputeType_t compute =
+        vae_gemm_pure_fp32() ? CUBLAS_COMPUTE_32F : CUBLAS_COMPUTE_32F_FAST_TF32;
+
+    // C^T[N,M] = op(B)^T @ op(A)^T。FP32 in / FP32(またはTF32) acc。
+    CUBLAS_CHECK(cublasGemmEx(h,
+                              opB, CUBLAS_OP_N,
+                              N, M, K,
+                              &alpha,
+                              d_B, CUDA_R_32F, ldB,
+                              d_A, CUDA_R_32F, ldA,
+                              &beta,
+                              d_C, CUDA_R_32F, ldC,
+                              compute,
+                              CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+}
+
+// ----------------------------------------------------------------
 // Tensor Core 経路 (自作 wmma) を使うか判定する。
 //   - transA=true は wmma 未対応 (col_major matrix_a が必要・現状不要) → タイリング。
 //   - K が極端に小さい (< WMMA_K) と端数オーバヘッドが勝つため小行列はタイリング。
@@ -490,6 +547,28 @@ void launch_gemm_fp16(const __half* d_A,
     const dim3 grid(ceil_div(N, TILE), ceil_div(M, TILE));
     gemm_fp16_tiled<<<grid, block>>>(d_A, d_B, d_C, M, N, K, alpha, beta, transA, transB);
     CUDA_CHECK_KERNEL();
+}
+
+
+// ----------------------------------------------------------------
+// FP32 GEMM ホストラッパー (S3-E)。VAE up2/up3 の im2col + GEMM 用。
+//   C[M,N] = alpha*op(A)[M,K] @ op(B)[K,N] + beta*C。すべて FP32 デバイスポインタ。
+//   cuBLAS (TF32 既定 / env で純 FP32) に委譲する。transA=true は本経路非対応。
+//   小行列でも VAE 用途では cuBLAS で問題ないためそのまま委譲する。
+// ----------------------------------------------------------------
+void launch_gemm_f32(const float* d_A,
+                     const float* d_B,
+                     float*       d_C,
+                     int          M,
+                     int          N,
+                     int          K,
+                     float        alpha,
+                     float        beta,
+                     bool         transA,
+                     bool         transB)
+{
+    assert(!transA); // VAE im2col 経路は transA=false のみ
+    gemm_cublas_f32(d_A, d_B, d_C, M, N, K, alpha, beta, transB);
 }
 
 } // namespace dollama

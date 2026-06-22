@@ -475,4 +475,262 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
                          dilation_h, dilation_w);
 }
 
+
+// ================================================================
+// FP32 im2col + GEMM 経路 (S3-E)。
+//   VAE up2/up3 は FP32 中間が必須 (FP16 だと Inf->GroupNorm NaN 伝播)。そのため
+//   FP16 im2col 経路 (launch_conv2d) を使えず、活性 float / 重み FP16 / 出力 float の
+//   FP32 経路を別に用意する。アルゴリズムは上の FP16 版と同一・dtype のみ float。
+//   GEMM は cuBLAS FP32 (TF32 既定) に委譲する (launch_gemm_f32)。GEMM の A は
+//   FP32 行列が必要なので、conv 重み (FP16) を内部スクラッチへ FP32 化してから渡す。
+// ================================================================
+
+// FP32 im2col (FP16 版 im2col_fp16 と同一・dtype のみ float)。
+__global__ void im2col_f32(const float* in_n,
+                           float*       col,
+                           int          Cin,
+                           int          H,
+                           int          W,
+                           int          KH,
+                           int          KW,
+                           int          Hout,
+                           int          Wout,
+                           int          ho_base,
+                           int          tile_rows,
+                           int          stride_h,
+                           int          stride_w,
+                           int          pad_h,
+                           int          pad_w,
+                           int          dilation_h,
+                           int          dilation_w)
+{
+    const int K = Cin * KH * KW;
+    const long Ncol = static_cast<long>(tile_rows) * Wout;
+    const long total = static_cast<long>(K) * Ncol;
+
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        const long col_idx = idx % Ncol;
+        const int  krow    = static_cast<int>(idx / Ncol);
+        const int wo       = static_cast<int>(col_idx % Wout);
+        const int ho_local = static_cast<int>(col_idx / Wout);
+        const int ho       = ho_base + ho_local;
+        const int kw = krow % KW;
+        int       tk = krow / KW;
+        const int kh = tk % KH;
+        const int ci = tk / KH;
+
+        const int hi = ho * stride_h - pad_h + kh * dilation_h;
+        const int wi = wo * stride_w - pad_w + kw * dilation_w;
+
+        float v = 0.0f;
+        if (hi >= 0 && hi < H && wi >= 0 && wi < W)
+        {
+            v = in_n[(static_cast<long>(ci) * H + hi) * W + wi];
+        }
+        col[idx] = v;
+    }
+}
+
+// FP32 行ごとブロードキャスト bias 加算 (bias は FP16)。
+__global__ void conv_bias_add_rows_f32(float* out, const __half* bias, int Cout, long Ncols)
+{
+    const long total = static_cast<long>(Cout) * Ncols;
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        const int co = static_cast<int>(idx / Ncols);
+        out[idx] = out[idx] + __half2float(bias[co]);
+    }
+}
+
+// FP32 帯出力散布コピー (FP16 版 scatter_band_to_out と同一・dtype のみ float)。
+__global__ void scatter_band_to_out_f32(const float* src,
+                                        float*       dst,
+                                        int          Cout,
+                                        long         band_cols,
+                                        long         dst_row_stride,
+                                        long         band_col_off)
+{
+    const long total = static_cast<long>(Cout) * band_cols;
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        const long co = idx / band_cols;
+        const long j  = idx % band_cols;
+        dst[co * dst_row_stride + band_col_off + j] = src[idx];
+    }
+}
+
+// FP16 重み -> FP32 変換 (GEMM の A 行列を FP32 に揃えるため)。
+__global__ void weight_h2f(const __half* in, float* out, long n)
+{
+    for (long i = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         i < n;
+         i += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        out[i] = __half2float(in[i]);
+    }
+}
+
+// FP32 1x1 conv -> GEMM 経路。N==1 前提 (FP16 版 launch_conv2d_1x1_gemm の FP32 版)。
+static void launch_conv2d_f32_1x1_gemm(const float* d_in, const float* d_weight_f32,
+                                       const __half* d_bias, float* d_out,
+                                       int Cin, int H, int W, int Cout)
+{
+    const int M = Cout;
+    const long N = static_cast<long>(H) * W;
+    const int K = Cin;
+
+    launch_gemm_f32(d_weight_f32, d_in, d_out, M, static_cast<int>(N), K,
+                    1.0f, 0.0f, false, false);
+
+    if (d_bias != nullptr)
+    {
+        const int blocks = grid_blocks_for(static_cast<long>(Cout) * N);
+        conv_bias_add_rows_f32<<<blocks, CONV_THREADS>>>(d_out, d_bias, Cout, N);
+        CUDA_CHECK_KERNEL();
+    }
+}
+
+// FP32 一般 conv (3x3 等) -> im2col + GEMM 経路。N==1 前提。
+// FP16 版 launch_conv2d_im2col_gemm の FP32 版 (帯分割・散布も同一)。
+static void launch_conv2d_f32_im2col_gemm(const float* d_in, const float* d_weight_f32,
+                                          const __half* d_bias, float* d_out,
+                                          int Cin, int H, int W, int Cout,
+                                          int KH, int KW, int Hout, int Wout,
+                                          int stride_h, int stride_w, int pad_h, int pad_w,
+                                          int dilation_h, int dilation_w)
+{
+    const int K = Cin * KH * KW;
+    const long full_ncol = static_cast<long>(Hout) * Wout;
+    const long bytes_per_row = static_cast<long>(K) * Wout * sizeof(float);
+    int tile_rows = Hout;
+    if (bytes_per_row > 0)
+    {
+        long rows_cap = IM2COL_TILE_BYTES / bytes_per_row;
+        if (rows_cap < 1)
+        {
+            rows_cap = 1;
+        }
+        if (rows_cap < tile_rows)
+        {
+            tile_rows = static_cast<int>(rows_cap);
+        }
+    }
+
+    const bool banded = (tile_rows < Hout);
+
+    const long col_elems = static_cast<long>(K) * tile_rows * Wout;
+    float* d_col = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_col, static_cast<size_t>(col_elems) * sizeof(float)));
+
+    float* d_out_band = nullptr;
+    if (banded)
+    {
+        const long band_out_elems = static_cast<long>(Cout) * tile_rows * Wout;
+        CUDA_CHECK(cudaMalloc(&d_out_band, static_cast<size_t>(band_out_elems) * sizeof(float)));
+    }
+
+    for (int ho_base = 0; ho_base < Hout; ho_base += tile_rows)
+    {
+        const int rows = (ho_base + tile_rows <= Hout) ? tile_rows : (Hout - ho_base);
+        const long Ncol = static_cast<long>(rows) * Wout;
+
+        const int blocks = grid_blocks_for(static_cast<long>(K) * Ncol);
+        im2col_f32<<<blocks, CONV_THREADS>>>(d_in, d_col, Cin, H, W, KH, KW,
+                                             Hout, Wout, ho_base, rows,
+                                             stride_h, stride_w, pad_h, pad_w,
+                                             dilation_h, dilation_w);
+        CUDA_CHECK_KERNEL();
+
+        float* d_gemm_out = banded ? d_out_band : d_out;
+        launch_gemm_f32(d_weight_f32, d_col, d_gemm_out, Cout, static_cast<int>(Ncol), K,
+                        1.0f, 0.0f, false, false);
+
+        if (banded)
+        {
+            const int sblocks = grid_blocks_for(static_cast<long>(Cout) * Ncol);
+            scatter_band_to_out_f32<<<sblocks, CONV_THREADS>>>(
+                d_out_band, d_out, Cout, Ncol, full_ncol,
+                static_cast<long>(ho_base) * Wout);
+            CUDA_CHECK_KERNEL();
+        }
+    }
+
+    if (d_bias != nullptr)
+    {
+        const int blocks = grid_blocks_for(static_cast<long>(Cout) * full_ncol);
+        conv_bias_add_rows_f32<<<blocks, CONV_THREADS>>>(d_out, d_bias, Cout, full_ncol);
+        CUDA_CHECK_KERNEL();
+    }
+
+    CUDA_CHECK(cudaFree(d_col));
+    if (d_out_band != nullptr)
+    {
+        CUDA_CHECK(cudaFree(d_out_band));
+    }
+}
+
+// ----------------------------------------------------------------
+// FP32 conv ホストラッパー (S3-E)。活性 float / 重み・bias FP16 / 出力 float。
+//   形状に応じて 1x1=GEMM / 3x3 等=im2col+GEMM を選択する (N==1 前提・VAE 専用)。
+//   重み (FP16) は内部で FP32 スクラッチへ変換してから GEMM の A に渡す。
+//   GEMM 経路の下限割れ (極小形状) は VAE up2/up3 では起きないため考慮しない。
+// ----------------------------------------------------------------
+void launch_conv2d_f32_gemm(const float* d_in, const __half* d_weight, const __half* d_bias,
+                            float* d_out, int N, int Cin, int H, int W, int Cout, int KH, int KW,
+                            int stride_h, int stride_w, int pad_h, int pad_w,
+                            int dilation_h, int dilation_w)
+{
+    if (N <= 0 || Cin <= 0 || H <= 0 || W <= 0 || Cout <= 0 || KH <= 0 || KW <= 0)
+    {
+        return;
+    }
+    if (stride_h <= 0 || stride_w <= 0 || dilation_h <= 0 || dilation_w <= 0)
+    {
+        return;
+    }
+    assert(pad_h >= 0 && pad_w >= 0);
+    assert(N == 1); // VAE up2/up3 は N=1
+
+    const int Hout = conv_out_dim(H, pad_h, dilation_h, KH, stride_h);
+    const int Wout = conv_out_dim(W, pad_w, dilation_w, KW, stride_w);
+    if (Hout <= 0 || Wout <= 0)
+    {
+        return;
+    }
+
+    // 重み (FP16) を FP32 へ変換 (A 行列 = weight[Cout, Cin*KH*KW])。
+    const long wcount = static_cast<long>(Cout) * Cin * KH * KW;
+    float* d_weight_f32 = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_weight_f32, static_cast<size_t>(wcount) * sizeof(float)));
+    {
+        const int blocks = grid_blocks_for(wcount);
+        weight_h2f<<<blocks, CONV_THREADS>>>(d_weight, d_weight_f32, wcount);
+        CUDA_CHECK_KERNEL();
+    }
+
+    const bool is_1x1 = (KH == 1 && KW == 1 && pad_h == 0 && pad_w == 0
+                         && stride_h == 1 && stride_w == 1
+                         && dilation_h == 1 && dilation_w == 1);
+
+    if (is_1x1)
+    {
+        launch_conv2d_f32_1x1_gemm(d_in, d_weight_f32, d_bias, d_out, Cin, H, W, Cout);
+    }
+    else
+    {
+        launch_conv2d_f32_im2col_gemm(d_in, d_weight_f32, d_bias, d_out, Cin, H, W, Cout,
+                                      KH, KW, Hout, Wout, stride_h, stride_w,
+                                      pad_h, pad_w, dilation_h, dilation_w);
+    }
+
+    CUDA_CHECK(cudaFree(d_weight_f32));
+}
+
 } // namespace dollama
