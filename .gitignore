@@ -29,6 +29,10 @@ data/bitnet/cache/
 # 訓練済み重み (scripts/train_bitnet.py 再生成可・大容量)。
 # vae/unet 重みと同様に追跡しない。train_stats.json (小) は追跡する。
 data/bitnet/*.safetensors
+# #6 突合 golden (logits/gen safetensors + manifest)。scripts/train_bitnet.py --dump-golden で再生成可。
+data/bitnet/golden/
+# smoke ラン成果物 (本番と別名・追跡しない)。
+data/bitnet/train_stats_smoke.json
 
 # Python
 __pycache__/

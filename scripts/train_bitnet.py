@@ -505,6 +505,274 @@ def sanity_reload(path):
 
 
 # ==============================================================
+# golden dump (#6 C++ dense 推論の数値突合用)
+# ==============================================================
+#
+# 設計判断 (ファイル形式):
+#   ロジット・input_ids・生成 tag id 列はすべて **safetensors** で出力する。
+#   生バイナリ + 手書きメタではなく safetensors を選んだ理由:
+#     - #6 は src/io/safetensors.hpp を使うので、golden も同じローダーで読める
+#       (dtype/shape/エンディアンの取り違えを構造的に排除・読み戻しサニティが楽)。
+#     - safetensors は dtype/shape をヘッダに自己記述 -> メタ JSON 側で
+#       エンディアン/レイアウトを別管理する必要がない (常に little-endian raw)。
+#   ロジットは FP32 (誤差切り分けの基準)。input_ids / 生成 tag id 列は I32
+#   (safetensors.hpp が I32 対応・C++ 側 token id は int で扱う)。
+#
+# manifest.json には各ケースの input_ids/text/shape/dtype/ファイル名と
+# greedy 停止規則を人間可読で残す (C++ #6 実装者が読む唯一の索引)。
+LOGITS_PATH = "logits_golden.safetensors"
+GEN_PATH = "gen_golden.safetensors"
+MANIFEST_PATH = "manifest.json"
+
+# 生成 golden の greedy 停止規則 (C++ が完全再現できるよう厳密に明記)。
+#   1. prompt = [<bos>] + encode_text_greedy(text) + [<sep>]。
+#   2. 各ステップ: 現在列を BitNetDense に通し、最終位置 (列末) の logits の
+#      argmax (FP32, tie は小さい id を採用 = torch.argmax の挙動) を次トークンとする。
+#   3. 生成した id を列に追記し、生成トークン (生成 tag id 列) にも記録する。
+#   4. 停止条件 (どれか満たしたら即停止):
+#        a. 次トークン == <eos>(=2) -> <eos> は生成列に含めず停止。
+#        b. 列長が MAX_SEQ_LEN(=64) に達した -> そこで打ち切り。
+#   5. 既出タグの抑制・重複除去は **行わない** (素の greedy。C++ も同一)。
+#   6. <pad>/<bos>/<sep>/<unk> が生成されても特別扱いせず、そのまま列に積む
+#      (停止するのは <eos> のみ)。
+GREEDY_STOP_RULE = {
+    "prompt": "[<bos>] + encode_text_greedy(text) + [<sep>]",
+    "step": "最終位置 logits の argmax (FP32, tie は小 id) を次トークン",
+    "stop_eos": TOK_EOS,
+    "stop_max_len": MAX_SEQ_LEN,
+    "eos_excluded_from_output": True,
+    "suppress_repeats": False,
+    "special_tokens_pass_through": True,
+    "note": "生成 tag id 列は <bos>/text/<sep> を含まない pure な生成部のみ。"
+            "停止は <eos> 出力 or 列長 MAX_SEQ_LEN。",
+}
+
+
+def _make_fixed_input_ids(tok, val_rows, target_len):
+    """決定的に長さ target_len ちょうどの input_ids を作る。
+
+    val_rows を固定インデックスで走査し、build_sequence の自己回帰列を連結して
+    target_len で切り出す (val は max seq ~30 のため 63 は複数行連結で確保)。
+    再現可能・seq 範囲内 id のみ。
+    """
+    ids = []
+    for r in val_rows:
+        seq, _ = build_sequence(tok, r, MAX_SEQ_LEN)
+        ids.extend(seq)
+        if len(ids) >= target_len:
+            break
+    if len(ids) < target_len:
+        raise RuntimeError(
+            f"val 行を全部連結しても target_len={target_len} に届かない (got {len(ids)})")
+    return ids[:target_len]
+
+
+@torch.no_grad()
+def _greedy_generate(model, prompt_ids, device, max_len=MAX_SEQ_LEN):
+    """GREEDY_STOP_RULE に従い prompt から自己回帰 greedy デコードする。
+
+    返り値: 生成した tag id 列 (prompt を含まない・<eos> を含まない)。
+    """
+    seq = list(prompt_ids)
+    generated = []
+    while len(seq) < max_len:
+        inp = torch.tensor([seq], dtype=torch.long, device=device)
+        logits = model(inp)            # [1, S, V] FP32
+        next_logits = logits[0, -1]    # 列末位置 [V]
+        nxt = int(torch.argmax(next_logits).item())  # tie は小 id
+        if nxt == TOK_EOS:
+            break                      # <eos> は出力に含めず停止
+        seq.append(nxt)
+        generated.append(nxt)
+    return generated
+
+
+def dump_golden(args):
+    """bitnet_dense_fp32.safetensors をロードした BitNetDense で golden を dump。
+
+    (a) ロジット golden: 固定 input_ids (seq 8/32/63) の FP32 logits [seq, vocab]。
+    (b) 生成 golden: 固定 text を greedy デコードした tag id 列。
+    すべて学習時と同一の dense forward 経路 (BitNetDense) を通す。
+    """
+    from safetensors.torch import save_file, load_file
+    import random
+
+    seed = args.seed
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+    data_dir = args.data_dir
+    vocab_path = args.vocab or os.path.join(data_dir, "vocab.json")
+    device = args.device or "cpu"  # golden は CPU 既定 (決定性重視・1080Ti FP16 native 無し)
+    print(f"[golden] device={device} torch={torch.__version__}")
+
+    tok = Tokenizer(vocab_path)
+    print(f"[golden] vocab_size={tok.vocab_size()} tags={len(tok.tags)}")
+
+    fp32_path = os.path.join(data_dir, "bitnet_dense_fp32.safetensors")
+    if not os.path.exists(fp32_path):
+        raise FileNotFoundError(
+            f"{fp32_path} が無い。先に `python scripts/train_bitnet.py` で訓練して "
+            f"FP32 重みを出力すること。")
+    sd = load_file(fp32_path)
+    model = BitNetDense().to(device)
+    # export_safetensors 命名 (embed / layers.{i}.* / final_norm) を state_dict 命名へ写す。
+    new_sd = {}
+    new_sd["embed.weight"] = sd["embed"]
+    new_sd["final_norm.weight"] = sd["final_norm"]
+    for i in range(N_LAYERS):
+        p = f"layers.{i}."
+        new_sd[p + "attn_norm.weight"] = sd[p + "attn_norm"]
+        new_sd[p + "ffn_norm.weight"] = sd[p + "ffn_norm"]
+        for w in ("wq", "wk", "wv", "wo", "w_gate", "w_up", "w_down"):
+            new_sd[p + w + ".weight"] = sd[p + w]
+    model.load_state_dict(new_sd, strict=True)
+    model.eval()
+    print(f"[golden] loaded {fp32_path} (strict state_dict 一致)")
+
+    val_rows = load_pairs(os.path.join(data_dir, "pairs.val.jsonl"))
+    out_dir = os.path.join(data_dir, "golden")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # ---- (a) ロジット golden -- seq 8 / 32 / 63 ----
+    logit_seq_lens = [8, 32, 63]  # 境界含む (63 = max_seq 64 直下)
+    logit_tensors = {}
+    logit_cases = []
+    for sl in logit_seq_lens:
+        ids = _make_fixed_input_ids(tok, val_rows, sl)
+        inp = torch.tensor([ids], dtype=torch.long, device=device)
+        logits_cpu = model(inp)[0].detach().float().contiguous().cpu()  # [seq, vocab] FP32
+        re_logits = model(inp)[0].detach().float().contiguous().cpu()
+        max_abs = (logits_cpu - re_logits).abs().max().item()
+        if max_abs != 0.0:
+            raise RuntimeError(f"自己整合失敗 seq={sl}: 再 forward 不一致 (max_abs={max_abs})")
+        name = f"logits_s{sl}"
+        ids_name = f"input_ids_s{sl}"
+        logit_tensors[name] = logits_cpu
+        logit_tensors[ids_name] = torch.tensor(ids, dtype=torch.int32)
+        nan = bool(torch.isnan(logits_cpu).any() or torch.isinf(logits_cpu).any())
+        logit_cases.append({
+            "seq_len": sl, "input_ids": ids,
+            "logits_tensor": name, "input_ids_tensor": ids_name,
+            "logits_shape": [sl, VOCAB_SIZE], "logits_dtype": "F32",
+            "input_ids_dtype": "I32", "has_nan_inf": nan,
+        })
+        print(f"[golden] (a) seq={sl}: logits {list(logits_cpu.shape)} "
+              f"自己整合 max_abs={max_abs:.1e} nan/inf={nan}")
+    logits_path = os.path.join(out_dir, LOGITS_PATH)
+    save_file(logit_tensors, logits_path)
+    print(f"[golden] saved {logits_path} ({len(logit_tensors)} tensors)")
+
+    # ---- (b) 生成 golden -- 固定 text を greedy デコード ----
+    gen_texts = [
+        "a girl with long hair, looking at viewer, blue eyes.",
+        "a boy with black hair, smile.",
+        "1girl, twintails, school uniform, blush.",
+        "金髪ツインテールの少女が笑っている",
+        "two girls holding hands, blue sky.",
+    ]
+    gen_tensors = {}
+    gen_cases = []
+    for ci, text in enumerate(gen_texts):
+        text_ids = encode_text_greedy(tok, text)
+        prompt_ids = [TOK_BOS] + text_ids + [TOK_SEP]
+        gen_ids = _greedy_generate(model, prompt_ids, device, MAX_SEQ_LEN)
+        gen_ids2 = _greedy_generate(model, prompt_ids, device, MAX_SEQ_LEN)
+        if gen_ids != gen_ids2:
+            raise RuntimeError(f"生成が非決定的 case={ci}: {gen_ids} != {gen_ids2}")
+        name = f"gen_ids_c{ci}"
+        prompt_name = f"prompt_ids_c{ci}"
+        gen_tensors[name] = (torch.tensor(gen_ids, dtype=torch.int32)
+                             if gen_ids else torch.zeros((0,), dtype=torch.int32))
+        gen_tensors[prompt_name] = torch.tensor(prompt_ids, dtype=torch.int32)
+        gen_tags_readable = []
+        for tid in gen_ids:
+            if 5 <= tid < VOCAB_SIZE:
+                gen_tags_readable.append(tok.tags[tid - 5])
+            elif tid < 5:
+                gen_tags_readable.append(tok.specials[tid])
+        gen_cases.append({
+            "case": ci, "text": text, "prompt_ids": prompt_ids,
+            "prompt_ids_tensor": prompt_name, "gen_ids": gen_ids,
+            "gen_ids_tensor": name, "gen_len": len(gen_ids),
+            "gen_tags_readable": gen_tags_readable, "gen_ids_dtype": "I32",
+        })
+        print(f"[golden] (b) case={ci} text={text!r} prompt_len={len(prompt_ids)} "
+              f"gen_len={len(gen_ids)} tags={gen_tags_readable[:6]}...")
+    gen_path = os.path.join(out_dir, GEN_PATH)
+    empties = [c["case"] for c in gen_cases if c["gen_len"] == 0]
+    if empties:
+        print(f"[golden] WARN: 空生成 cases={empties}")
+    save_file(gen_tensors, gen_path)
+    print(f"[golden] saved {gen_path} ({len(gen_tensors)} tensors)")
+
+    # ---- manifest.json ----
+    manifest = {
+        "purpose": "dollama Phase 4 #6 -- C++ dense 推論 (src/infer/bitnet.hpp) の数値突合 golden",
+        "generator": "scripts/train_bitnet.py --dump-golden",
+        "source_weights": "data/bitnet/bitnet_dense_fp32.safetensors",
+        "device": device, "torch": torch.__version__, "seed": seed,
+        "arch": {
+            "VOCAB_SIZE": VOCAB_SIZE, "D_MODEL": D_MODEL, "N_LAYERS": N_LAYERS,
+            "N_HEADS": N_HEADS, "HEAD_DIM": HEAD_DIM, "FFN_DIM": FFN_DIM,
+            "MAX_SEQ_LEN": MAX_SEQ_LEN, "ROPE_BASE": ROPE_BASE, "RMS_EPS": RMS_EPS,
+        },
+        "specials": {"PAD": TOK_PAD, "BOS": TOK_BOS, "EOS": TOK_EOS,
+                     "SEP": TOK_SEP, "UNK": TOK_UNK},
+        "format": {
+            "container": "safetensors (little-endian raw, dtype/shape 自己記述)",
+            "logits_file": LOGITS_PATH, "gen_file": GEN_PATH,
+            "logits_dtype": "F32", "ids_dtype": "I32",
+            "layout": "logits は row-major [seq, vocab]、id 列は 1D [n]",
+            "reader": "src/io/safetensors.hpp で読める",
+        },
+        "logits_golden": {
+            "note": "各ケース input_ids を BitNetDense に通した FP32 logits [seq, vocab]。"
+                    "input_ids は val ペアの自己回帰列 prefix を連結して seq_len ちょうどに切出し。",
+            "cases": logit_cases,
+        },
+        "generation_golden": {"greedy_stop_rule": GREEDY_STOP_RULE, "cases": gen_cases},
+    }
+    manifest_path = os.path.join(out_dir, MANIFEST_PATH)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=1)
+    print(f"[golden] saved {manifest_path}")
+
+    # ---- 読み戻しサニティ ----
+    problems = []
+    lt = load_file(logits_path)
+    for c in logit_cases:
+        t = lt[c["logits_tensor"]]
+        if list(t.shape) != c["logits_shape"]:
+            problems.append(f"{c['logits_tensor']} shape {list(t.shape)} != {c['logits_shape']}")
+        if t.dtype != torch.float32:
+            problems.append(f"{c['logits_tensor']} dtype {t.dtype} != float32")
+        if torch.isnan(t).any() or torch.isinf(t).any():
+            problems.append(f"{c['logits_tensor']} has NaN/Inf")
+        it = lt[c["input_ids_tensor"]]
+        if list(it.shape) != [c["seq_len"]]:
+            problems.append(f"{c['input_ids_tensor']} shape {list(it.shape)} != [{c['seq_len']}]")
+        if it.dtype != torch.int32:
+            problems.append(f"{c['input_ids_tensor']} dtype {it.dtype} != int32")
+        if it.tolist() != c["input_ids"]:
+            problems.append(f"{c['input_ids_tensor']} ids 値が manifest と不一致")
+    gt = load_file(gen_path)
+    for c in gen_cases:
+        t = gt[c["gen_ids_tensor"]]
+        if t.dtype != torch.int32:
+            problems.append(f"{c['gen_ids_tensor']} dtype {t.dtype} != int32")
+        if t.tolist() != c["gen_ids"]:
+            problems.append(f"{c['gen_ids_tensor']} ids 値が manifest と不一致")
+    if problems:
+        print("[golden] SANITY PROBLEMS:")
+        for p in problems:
+            print("   ", p)
+        raise SystemExit(1)
+    print("[golden] サニティ OK: 全 golden shape/dtype 一致・NaN/Inf なし・自己整合 OK")
+    print(f"[golden] done. 出力先 {out_dir}/")
+
+
+# ==============================================================
 # 訓練ループ
 # ==============================================================
 def main():
@@ -524,7 +792,14 @@ def main():
     ap.add_argument("--smoke", action="store_true",
                     help="1 epoch・少数バッチで疎通確認")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--dump-golden", action="store_true",
+                    help="bitnet_dense_fp32.safetensors から #6 突合用 golden を dump (独立サブモード)")
     args = ap.parse_args()
+
+    # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
+    if args.dump_golden:
+        dump_golden(args)
+        return
 
     import random
     seed = args.seed
@@ -628,8 +903,19 @@ def main():
     train_time = time.time() - t0
 
     # ---- 重み出力 ----
-    fp16_path = os.path.join(data_dir, "bitnet_dense.safetensors")
-    fp32_path = os.path.join(data_dir, "bitnet_dense_fp32.safetensors")
+    # footgun 対策: --smoke は疎通確認専用なので本番の重み/stats を絶対に上書きしない。
+    #   smoke 時は別名 (bitnet_dense_smoke*.safetensors / train_stats_smoke.json) へ書く。
+    #   本番訓練モード (--smoke なし) の挙動・ファイル名は一切変えない。
+    if args.smoke:
+        fp16_path = os.path.join(data_dir, "bitnet_dense_smoke.safetensors")
+        fp32_path = os.path.join(data_dir, "bitnet_dense_smoke_fp32.safetensors")
+        stats_filename = "train_stats_smoke.json"
+        print("[smoke] 出力は smoke 別名へ (本番 bitnet_dense*.safetensors / "
+              "train_stats.json は上書きしない)")
+    else:
+        fp16_path = os.path.join(data_dir, "bitnet_dense.safetensors")
+        fp32_path = os.path.join(data_dir, "bitnet_dense_fp32.safetensors")
+        stats_filename = "train_stats.json"
     keys = export_safetensors(model, fp16_path, torch.float16)
     export_safetensors(model, fp32_path, torch.float32)
     print(f"[save] {fp16_path} ({len(keys)} tensors, FP16)")
@@ -690,7 +976,7 @@ def main():
         "tensor_keys": keys,
         "history": history,
     }
-    stats_path = os.path.join(data_dir, "train_stats.json")
+    stats_path = os.path.join(data_dir, stats_filename)
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
     print(f"[save] {stats_path}")

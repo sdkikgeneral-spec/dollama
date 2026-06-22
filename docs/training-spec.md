@@ -138,3 +138,83 @@ python scripts/train_bitnet.py --epochs 6 --loss-mode tags --batch-size 32 --lr 
 - **#6 ゴールデン突合**: bitnet.hpp の dense 等価 forward (BitLinear を素の FP Linear に
   置き換えた版) と本モデルの logits を突き合わせ、RoPE NeoX 方式・RMSNorm・SwiGLU・
   tied lm_head の数値一致を確認する (FP32 golden を使用)。
+
+## 8. golden dump フォーマット仕様 (#6 C++ dense 推論の数値突合用)
+
+`scripts/train_bitnet.py --dump-golden` は `data/bitnet/bitnet_dense_fp32.safetensors`
+(6 epoch 採用重み・FP32) を `BitNetDense` にロードし、`data/bitnet/golden/` に以下を出力する。
+このサブモードは**訓練を行わず、本番の重み・`train_stats.json` を一切書き換えない** (golden のみ書く)。
+golden は `.gitignore` 済み (大容量・再生成可)。生成は CPU 既定 (決定性重視・1080Ti は FP16 native 非対応)。
+
+### 8.1 出力ファイル一覧
+
+| ファイル | 形式 | 内容 |
+|---|---|---|
+| `logits_golden.safetensors` | safetensors (little-endian raw) | (a) ロジット golden |
+| `gen_golden.safetensors` | safetensors | (b) 生成 golden |
+| `manifest.json` | JSON (UTF-8, `ensure_ascii=False`) | 全ケースの索引・停止規則・arch 定数 |
+
+ロジット・id 列をすべて safetensors にしたのは、#6 が `src/io/safetensors.hpp` で
+同じローダーで読め、dtype/shape/エンディアン取り違えを構造的に排除できるため。
+
+### 8.2 `logits_golden.safetensors` のテンソル (6 テンソル)
+
+各 seq_len ∈ {8, 32, 63} について 2 テンソル (63 は MAX_SEQ_LEN=64 直下の境界)。
+
+| テンソル名 | shape | dtype | 内容 |
+|---|---|---|---|
+| `logits_s{sl}` | `[sl, 4999]` | F32 | input_ids を `BitNetDense` に通した FP32 logits (row-major [seq, vocab]) |
+| `input_ids_s{sl}` | `[sl]` | I32 | 入力 token id 列 (1D) |
+
+- `{sl}` ∈ `8 / 32 / 63`。
+- input_ids は `pairs.val.jsonl` の自己回帰列 (`build_sequence`) を固定順に連結し
+  seq_len ちょうどで切り出したもの (再現可能・全 id が seq 範囲内)。具体値は manifest に記録。
+
+### 8.3 `gen_golden.safetensors` のテンソル (10 テンソル)
+
+5 ケース × 2 テンソル。`gen_len==0` のケースは shape `[0]` の空テンソルで保存する。
+
+| テンソル名 | shape | dtype | 内容 |
+|---|---|---|---|
+| `prompt_ids_c{ci}` | `[plen]` | I32 | プロンプト id 列 = `[<bos>] + encode_text_greedy(text) + [<sep>]` |
+| `gen_ids_c{ci}` | `[gen_len]` | I32 | greedy 生成した tag id 列 (prompt・`<eos>` を**含まない** pure な生成部) |
+
+`{ci}` ∈ `0..4`。各ケースの text/prompt_ids/gen_ids/gen_tags_readable は manifest に記録。
+
+### 8.4 greedy 停止規則 (C++ #6 が完全再現すること)
+
+`manifest.json` の `generation_golden.greedy_stop_rule` にも機械可読で記録。手順:
+
+1. **prompt** = `[<bos>] + encode_text_greedy(text) + [<sep>]`
+   (`<bos>`=1, `<sep>`=3。`encode_text_greedy` は §6 正規化 + 英数字連結語の greedy 最長一致・
+   非語彙語スキップ。tokenizer.hpp::encode_text と同一)。
+2. **各ステップ**: 現在列全体を `BitNetDense` に通し、**最終位置 (列末) の logits** を取る。
+   その argmax を次トークンとする (**FP32 で argmax**・**ties は最小 id** を採用 = `torch.argmax` の挙動)。
+3. 生成した id を列に追記し、生成 tag id 列にも記録する。
+4. **停止条件** (どちらか満たしたら即停止):
+   - 次トークン == `<eos>`(=2) → `<eos>` は生成列に**含めず**停止。
+   - 列長が `MAX_SEQ_LEN`(=64) に達した → そこで打ち切り。
+5. **repeat 抑制・重複除去は行わない** (素の greedy。同一タグが連続出力されうる。C++ も同一に)。
+6. `<eos>` **以外**の specials (`<pad>`=0 / `<bos>`=1 / `<sep>`=3 / `<unk>`=4) が生成されても
+   特別扱いせず、そのまま列に積む (**停止するのは `<eos>` のみ**)。
+
+### 8.5 サニティ・自己整合 (dump 時に検証済み)
+
+- ロジット自己整合: 同一入力を 2 回 forward し `max_abs == 0.0` (完全一致) を確認。
+- 生成決定性: 同一 prompt を 2 回デコードし gen_ids 一致を確認。
+- 読み戻し: 保存後に再ロードし shape/dtype/NaN・Inf なし・manifest の id 値一致を確認。
+
+### 8.6 採用 golden の各ケース (6 epoch 重み・seed 20260620・CPU)
+
+ロジット: seq_len 8 / 32 / 63 (各 logits `[sl,4999]` F32・input_ids `[sl]` I32)。
+
+| case | text | prompt_len | gen_len |
+|---|---|---|---|
+| 0 | `a girl with long hair, looking at viewer, blue eyes.` | 5 | 16 |
+| 1 | `a boy with black hair, smile.` | 4 | 8 |
+| 2 | `1girl, twintails, school uniform, blush.` | 6 | 14 |
+| 3 | `金髪ツインテールの少女が笑っている` | 2 | 9 |
+| 4 | `two girls holding hands, blue sky.` | 4 | 8 |
+
+(case 3 は語彙外の日本語のため `encode_text_greedy` がほぼ空 → prompt は `<bos><sep>` の 2 トークン。
+読み取れる語彙が無くてもモデルは `<sep>` 以降の自己回帰で生成を続ける。)
