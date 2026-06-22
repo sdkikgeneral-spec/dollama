@@ -1,0 +1,107 @@
+@* ラベル + 専用プリセット・バー + チップ入力 を 1 セットにした再利用フィールド。
+   プロンプト用 (Kind="prompt") とネガティブ用 (Kind="negative") で 1 つずつ使う。
+   プリセットは Kind で型分けされ、このフィールドのバーからは同 Kind のものだけ見える。 *@
+@inject PresetStore Presets
+
+<div class="field">
+    <span>@Label</span>
+
+    <!-- 専用プリセット・バー (この Kind 限定) -->
+    <div class="presetbar">
+        <select class="preset-select" @bind="_selected">
+            <option value="">― @Label プリセット ―</option>
+            @foreach (var p in _presets)
+            {
+                <option value="@p.Name">@p.Name</option>
+            }
+        </select>
+        <button type="button" class="preset-btn" @onclick="Load"
+                disabled="@(string.IsNullOrEmpty(_selected))">ロード</button>
+        <button type="button" class="preset-btn danger" @onclick="DeleteSelected"
+                disabled="@(string.IsNullOrEmpty(_selected))">削除</button>
+        <input class="preset-name" @bind="_newName" placeholder="保存名" />
+        <button type="button" class="preset-btn" @onclick="SaveCurrent"
+                disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
+    </div>
+    @if (_msg is not null)
+    {
+        <div class="preset-msg">@_msg</div>
+    }
+
+    <TagInput Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder" />
+</div>
+
+@code {
+    // 表示ラベル ("プロンプト" / "ネガティブ")
+    [Parameter] public string Label { get; set; } = "";
+
+    // プリセットの型 ("prompt" / "negative")
+    [Parameter] public string Kind { get; set; } = "";
+
+    // 親と共有するタグ列 (双方向バインド)
+    [Parameter] public List<string> Tags { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> TagsChanged { get; set; }
+
+    [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
+
+    private IReadOnlyList<TagPreset> _presets = new List<TagPreset>();
+    private string _selected = "";
+    private string _newName = "";
+    private string? _msg;
+
+    protected override void OnInitialized()
+    {
+        // PresetStore はローカルファイル読みなのでプリレンダリング中でも安全 (同期・高速)
+        _presets = Presets.All(Kind);
+    }
+
+    private async Task OnTagsChanged(List<string> tags)
+    {
+        Tags = tags;
+        await TagsChanged.InvokeAsync(tags);
+    }
+
+    private async Task Load()
+    {
+        var p = _presets.FirstOrDefault(x => x.Name == _selected);
+        if (p is null)
+        {
+            return;
+        }
+        // コピーで復元 (プリセット内のリストを直接編集しないため)
+        await OnTagsChanged(new List<string>(p.Tags));
+        _msg = $"「{p.Name}」をロードしました";
+    }
+
+    private void SaveCurrent()
+    {
+        var name = _newName.Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+        Presets.Save(new TagPreset
+        {
+            Name = name,
+            Kind = Kind,
+            Tags = new List<string>(Tags),
+        });
+        _presets = Presets.All(Kind);
+        _selected = name;
+        _newName = "";
+        _msg = $"「{name}」を保存しました";
+    }
+
+    private void DeleteSelected()
+    {
+        if (string.IsNullOrEmpty(_selected))
+        {
+            return;
+        }
+        var name = _selected;
+        Presets.Delete(Kind, name);
+        _presets = Presets.All(Kind);
+        _selected = "";
+        _msg = $"「{name}」を削除しました";
+    }
+}

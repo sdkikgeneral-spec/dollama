@@ -1,0 +1,83 @@
+@* 再利用チップ入力。タグ (danbooru タグ) を 1 つずつ追加・削除する。
+   プロンプトとネガティブの両方で使う。Tags は親と双方向バインド。 *@
+
+<div class="taginput">
+    <div class="chips">
+        @foreach (var tag in Tags)
+        {
+            <span class="tag-chip">
+                @tag
+                <button type="button" class="chip-x" @onclick="() => Remove(tag)" title="削除">×</button>
+            </span>
+        }
+        <input class="chip-entry"
+               placeholder="@(Tags.Count == 0 ? Placeholder : "")"
+               @bind="_draft"
+               @bind:event="oninput"
+               @onkeydown="OnKeyDown" />
+    </div>
+</div>
+
+@code {
+    // 親と共有するタグ列 (双方向バインド)
+    [Parameter] public List<string> Tags { get; set; } = new();
+    [Parameter] public EventCallback<List<string>> TagsChanged { get; set; }
+
+    // 空のときに表示するプレースホルダ
+    [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
+
+    private string _draft = "";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" || e.Key == ",")
+        {
+            await CommitDraft();
+        }
+        else if (e.Key == "Backspace" && string.IsNullOrEmpty(_draft) && Tags.Count > 0)
+        {
+            // 空入力で Backspace → 末尾チップを削除
+            Tags.RemoveAt(Tags.Count - 1);
+            await TagsChanged.InvokeAsync(Tags);
+        }
+    }
+
+    // 入力中テキストを (カンマ区切りも展開して) タグ化して確定する
+    private async Task CommitDraft()
+    {
+        var parts = _draft.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var added = false;
+        foreach (var p in parts)
+        {
+            if (AddOne(p))
+            {
+                added = true;
+            }
+        }
+        _draft = "";
+        if (added)
+        {
+            await TagsChanged.InvokeAsync(Tags);
+        }
+    }
+
+    // 1 タグを正規化して追加。重複は無視。追加できたら true。
+    private bool AddOne(string raw)
+    {
+        var tag = raw.Trim().ToLowerInvariant();
+        if (tag.Length == 0 || Tags.Contains(tag))
+        {
+            return false;
+        }
+        Tags.Add(tag);
+        return true;
+    }
+
+    private async Task Remove(string tag)
+    {
+        if (Tags.Remove(tag))
+        {
+            await TagsChanged.InvokeAsync(Tags);
+        }
+    }
+}

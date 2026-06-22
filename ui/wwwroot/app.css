@@ -1,0 +1,450 @@
+/* dollama UI — LM Studio 風ダーク 2 カラム (叩き台) */
+
+:root
+{
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --panel-2: #23272f;
+    --border: #2c313b;
+    --text: #e6e9ef;
+    --muted: #8b92a0;
+    --accent: #6ea8fe;
+    --ok: #3fb950;
+    --ng: #f85149;
+}
+
+*
+{
+    box-sizing: border-box;
+}
+
+html, body
+{
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
+    font-size: 14px;
+}
+
+.app
+{
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ── トップバー ── */
+.topbar
+{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+}
+
+.brand
+{
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.02em;
+}
+
+.brand-sub
+{
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 12px;
+}
+
+.conn
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.conn .dot
+{
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ng);
+}
+
+.conn.ok .dot
+{
+    background: var(--ok);
+}
+
+.conn.ok
+{
+    color: var(--ok);
+}
+
+/* ── メイン 2 カラム ── */
+.main
+{
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 16px;
+    padding: 16px;
+    flex: 1;
+    min-height: 0;
+}
+
+/* 生成パネル */
+.gen
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.field
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.field > span
+{
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.row
+{
+    display: flex;
+    gap: 12px;
+}
+
+.grow
+{
+    flex: 1;
+}
+
+textarea, select, input[type="range"]
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    font: inherit;
+    resize: vertical;
+}
+
+textarea:focus, select:focus
+{
+    outline: none;
+    border-color: var(--accent);
+}
+
+.generate
+{
+    background: var(--accent);
+    color: #0b1220;
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.generate:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+.error
+{
+    background: rgba(248, 81, 73, 0.12);
+    border: 1px solid var(--ng);
+    color: #ffb4ae;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+.preview
+{
+    flex: 1;
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel-2);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.preview img
+{
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.placeholder
+{
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.spinner
+{
+    width: 36px;
+    height: 36px;
+    border: 4px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin
+{
+    to { transform: rotate(360deg); }
+}
+
+/* ── テレメトリ・サイドバー ── */
+.telemetry
+{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.telemetry h2
+{
+    margin: 0;
+    font-size: 14px;
+}
+
+.hint
+{
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.meter
+{
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.meter-head
+{
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.meter-head .dev
+{
+    font-weight: 700;
+}
+
+.meter-head .role
+{
+    color: var(--muted);
+    flex: 1;
+}
+
+.meter-head .pct
+{
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+}
+
+.bar
+{
+    height: 8px;
+    background: var(--panel-2);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.fill
+{
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #9d7bff);
+    transition: width 0.4s ease;
+}
+
+.note
+{
+    margin-top: auto;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+/* ── プリセット・バー ── */
+.presetbar
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.preset-select, .preset-name
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+}
+
+.preset-select
+{
+    min-width: 160px;
+}
+
+.preset-name
+{
+    flex: 1;
+    min-width: 120px;
+}
+
+.preset-btn
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.preset-btn:hover:not(:disabled)
+{
+    border-color: var(--accent);
+}
+
+.preset-btn.danger:hover:not(:disabled)
+{
+    border-color: var(--ng);
+    color: #ffb4ae;
+}
+
+.preset-btn:disabled
+{
+    opacity: 0.45;
+    cursor: default;
+}
+
+.preset-msg
+{
+    font-size: 12px;
+    color: var(--accent);
+}
+
+/* ── チップ入力 (TagInput) ── */
+.taginput .chips
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    min-height: 38px;
+}
+
+.tag-chip
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(110, 168, 254, 0.15);
+    border: 1px solid rgba(110, 168, 254, 0.4);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 2px 4px 2px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.chip-x
+{
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 4px;
+    border-radius: 50%;
+}
+
+.chip-x:hover
+{
+    color: var(--ng);
+}
+
+.chip-entry
+{
+    flex: 1;
+    min-width: 120px;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    padding: 4px;
+}
+
+.chip-entry:focus
+{
+    outline: none;
+}
+
+/* Blazor 既定のエラー UI */
+#blazor-error-ui
+{
+    background: #1c1f26;
+    border-top: 1px solid var(--ng);
+    bottom: 0;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+    color: var(--text);
+}
+
+#blazor-error-ui .dismiss
+{
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}

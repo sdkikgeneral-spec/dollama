@@ -1,0 +1,194 @@
+@page "/"
+@rendermode InteractiveServer
+@using Dollama.Ui.Services
+@using Dollama.Ui.Telemetry
+@inject DollamaClient Client
+@inject NavigationManager Nav
+@inject GenerationActivity Activity
+@implements IAsyncDisposable
+
+<PageTitle>dollama</PageTitle>
+
+<div class="app">
+    <header class="topbar">
+        <div class="brand">dollama <span class="brand-sub">/ 全 HW 協調 2D キャラ生成</span></div>
+        <div class="conn @(_connected ? "ok" : "ng")">
+            <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
+        </div>
+    </header>
+
+    <div class="main">
+        <!-- 生成パネル -->
+        <section class="gen">
+            <TagPresetField Label="プロンプト" Kind="prompt"
+                            @bind-Tags="_promptTags"
+                            Placeholder="例: 1girl と入力して Enter" />
+
+            <TagPresetField Label="ネガティブ" Kind="negative"
+                            @bind-Tags="_negativeTags"
+                            Placeholder="例: lowres, bad anatomy" />
+
+            <div class="row">
+                <label class="field">
+                    <span>サイズ</span>
+                    <select @bind="_size">
+                        <option value="512x512">512 x 512</option>
+                        <option value="768x768">768 x 768</option>
+                        <option value="1024x1024">1024 x 1024</option>
+                    </select>
+                </label>
+                <label class="field grow">
+                    <span>ステップ: @_steps</span>
+                    <input type="range" min="1" max="50" @bind="_steps" @bind:event="oninput" />
+                </label>
+            </div>
+
+            <button class="generate" @onclick="GenerateAsync" disabled="@_busy">
+                @(_busy ? "生成中…" : "生成")
+            </button>
+
+            @if (_error is not null)
+            {
+                <div class="error">@_error</div>
+            }
+
+            <div class="preview">
+                @if (_busy)
+                {
+                    <div class="spinner"></div>
+                }
+                else if (_imageData is not null)
+                {
+                    <img src="data:image/png;base64,@_imageData" alt="generated" />
+                }
+                else
+                {
+                    <div class="placeholder">生成画像がここに表示されます</div>
+                }
+            </div>
+        </section>
+
+        <!-- HW テレメトリ・サイドバー -->
+        <aside class="telemetry">
+            <h2>HW テレメトリ</h2>
+            <p class="hint">@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")</p>
+            @if (_sample is null)
+            {
+                <p class="hint">接続待ち…</p>
+            }
+            else
+            {
+                @foreach (var d in _sample.Devices)
+                {
+                    <div class="meter">
+                        <div class="meter-head">
+                            <span class="dev">@d.Device</span>
+                            <span class="role">@d.Role</span>
+                            <span class="pct">@d.Percent.ToString("0")%</span>
+                        </div>
+                        <div class="bar"><div class="fill" style="width:@d.Percent.ToString("0")%"></div></div>
+                    </div>
+                }
+            }
+            <p class="note">※ 現在のテレメトリはスタブ値。実 HW 計測は C++ 側 /telemetry 実装後に差し替え。</p>
+        </aside>
+    </div>
+</div>
+
+@code {
+    private List<string> _promptTags = new();
+    private List<string> _negativeTags = new();
+    private string _size = "1024x1024";
+    private int _steps = 20;
+
+    private bool _busy;
+    private string? _error;
+    private string? _imageData;   // base64 PNG
+    private bool _connected;
+
+    private HubConnection? _hub;
+    private TelemetrySample? _sample;
+
+    // 接続チェックと SignalR 購読は「インタラクティブ確立後 (= 最初の描画後)」に行う。
+    // OnInitializedAsync でやるとプリレンダリング中に HealthAsync(最大2秒) と
+    // 自己 SignalR 接続が走り、最初のバイトが返るまで固まってブラウザが
+    // 「ページを読み込めませんでした」になる。OnAfterRenderAsync なら描画は即返る。
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // 接続インジケータ (初回チェック)
+        _connected = await Client.HealthAsync();
+        await InvokeAsync(StateHasChanged);
+
+        // テレメトリ Hub を購読
+        _hub = new HubConnectionBuilder()
+            .WithUrl(Nav.ToAbsoluteUri("/hubs/telemetry"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hub.On<TelemetrySample>("Update", sample =>
+        {
+            _sample = sample;
+            // Hub コールバックは別コンテキストなので InvokeAsync で UI スレッドへ
+            return InvokeAsync(StateHasChanged);
+        });
+
+        await _hub.StartAsync();
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (_busy || _promptTags.Count == 0)
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        _imageData = null;
+        StateHasChanged();
+
+        var req = new GenerationRequest
+        {
+            Prompt = string.Join(", ", _promptTags),
+            NegativePrompt = _negativeTags.Count == 0 ? null : string.Join(", ", _negativeTags),
+            Size = _size,
+            Steps = _steps,
+        };
+
+        // 生成中フラグを立てる → TelemetryBroadcaster が GPU を高負荷側に振る
+        Activity.Enter();
+        try
+        {
+            var png = await Client.GenerateAsync(req);
+            _imageData = Convert.ToBase64String(png);
+            _connected = true;
+        }
+        catch (GenerationException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _error = $"接続エラー: {ex.Message}";
+            _connected = false;
+        }
+        finally
+        {
+            Activity.Exit();
+            _busy = false;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hub is not null)
+        {
+            await _hub.DisposeAsync();
+        }
+    }
+}

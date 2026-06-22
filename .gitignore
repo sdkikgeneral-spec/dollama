@@ -59,3 +59,9 @@ builddir/
 # Windows
 Thumbs.db
 desktop.ini
+
+# .NET / Blazor UI (ui/) のビルド成果物
+ui/bin/
+ui/obj/
+# UI のユーザーデータ (名前付きプリセット)。個人データなので追跡しない。
+ui/data/
