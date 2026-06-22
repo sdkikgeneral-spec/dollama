@@ -216,6 +216,21 @@ public:
         return d_ptr;
     }
 
+    // S3-D: 常駐ハンドル生成時に全 FP16 重みを先読みして upload しておく。
+    // こうすると VAE decode 本体の計測区間では重み転送が一切発生せず、
+    // 生成あたり ~3.89s の固定 cudaMalloc+H2D コストが初回 create に寄せられる。
+    // F16 以外のテンソル (もしあれば) は VAE では使わないのでスキップする。
+    void upload_all()
+    {
+        for (const std::string& name : st_.names())
+        {
+            if (st_.dtype(name) == StDtype::F16)
+            {
+                (void)get(name);
+            }
+        }
+    }
+
 private:
     const SafeTensors&             st_;
     std::map<std::string, __half*> cache_;
@@ -542,13 +557,13 @@ static void resnet_block_f32(DeviceWeights& w, const std::string& prefix,
     launch_group_norm_f32(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
                           d_tmp_a, 1, Cin, H, W, groups, eps);
     launch_silu_f32(d_tmp_a, d_tmp_a, (long)Cin * HW);
-    launch_conv2d_f32(d_tmp_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
+    launch_conv2d_f32_gemm(d_tmp_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
                       d_tmp_b, 1, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 
     launch_group_norm_f32(d_tmp_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
                           d_tmp_a, 1, Cout, H, W, groups, eps);
     launch_silu_f32(d_tmp_a, d_tmp_a, (long)Cout * HW);
-    launch_conv2d_f32(d_tmp_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
+    launch_conv2d_f32_gemm(d_tmp_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
                       d_out, 1, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 
     if (Cin == Cout)
@@ -557,7 +572,7 @@ static void resnet_block_f32(DeviceWeights& w, const std::string& prefix,
     }
     else
     {
-        launch_conv2d_f32(d_x, w.get(prefix + "conv_shortcut.weight"),
+        launch_conv2d_f32_gemm(d_x, w.get(prefix + "conv_shortcut.weight"),
                           w.get(prefix + "conv_shortcut.bias"),
                           d_tmp_b, 1, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
         launch_add_f32(d_out, d_tmp_b, d_out, (long)Cout * HW);
@@ -653,12 +668,12 @@ static void attn_block(DeviceWeights& w, const std::string& prefix,
 // ----------------------------------------------------------------
 // VAE decoder 本体
 // ----------------------------------------------------------------
-void launch_vae_decode(const SafeTensors& weights,
-                       const __half*      d_latent,
-                       __half*            d_image_out)
+// 本体ロジック (重みは DeviceWeights& を呼び出し側から受け取る)。
+// 後方互換版 launch_vae_decode と常駐ハンドル版 launch_vae_decode が共有する。
+static void launch_vae_decode_impl(DeviceWeights& w,
+                                   const __half*  d_latent,
+                                   __half*        d_image_out)
 {
-    DeviceWeights w(weights);
-
     const int   groups = 32;
     const float eps    = 1e-6f;
 
@@ -779,7 +794,7 @@ void launch_vae_decode(const SafeTensors& weights,
         const int H2 = H << 1, W2 = W << 1;
         float* d_up = sc.alloc(static_cast<size_t>(Cout) * H2 * W2);
         launch_upsample2x_f32(d_r, d_up, 1, Cout, H, W);
-        launch_conv2d_f32(d_up, w.get("decoder.up_blocks.2.upsamplers.0.conv.weight"),
+        launch_conv2d_f32_gemm(d_up, w.get("decoder.up_blocks.2.upsamplers.0.conv.weight"),
                           w.get("decoder.up_blocks.2.upsamplers.0.conv.bias"),
                           f_next, 1, Cout, H2, W2, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
     }
@@ -816,7 +831,7 @@ void launch_vae_decode(const SafeTensors& weights,
         dbg_stat_f32("conv_norm_out_out", d_n, (size_t)128*1024*1024);
         // conv_out: 128 -> 3。FP32 で計算し、出力を直接 FP16 image へ書く。
         float* d_img32 = sc.alloc(static_cast<size_t>(3) * H * W);
-        launch_conv2d_f32(d_n, w.get("decoder.conv_out.weight"), w.get("decoder.conv_out.bias"),
+        launch_conv2d_f32_gemm(d_n, w.get("decoder.conv_out.weight"), w.get("decoder.conv_out.bias"),
                           d_img32, 1, C, H, W, 3, 3, 3, 1, 1, 1, 1, 1, 1);
         launch_f2h(d_img32, d_image_out, static_cast<long>(3) * H * W);
         dbg_stat("final_image", d_image_out, (size_t)3*1024*1024);
@@ -827,6 +842,49 @@ void launch_vae_decode(const SafeTensors& weights,
     CUDA_CHECK(cudaFree(f_next));
     CUDA_CHECK(cudaFree(d_cur));
     CUDA_CHECK(cudaFree(d_next));
+}
+
+// ----------------------------------------------------------------
+// 後方互換版: SafeTensors を直接受け取り、毎回ローカルに全重みを
+// upload して decode する (test_vae_decode が使用)。
+// ----------------------------------------------------------------
+void launch_vae_decode(const SafeTensors& weights,
+                       const __half*      d_latent,
+                       __half*            d_image_out)
+{
+    DeviceWeights w(weights);
+    launch_vae_decode_impl(w, d_latent, d_image_out);
+}
+
+// ----------------------------------------------------------------
+// 常駐重みハンドル API (S3-D)。
+//   DeviceWeights を 1 個ヒープに確保して不透明ポインタとして返す。create 時に
+//   upload_all() で全 FP16 重みをデバイスへ常駐させるため、以降の launch では
+//   再 malloc / 再 H2D が一切発生しない (生成あたり ~3.89s の固定コストを消す)。
+// ----------------------------------------------------------------
+VaeWeightsHandle vae_weights_create(const SafeTensors& weights)
+{
+    DeviceWeights* w = new DeviceWeights(weights);
+    // 全重みをデバイスへ常駐させる (一度きり)。以降の get() は即返し。
+    w->upload_all();
+    return static_cast<VaeWeightsHandle>(w);
+}
+
+void vae_weights_destroy(VaeWeightsHandle handle)
+{
+    if (handle == nullptr)
+    {
+        return;
+    }
+    delete static_cast<DeviceWeights*>(handle);
+}
+
+void launch_vae_decode(VaeWeightsHandle handle,
+                       const __half*    d_latent,
+                       __half*          d_image_out)
+{
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    launch_vae_decode_impl(w, d_latent, d_image_out);
 }
 
 } // namespace dollama

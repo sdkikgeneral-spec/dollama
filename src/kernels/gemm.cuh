@@ -50,4 +50,21 @@ void launch_gemm_fp16(const __half* d_A,
                       bool          transA,
                       bool          transB);
 
+// ----------------------------------------------------------------
+// FP32 dense GEMM (S3-E): C[M,N] = alpha*op(A) @ op(B) + beta*C。
+// すべて FP32 (CUDA_R_32F) デバイスポインタ。VAE up2/up3 の im2col + GEMM 用。
+// cuBLAS GemmEx に委譲する (既定 TF32 Tensor Core / env DOLLAMA_VAE_GEMM=fp32 で純 FP32)。
+// レイアウト・transA/transB の意味は launch_gemm_fp16 と同一。transA=true は非対応。
+// 起動後に CUDA_CHECK_KERNEL() は不要 (cuBLAS は status で検査済み)。
+void launch_gemm_f32(const float* d_A,
+                     const float* d_B,
+                     float*       d_C,
+                     int          M,
+                     int          N,
+                     int          K,
+                     float        alpha,
+                     float        beta,
+                     bool         transA,
+                     bool         transB);
+
 } // namespace dollama

@@ -12,3 +12,16 @@ option('with_openvino', type: 'boolean', value: true,
 
 option('with_http', type: 'boolean', value: true,
   description: 'HTTP サーバー (OpenAI Images 互換) を有効化 (cpp-httplib + nlohmann/json)')
+
+# ----------------------------------------------------------------
+# S3-0 ビルドフラグ掃除 (タスク 2-6 最適化)
+# すべて meson option で on/off 切替可能。崩れたら 1 フラグで revert できる。
+# ----------------------------------------------------------------
+option('fast_math', type: 'boolean', value: true,
+  description: 'CUDA に --use_fast_math を付与 (device 側 fast-math・数%)。revert は -Dfast_math=false')
+
+option('host_avx2', type: 'boolean', value: true,
+  description: 'MSVC ホスト (cpp / .cu のホスト部) に /arch:AVX2 を付与 (host 側 SIMD)。revert は -Dhost_avx2=false')
+
+option('host_lto', type: 'boolean', value: false,
+  description: 'ホスト LTO (b_lto) を有効化。nvcc obj と MSVC LTCG は非互換で CUDA exe の link が壊れうるため既定 false。revert は -Dhost_lto=false')

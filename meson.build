@@ -4,6 +4,10 @@ project('dollama', ['cpp'],
     'cpp_std=c++20',
     'buildtype=release',
     'warning_level=2',
+    # S3-0: release ビルドでのみ assert を無効化 (-DNDEBUG)。
+    # device/host 両方の assert と CCCL_ENABLE_ASSERTIONS を外す。
+    # debug ビルドでは assert を残す。revert は 'b_ndebug=false' を指定。
+    'b_ndebug=if-release',
   ]
 )
 
@@ -15,6 +19,33 @@ is_linux = host_os == 'linux'
 # MSVC: ソース/実行文字セットを UTF-8 に統一 (文字化け防止)
 if cpp.get_id() == 'msvc'
   add_project_arguments('/utf-8', language: 'cpp')
+endif
+
+# ----------------------------------------------------------------
+# S3-0 ホスト最適化フラグ (タスク 2-6 最適化・ビルド構成のみ)
+# すべて meson option で on/off 可。崩れたら 1 フラグで revert できる。
+# ----------------------------------------------------------------
+# host_avx2: MSVC ホストに /arch:AVX2 (safetensors ロード / WD14 グルー / HTTP /
+#            JSON / base64 など host 側 SIMD。数〜十数%)。.cu のホスト部にも下で渡す。
+if cpp.get_id() == 'msvc' and get_option('host_avx2')
+  add_project_arguments('/arch:AVX2', language: 'cpp')
+  message('host_avx2: /arch:AVX2 (cpp) 有効')
+endif
+
+# host_lto: ホスト LTO。nvcc obj と MSVC LTCG は非互換のため、CUDA をリンクする
+#           exe (dollama 本体 / test_unet / test_diffusion 等) の link が壊れうる。
+#           そのため既定 false。true のときだけ cpp 側に LTO フラグを足す。
+#           CUDA exe で link が通るかは setup→compile で実検証する。
+if get_option('host_lto')
+  if cpp.get_id() == 'msvc'
+    # MSVC: コンパイル時 /GL + リンク時 /LTCG。
+    add_project_arguments('/GL', language: 'cpp')
+    add_project_link_arguments('/LTCG', language: 'cpp')
+  else
+    add_project_arguments('-flto', language: 'cpp')
+    add_project_link_arguments('-flto', language: 'cpp')
+  endif
+  message('host_lto: ホスト LTO 有効 (CUDA exe の link 互換性に注意)')
 endif
 
 # ----------------------------------------------------------------
@@ -75,19 +106,33 @@ if get_option('with_cuda')
   cuda_inc     = include_directories(cuda_root / 'include', is_system: true)
   cuda_lib_dir = is_win ? cuda_root / 'lib/x64' : cuda_root / 'lib64'
   cuda_rt      = cpp.find_library('cudart', dirs: [cuda_lib_dir], required: false)
+  # S3-B: transformer の巨大 Linear GEMM を cuBLAS GemmEx (FP16 in / FP32 acc) に委譲する。
+  # 自作 wmma は env DOLLAMA_GEMM=wmma で再選択できるよう残置 (kernels/gemm.cu)。
+  cuda_blas    = cpp.find_library('cublas', dirs: [cuda_lib_dir], required: false)
 
   if cuda_rt.found()
     # cpp 側 (allocator.hpp など) が cudaMalloc 等をリンクするための依存。
-    # CUDA 言語有効化前から維持する (壊さない)。
+    # CUDA 言語有効化前から維持する (壊さない)。cublas は gemm.cu が使う。
+    cuda_link = [cuda_rt]
+    if cuda_blas.found()
+      cuda_link += cuda_blas
+    else
+      warning('cublas が見つかりません。GEMM は自作 wmma にフォールバックします。')
+    endif
     cuda_dep = declare_dependency(
       include_directories : cuda_inc,
-      dependencies        : [cuda_rt],
+      dependencies        : cuda_link,
     )
 
     # .cu をコンパイルするための CUDA 言語を有効化 (nvcc 検出)。
     cuda_enabled = add_languages('cuda', required: true, native: false)
     if cuda_enabled
       add_project_arguments('-arch=sm_120', language: 'cuda')
+      # S3-0 fast_math: device 側 fast-math (数%)。revert は -Dfast_math=false。
+      if get_option('fast_math')
+        add_project_arguments('--use_fast_math', language: 'cuda')
+        message('fast_math: --use_fast_math (cuda) 有効')
+      endif
       message('CUDA: ' + cuda_root + ' (sm_120 有効)')
     else
       warning('nvcc が見つかりません。.cu のコンパイルは無効です。')
