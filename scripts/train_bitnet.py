@@ -1217,6 +1217,12 @@ def main():
     ap.add_argument("--dump-golden-identity", action="store_true",
                     help="A3: identity 条件付き系列の golden を dump (独立サブモード・"
                          "bitnet_dense_identity_fp32.safetensors を使う)")
+    ap.add_argument("--distill", action="store_true",
+                    help="D3: train に pairs.distill.train.jsonl (Qwen2 蒸留ペア) を混合し "
+                         "過学習緩和を狙う。val は #1 と同一の pairs.val.jsonl で不変。"
+                         "出力は bitnet_dense_distill* / train_stats_distill.json (別名・"
+                         "#1/#4/#6 の重み・golden は無改変)。--identity 未指定時は "
+                         "synthetic(4500)+distill を混合 (#1 系の蒸留版)。")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
@@ -1260,6 +1266,12 @@ def main():
         # シャッフルは make_batches 側でも毎 epoch 行うが、source の偏りを避けるため
         # 結合直後にも 1 度シャッフルしておく (seed 固定で再現的)。
         train_rows = syn_train + id_train
+        if args.distill:
+            # identity+distill 併用 (任意): 蒸留ペアも train に足す。val は不変。
+            dis_tr = load_pairs(os.path.join(data_dir, "pairs.distill.train.jsonl"))
+            if args.smoke:
+                dis_tr = dis_tr[:64]
+            train_rows = train_rows + dis_tr
         val_rows = syn_val + id_val
         rng_mix = random.Random(seed)
         rng_mix.shuffle(train_rows)
@@ -1271,6 +1283,24 @@ def main():
               f"(synthetic={n_syn_tr} identity_cond={n_id_tr}) "
               f"val={len(val_rows)} (synthetic={n_syn_va} identity_cond={n_id_va}) "
               f"loss_mode={args.loss_mode}")
+    elif args.distill:
+        # D3: synthetic(4500) + Qwen2 蒸留(3000) を混合。val は #1 と同一 (不変)。
+        #   蒸留ペアは synthetic と同じ 1-<sep> 経路 (source=="llm_distill" は
+        #   build_sequence の synthetic 分岐へ落ちる → 既存ロジックで読める)。
+        distill_train = load_pairs(os.path.join(data_dir, "pairs.distill.train.jsonl"))
+        if args.smoke:
+            syn_train, syn_val = syn_train[:64], syn_val[:32]
+            distill_train = distill_train[:64]
+            args.epochs = 1
+        train_rows = syn_train + distill_train
+        val_rows = syn_val  # val は絶対不変 (#1 の pairs.val.jsonl 500 件)
+        rng_mix = random.Random(seed)
+        rng_mix.shuffle(train_rows)  # source の塊を崩す (seed 固定で再現的)
+        n_syn_tr = sum(1 for r in train_rows if r.get("source") == "synthetic")
+        n_dis_tr = sum(1 for r in train_rows if r.get("source") == "llm_distill")
+        print(f"[data] DISTILL-MIXED train={len(train_rows)} "
+              f"(synthetic={n_syn_tr} llm_distill={n_dis_tr}) "
+              f"val={len(val_rows)} (synthetic・不変) loss_mode={args.loss_mode}")
     else:
         train_rows = syn_train
         val_rows = syn_val
@@ -1344,6 +1374,7 @@ def main():
             "epoch": epoch,
             "train_loss": train_loss,
             "val_loss": val_loss,
+            "train_val_gap": val_loss - train_loss,  # D4 過学習主指標 (+ で val>train)
             f"top{args.topk}_recall": recall,
             "lr": lr,
             "elapsed_s": elapsed,
@@ -1380,8 +1411,18 @@ def main():
     #   identity 版 (--identity) は #4 純 dense と別名 (bitnet_dense_identity*) に分ける:
     #     #4 の bitnet_dense_fp32.safetensors は #6 golden 突合に使われており壊せない。
     #     混合訓練したモデルは別物なので名前を分け、#4 と #6 を保全する (設計判断)。
-    base = "bitnet_dense_identity" if args.identity else "bitnet_dense"
-    stats_base = "train_stats_identity" if args.identity else "train_stats"
+    if args.identity and args.distill:
+        base = "bitnet_dense_identity_distill"
+        stats_base = "train_stats_identity_distill"
+    elif args.distill:
+        base = "bitnet_dense_distill"
+        stats_base = "train_stats_distill"
+    elif args.identity:
+        base = "bitnet_dense_identity"
+        stats_base = "train_stats_identity"
+    else:
+        base = "bitnet_dense"
+        stats_base = "train_stats"
     if args.smoke:
         fp16_path = os.path.join(data_dir, base + "_smoke.safetensors")
         fp32_path = os.path.join(data_dir, base + "_smoke_fp32.safetensors")
@@ -1458,7 +1499,10 @@ def main():
         "seed": seed,
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
-        "mode": "identity_mixed" if args.identity else "synthetic_only",
+        "mode": ("identity_distill_mixed" if (args.identity and args.distill)
+                 else "distill_mixed" if args.distill
+                 else "identity_mixed" if args.identity
+                 else "synthetic_only"),
         "hyperparams": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -1473,7 +1517,14 @@ def main():
             "train": len(train_rows),
             "val": len(val_rows),
             "vocab_size": tok.vocab_size(),
-            "mixed": bool(args.identity),
+            "mixed": bool(args.identity or args.distill),
+            "n_synthetic_train": sum(1 for r in train_rows
+                                     if r.get("source") == "synthetic"),
+            "n_distill_train": sum(1 for r in train_rows
+                                   if r.get("source") == "llm_distill"),
+            "n_identity_train": sum(1 for r in train_rows
+                                    if r.get("source") == "identity_cond"),
+            "distill": bool(args.distill),
         },
         "model": {
             "params": n_params,

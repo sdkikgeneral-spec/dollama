@@ -338,3 +338,61 @@ py -3.12 scripts/train_bitnet.py --identity --smoke
   `manifest_identity.json` の GREEDY_STOP_RULE で生成、`logits_golden_identity` /
   `gen_golden_identity` と突合する。tokenizer.hpp / vocab.json は変更不要 (`<sep>` 2 回は
   decode が構造トークンとして読み飛ばす)。
+
+
+## 10. 蒸留混合の A/B 評価 (D3/D4 — 採用せず・負の結果を記録)
+
+`scripts/train_bitnet.py --distill` で synthetic(4500) + Qwen2 蒸留(3000) = train 7500 を混合
+訓練 (val は #1 と同一 `pairs.val.jsonl` 500・**不変**)。出力は `bitnet_dense_distill*` /
+`train_stats_distill.json` の**別名** (#1/#4/#6 の重み・golden は無改変)。seed 20260620・FP32・
+GTX1080Ti。動機は §6/§7 の過学習 (#1 は ep4 を底に val_loss 反転) を蒸留で緩和できるかの検証。
+
+### 10.1 設計判断
+
+- **epoch**: 反転の底と後退を観察するため**蒸留は 10ep** で実行・採用重みとした。A/B の公平化に
+  **#1 を同一 val・同 seed で 10ep/6ep とも非破壊再算出** (scratch data-dir・本番重み無改変)。
+  蒸留 train=7500 は #1 train=4500 より 1.67x 多く、同 epoch では勾配ステップ数が多いため
+  train_loss が速く落ちる交絡があるので、6ep/10ep の両方で突合した。
+- **identity 併用**: `--distill` は単独 (synthetic+distill = #1 系の蒸留版) を主評価とした。
+  `--identity --distill` 併用も実装済 (任意・`bitnet_dense_identity_distill*`) だが本評価対象外。
+- **#1 重み**: 再算出はすべて scratch dir 出力で #4 の `bitnet_dense_fp32.safetensors` を保全。
+
+### 10.2 A/B 結果 (同一固定 val 500・teacher forcing)
+
+| 指標 | #1 6ep (採用本線) | #1 10ep (再算出) | 蒸留 6ep | 蒸留 10ep (採用重み) |
+|---|---|---|---|---|
+| 最終 val_loss | **2.411** | 2.749 | 2.599 | 3.108 |
+| 最終 top10 recall | **0.7767** | 0.7527 | 0.7616 | 0.7402 |
+| 最終 train_loss | 1.320 | 0.211 | 0.534 | 0.102 |
+| val_loss 反転(底) epoch | **ep4** (2.382) | ep4 | **ep2** (2.434) | ep2 (2.454) |
+| 最終 train-val gap | **1.09** | 2.54 | 2.07 | 3.01 |
+
+### 10.3 生成多様性 (val prompt greedy・本体 tag id)
+
+| | #1 6ep | 蒸留 6ep | 蒸留 10ep |
+|---|---|---|---|
+| コーパス unique tag 数 | 386 | 606 | **736** |
+| 平均 per-seq unique 率 | 0.945 | 0.978 | **0.991** |
+| 正規化エントロピー | **0.839** | 0.816 | 0.814 |
+
+### 10.4 判定 — 過学習は緩和されなかった (採用しない)
+
+- **悪化**: val_loss 反転が #1 ep4 → 蒸留 ep2 へ前進、同 epoch の train-val gap は拡大、最良
+  val_loss/recall も微減。系列レベル hard CE 混合は本データでは**正則化にならない**。
+- **原因**: (1) train 1.67x 増で同 epoch の勾配ステップ過多 → 暗記加速。(2) Qwen2 自由文が
+  synthetic val 分布と乖離し、追加容量が train 暗記へ向かい synthetic val を助けない。
+- **唯一の利得 (トレードオフ)**: 自由生成の多様性は向上 (unique tag 約 2x・per-seq 反復減)。
+  teacher-forced 指標は悪いが、生成語彙の広さ・反復抑制という別軸では改善。
+- **方針**: **#1 (6ep synthetic) を本線維持**・蒸留版は採用しない。次イテは ① soft-label KL 蒸留
+  (温度付き教師 logits) ② dropout / weight_decay 増 ③ 蒸留と同分布の val 追加、を検討。
+
+### 10.5 再現手順
+
+```sh
+# 蒸留混合 (10ep 採用重み・別名出力)
+py -3.12 scripts/train_bitnet.py --distill --epochs 10 --loss-mode tags --batch-size 32 --lr 3e-4
+# #1 を同 val・同 seed で非破壊再算出 (本番重みを汚さない scratch data-dir 推奨)
+py -3.12 scripts/train_bitnet.py --data-dir <scratch> --epochs 6   # / --epochs 10
+# smoke (疎通・本番を上書きしない)
+py -3.12 scripts/train_bitnet.py --distill --smoke
+```

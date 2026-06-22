@@ -1,0 +1,55 @@
+{
+ "version": 1,
+ "seed": 20260620,
+ "created_utc": "2026-06-22T05:26:36.915816+00:00",
+ "model": "Qwen/Qwen2-1.5B-Instruct",
+ "counts": {
+  "total": 3000
+ },
+ "lang_ratio": {
+  "ja": 0.2437,
+  "en": 0.7563
+ },
+ "en_ratio_target": 0.75,
+ "temp": {
+  "en": 0.5,
+  "ja": 0.3
+ },
+ "reject_counts": {
+  "hair_contradiction_en(black)": 201,
+  "hair_contradiction_en(pink)": 134,
+  "hair_contradiction_en(green)": 45,
+  "hair_contradiction_en(blue)": 151,
+  "hair_contradiction_en(red)": 51,
+  "hair_contradiction_en(blonde)": 28,
+  "subject_contradiction_ja(1girl)": 122,
+  "hair_contradiction_en(white)": 134,
+  "hair_contradiction_ja(blonde)": 120,
+  "tag_dump": 21,
+  "hair_contradiction_ja(brown)": 129,
+  "hair_contradiction_en(grey)": 110,
+  "hair_contradiction_en(brown)": 48,
+  "subject_contradiction_ja(1boy)": 65,
+  "hair_contradiction_en(purple)": 44,
+  "hair_contradiction_ja(pink)": 22,
+  "too_long": 7,
+  "hair_contradiction_ja(blue)": 32,
+  "hair_contradiction_ja(white)": 17,
+  "hair_contradiction_ja(red)": 23,
+  "hair_contradiction_en(orange)": 16
+ },
+ "reject_total": 1520,
+ "accept_rate": 0.6637,
+ "unique_text_ratio": 1.0,
+ "validation": {
+  "validate_pairs_errors": 0,
+  "val_post_leak": 0,
+  "val_text_leak": 0,
+  "tokenizer_unk_rows": 0,
+  "tokenizer_mismatch": 0,
+  "tags_altered": 0,
+  "ok": true
+ },
+ "gen_seconds": 10661.9,
+ "gen_tok_per_s": 18.5
+}

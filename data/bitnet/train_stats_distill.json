@@ -1,0 +1,279 @@
+{
+ "seed": 20260620,
+ "device": "cuda",
+ "gpu": "NVIDIA GeForce GTX 1080 Ti",
+ "mode": "distill_mixed",
+ "hyperparams": {
+  "epochs": 10,
+  "batch_size": 32,
+  "lr": 0.0003,
+  "weight_decay": 0.01,
+  "warmup": 100,
+  "max_len": 64,
+  "loss_mode": "tags",
+  "topk": 10
+ },
+ "data": {
+  "train": 7500,
+  "val": 500,
+  "vocab_size": 4999,
+  "mixed": true,
+  "n_synthetic_train": 4500,
+  "n_distill_train": 3000,
+  "n_identity_train": 0,
+  "distill": true
+ },
+ "model": {
+  "params": 32976896,
+  "bitnet_hpp_param_count": 32976896,
+  "fp16_mb": 62.904,
+  "fp32_mb": 125.803
+ },
+ "result": {
+  "final_train_loss": 0.1022776384199024,
+  "final_val_loss": 3.1077624414109826,
+  "final_top10_recall": 0.7402471528955658,
+  "random_baseline_recall": 0.002000400080016003,
+  "recall_vs_random_x": 370.04955173249334,
+  "val_target_tags": 8254,
+  "train_time_s": 132.1
+ },
+ "tensor_keys": [
+  "embed",
+  "layers.0.attn_norm",
+  "layers.0.wq",
+  "layers.0.wk",
+  "layers.0.wv",
+  "layers.0.wo",
+  "layers.0.ffn_norm",
+  "layers.0.w_gate",
+  "layers.0.w_up",
+  "layers.0.w_down",
+  "layers.1.attn_norm",
+  "layers.1.wq",
+  "layers.1.wk",
+  "layers.1.wv",
+  "layers.1.wo",
+  "layers.1.ffn_norm",
+  "layers.1.w_gate",
+  "layers.1.w_up",
+  "layers.1.w_down",
+  "layers.2.attn_norm",
+  "layers.2.wq",
+  "layers.2.wk",
+  "layers.2.wv",
+  "layers.2.wo",
+  "layers.2.ffn_norm",
+  "layers.2.w_gate",
+  "layers.2.w_up",
+  "layers.2.w_down",
+  "layers.3.attn_norm",
+  "layers.3.wq",
+  "layers.3.wk",
+  "layers.3.wv",
+  "layers.3.wo",
+  "layers.3.ffn_norm",
+  "layers.3.w_gate",
+  "layers.3.w_up",
+  "layers.3.w_down",
+  "layers.4.attn_norm",
+  "layers.4.wq",
+  "layers.4.wk",
+  "layers.4.wv",
+  "layers.4.wo",
+  "layers.4.ffn_norm",
+  "layers.4.w_gate",
+  "layers.4.w_up",
+  "layers.4.w_down",
+  "layers.5.attn_norm",
+  "layers.5.wq",
+  "layers.5.wk",
+  "layers.5.wv",
+  "layers.5.wo",
+  "layers.5.ffn_norm",
+  "layers.5.w_gate",
+  "layers.5.w_up",
+  "layers.5.w_down",
+  "layers.6.attn_norm",
+  "layers.6.wq",
+  "layers.6.wk",
+  "layers.6.wv",
+  "layers.6.wo",
+  "layers.6.ffn_norm",
+  "layers.6.w_gate",
+  "layers.6.w_up",
+  "layers.6.w_down",
+  "layers.7.attn_norm",
+  "layers.7.wq",
+  "layers.7.wk",
+  "layers.7.wv",
+  "layers.7.wo",
+  "layers.7.ffn_norm",
+  "layers.7.w_gate",
+  "layers.7.w_up",
+  "layers.7.w_down",
+  "final_norm"
+ ],
+ "history": [
+  {
+   "epoch": 0,
+   "train_loss": 4.43994743854193,
+   "val_loss": 2.864706406848668,
+   "train_val_gap": -1.575241031693262,
+   "top10_recall": 0.7029319118003392,
+   "lr": 0.00029738218902086196,
+   "elapsed_s": 13.013510465621948
+  },
+  {
+   "epoch": 1,
+   "train_loss": 2.729718927902306,
+   "val_loss": 2.570509159798942,
+   "train_val_gap": -0.15920976810336418,
+   "top10_recall": 0.7499394233099104,
+   "lr": 0.0002805275632004288,
+   "elapsed_s": 25.746910572052002
+  },
+  {
+   "epoch": 2,
+   "train_loss": 2.1469678395429224,
+   "val_loss": 2.453589293117352,
+   "train_val_gap": 0.3066214535744298,
+   "top10_recall": 0.7712624182214683,
+   "lr": 0.0002497454532359195,
+   "elapsed_s": 39.28404688835144
+  },
+  {
+   "epoch": 3,
+   "train_loss": 1.4789066928456596,
+   "val_loss": 2.5210019576800833,
+   "train_val_gap": 1.0420952648344237,
+   "top10_recall": 0.7684758904773443,
+   "lr": 0.00020832035581094712,
+   "elapsed_s": 52.71037316322327
+  },
+  {
+   "epoch": 4,
+   "train_loss": 0.8253498028388069,
+   "val_loss": 2.6642107620405637,
+   "train_val_gap": 1.8388609592017569,
+   "top10_recall": 0.7551490186576205,
+   "lr": 0.00016067239012031504,
+   "elapsed_s": 65.64207744598389
+  },
+  {
+   "epoch": 5,
+   "train_loss": 0.4397648147168758,
+   "val_loss": 2.8319294926962497,
+   "train_val_gap": 2.392164677979374,
+   "top10_recall": 0.7534528713351103,
+   "lr": 0.00011188566461117747,
+   "elapsed_s": 79.3243350982666
+  },
+  {
+   "epoch": 6,
+   "train_loss": 0.26295438400234805,
+   "val_loss": 2.9533541295555565,
+   "train_val_gap": 2.6903997455532087,
+   "top10_recall": 0.7469105888054277,
+   "lr": 6.71657950884242e-05,
+   "elapsed_s": 92.65440106391907
+  },
+  {
+   "epoch": 7,
+   "train_loss": 0.17267230663503064,
+   "val_loss": 3.0298927479053717,
+   "train_val_gap": 2.857220441270341,
+   "top10_recall": 0.7460625151441725,
+   "lr": 3.1284457805192146e-05,
+   "elapsed_s": 105.56623005867004
+  },
+  {
+   "epoch": 8,
+   "train_loss": 0.12577205006207243,
+   "val_loss": 3.0855559526299747,
+   "train_val_gap": 2.9597839025679025,
+   "top10_recall": 0.7414586866973588,
+   "lr": 8.070244545678616e-06,
+   "elapsed_s": 119.31377506256104
+  },
+  {
+   "epoch": 9,
+   "train_loss": 0.1022776384199024,
+   "val_loss": 3.1077624414109826,
+   "train_val_gap": 3.0054848029910803,
+   "top10_recall": 0.7402471528955658,
+   "lr": 1.4621633773748142e-10,
+   "elapsed_s": 132.10140466690063
+  }
+ ],
+ "ab_eval": {
+  "purpose": "D4 蒸留 A/B (過学習緩和の検証)。教師なしベースライン #1 (train_stats.json 6ep) と比較。",
+  "fair_comparison_note": "#1 は val 不変・seed 同一で 10ep/6ep を非破壊で再算出 (scratch data-dir・本番重み無改変)。蒸留 train=7500 は #1 train=4500 より 1.67x 多いため、同 epoch では蒸留の方が勾配ステップ数が多く train_loss が速く落ちる (混合の交絡)。よって 6ep/10ep 両方で突合。",
+  "baseline_1": {
+   "6ep_recorded(train_stats.json)": {
+    "val_loss": 2.4108,
+    "top10_recall": 0.7767,
+    "train_loss": 1.3202,
+    "val_bottom_epoch": 4,
+    "val_bottom": 2.3825,
+    "gap_final": 1.0906
+   },
+   "10ep_recompute": {
+    "val_loss": 2.7485,
+    "top10_recall": 0.7527,
+    "train_loss": 0.211,
+    "val_bottom_epoch": 4,
+    "val_bottom": 2.4077,
+    "gap_final": 2.5375
+   }
+  },
+  "distill": {
+   "6ep": {
+    "val_loss": 2.5991,
+    "top10_recall": 0.7616,
+    "train_loss": 0.5338,
+    "val_bottom_epoch": 2,
+    "val_bottom": 2.4343,
+    "gap_final": 2.0653
+   },
+   "10ep(adopted_weights)": {
+    "val_loss": 3.1078,
+    "top10_recall": 0.7402,
+    "train_loss": 0.1023,
+    "val_bottom_epoch": 2,
+    "val_bottom": 2.4536,
+    "gap_final": 3.0055
+   }
+  },
+  "diversity": {
+   "definition": "固定 val500 の text を prompt に greedy 生成し、本体 tag id (>=5) のコーパス unique 率・平均 per-seq unique 率・正規化エントロピー (H/log(unique))。高いほど反復が少ない=多様。",
+   "baseline_1_6ep": {
+    "n_gen_tags": 7778,
+    "unique_tags": 386,
+    "corpus_unique_rate": 0.04963,
+    "mean_per_seq_unique": 0.94506,
+    "entropy_norm": 0.83887
+   },
+   "distill_6ep": {
+    "n_gen_tags": 7867,
+    "unique_tags": 606,
+    "corpus_unique_rate": 0.07703,
+    "mean_per_seq_unique": 0.97835,
+    "entropy_norm": 0.81599
+   },
+   "distill_10ep": {
+    "n_gen_tags": 7856,
+    "unique_tags": 736,
+    "corpus_unique_rate": 0.09369,
+    "mean_per_seq_unique": 0.99143,
+    "entropy_norm": 0.81357
+   }
+  },
+  "verdict": {
+   "overfit_reduced": false,
+   "summary": "蒸留混合は過学習を緩和しなかった。むしろ悪化: val_loss 反転が #1 ep4 → 蒸留 ep2 へ前進し、train-val gap は同 epoch で拡大、最良 val_loss/recall も微減 (6ep: 2.41/0.777 → 2.60/0.762)。原因は (1) train 1.67x 増で同 epoch の勾配ステップ過多 (2) Qwen2 蒸留文は synthetic val 分布と乖離した自由文で、追加容量が train 暗記に向かい synthetic val を助けない。",
+   "tradeoff_positive": "唯一の利得は生成多様性: 蒸留版は val prompt から ~2x の unique tag を生成し per-seq 反復が減る (mean_per_seq_unique 0.945 → 0.978/0.991)。teacher-forced 指標は悪いが自由生成の語彙は広がる。",
+   "recommendation": "系列レベル蒸留 (hard CE 混合) のみでは過学習対策にならない。次イテは (a) soft-label KL 蒸留 (温度付き教師 logits) (b) dropout/weight_decay 増 (c) 蒸留と同分布の val 追加、を検討。#1 (6ep synthetic) を本線維持。蒸留版は採用しない。"
+  }
+ }
+}

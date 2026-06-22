@@ -294,6 +294,30 @@ python scripts/dollma_make_pairs.py --n 4500 --val 500 --seed 20260620 \
 - 検証 (`validate_pairs`) は source 非依存で全件に適用。OOV/負語/順序は同基準。
 - CPU 推論 64-71 tok/s (CLAUDE.md probe7) を前提に、バッチ時間を見積もって段階投入する。
 
+### 12.1 実測 (D2 — Qwen2-1.5B 蒸留 3,000 ペア生成)
+
+`data/bitnet/pairs.distill.train.jsonl` (3,000 件・`stats.distill.json`)。
+
+- 教師 = `Qwen/Qwen2-1.5B-Instruct` (CPU)。**系列レベル蒸留・hard CE**: 教師には実 danbooru
+  共起タグを表す自然文 (依頼文) のみ生成させ、`tags` は実共起のまま無改変 (LLM にタグを
+  推測させない方針・§12 不変)。系列は synthetic と同じ 1-`<sep>` (`<bos> text <sep> tags <eos>`)。
+- ja/en = 0.24/0.76 (en_target 0.75)・accept率 0.6637 (reject_total 1520・主因は hair/subject
+  矛盾の自動棄却)・unique_text 1.0・生成 18.5 tok/s (10,662s)。
+- 検証全緑: `validate_pairs` 0 / val post リーク 0 / val text リーク 0 / tokenizer UNK 0 /
+  tags 改変 0。スキーマは synthetic 行と完全互換 (`meta.tmpl=-1`)。
+
+### 12.2 実測 (D4 — 蒸留混合の効果: 過学習は緩和されず)
+
+synthetic 4500 + distill 3000 = 7500 を train 混合 (val は #1 と同一 500・不変) で訓練した
+結果、**過学習は緩和しなかった** (training-spec §10 に A/B 詳細)。要点のみ:
+
+- val_loss 反転が #1 ep4 → 蒸留 ep2 へ**前進**、同 epoch の train-val gap は**拡大**、最良
+  val_loss/recall も微減 (6ep: 2.41/0.777 → 2.60/0.762)。
+- 唯一の利得は**生成多様性**: 蒸留版は val prompt から約 2 倍の unique tag を生成し、
+  系列内反復が減る (per-seq unique 0.945 → 0.978〜0.991)。teacher-forced は悪いが自由生成は広い。
+- 原因: train が 1.67x 増で同 epoch の勾配ステップ過多 + Qwen2 自由文が synthetic val 分布と乖離。
+  hard CE 混合だけでは正則化にならない。次は soft-label KL 蒸留 (温度付き教師 logits) を検討。
+
 ## 13. 同一性条件付きペア (Phase 4 A・A1 確定版)
 
 Phase 4 A (同一性条件付きタグ生成) 用のデータ。#1 (§1-§12) は「user text → tags」のみで、
