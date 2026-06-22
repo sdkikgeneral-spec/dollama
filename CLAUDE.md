@@ -256,7 +256,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - **次 (タスク 2-6 最適化)**: 84s → 3.80s が速度の本丸。**direct conv → im2col/Tensor Core GEMM**・**naive attention (per-row) → flash** が UNet/VAE 両方の律速。FP16 Tensor Core (cuBLAS フォールバック許容) で大幅短縮見込み
 - **2-6b (テキスト→画像の本結線・別タスク)**: 現状 2-6a は golden 埋め込み使い回し・CFG なし。本物の txt2img には ① **CLIP-G の OV 化** (SDXL dual encoder: CLIP-L 768 + CLIP-G 1280 → concat 2048・pooled 1280) ② CFG (negative prompt) でバッチ2相当の 2 回 UNet ③ prompt→embeds 結線 (PipelineGenerator の TODO(2-6b)) が要る。model-converter + npu-benchmarker + cpp-implementer を巻き込む
 - 部位構造化プロンプト ([[project-part-structured-prompt]], character-bible-spec §1 改訂) — 2-6 後に §11 QA ループ・案B embedding と一緒に設計
-- **Phase 4 (自作タグ生成 LM)**: bitnet.hpp 33M を土台に ① tokenizer ✅ ② 訓練 (`scripts/train_bitnet.py`, hard CE dense) ✅ ③ CPU 推論 (`src/infer/bitnet.hpp` BitNetDenseInfer, golden 突合 corr 1.0) ✅ ④ **同一性条件付き化** (character-bible 入力・prompt prefix 方式・retention 0.947) ✅ — **dense 本線 + 2D 特化 A が text→tags / identity→tags で動作**。残: 蒸留 (DanTagGen/Qwen2 KL で汎化改善・過学習抑制)、#6-GPU (RTX5080 で CUDA カーネル流用)、⑤ アニメ**品質スコアラ** (B, NPU, §11)。ternary GEMM (`src/kernels/ternary_gemm.cu`) は圧縮実験。方向性の経緯は roadmap Phase 4
+- **Phase 4 (自作タグ生成 LM)**: bitnet.hpp 33M を土台に ① tokenizer ✅ ② 訓練 (`scripts/train_bitnet.py`, hard CE dense) ✅ ③ CPU 推論 (`src/infer/bitnet.hpp` BitNetDenseInfer, golden 突合 corr 1.0) ✅ ④ **同一性条件付き化** (character-bible 入力・prompt prefix 方式・retention 0.947) ✅ — **dense 本線 + 2D 特化 A が text→tags / identity→tags で動作**。**系列レベル蒸留 (Qwen2 text 多様化) は試行済だが過学習悪化で不採用 (負の結果・training-spec §10)。残る蒸留路線は soft-label KL**。残: #6-GPU (RTX5080 で CUDA カーネル流用)、⑤ アニメ**品質スコアラ** (B, NPU, §11)。ternary GEMM (`src/kernels/ternary_gemm.cu`) は圧縮実験。方向性の経緯は roadmap Phase 4
 
 ## 実装作業のルール
 
