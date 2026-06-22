@@ -1,0 +1,268 @@
+{
+ "version": 1,
+ "kind": "identity_cond",
+ "seed": 20260620,
+ "created_utc": "2026-06-22T01:10:18.867838+00:00",
+ "counts": {
+  "total": 5000,
+  "train": 4500,
+  "val": 500
+ },
+ "lang_ratio": {
+  "ja": 0.4982,
+  "en": 0.5018
+ },
+ "source_ratio": {
+  "identity_cond": 1.0
+ },
+ "rating_ratio": {
+  "g": 1.0
+ },
+ "split_ratio": {
+  "train": 0.9,
+  "val": 0.1
+ },
+ "unique_text_ratio": 1.0,
+ "template_dist": {
+  "0": 1678,
+  "1": 1668,
+  "2": 1654
+ },
+ "identity": {
+  "unique_identity_sets": 4155,
+  "unique_identity_ratio": 0.831,
+  "train_val_identity_overlap_count": 122,
+  "train_val_identity_overlap_rate": 0.2531,
+  "identity_tags_per_pair": {
+   "min": 1,
+   "max": 16,
+   "mean": 5.81
+  },
+  "scene_tags_per_pair": {
+   "min": 0,
+   "max": 15,
+   "mean": 9.79
+  },
+  "distinct_identity_vocab": 265,
+  "distinct_scene_vocab": 1920,
+  "identity_tag_freq_top": [
+   [
+    "1girl",
+    3002
+   ],
+   [
+    "long hair",
+    2266
+   ],
+   [
+    "short hair",
+    1396
+   ],
+   [
+    "black hair",
+    984
+   ],
+   [
+    "blue eyes",
+    952
+   ],
+   [
+    "multiple girls",
+    923
+   ],
+   [
+    "1boy",
+    909
+   ],
+   [
+    "brown hair",
+    857
+   ],
+   [
+    "blonde hair",
+    784
+   ],
+   [
+    "male focus",
+    737
+   ],
+   [
+    "animal ears",
+    720
+   ],
+   [
+    "red eyes",
+    707
+   ],
+   [
+    "multicolored hair",
+    683
+   ],
+   [
+    "2girls",
+    672
+   ],
+   [
+    "breasts",
+    596
+   ],
+   [
+    "blue hair",
+    577
+   ],
+   [
+    "purple eyes",
+    524
+   ],
+   [
+    "white hair",
+    515
+   ],
+   [
+    "green eyes",
+    501
+   ],
+   [
+    "pink hair",
+    491
+   ],
+   [
+    "very long hair",
+    472
+   ],
+   [
+    "ahoge",
+    469
+   ],
+   [
+    "braid",
+    441
+   ],
+   [
+    "yellow eyes",
+    438
+   ],
+   [
+    "grey hair",
+    431
+   ]
+  ],
+  "scene_tag_freq_top": [
+   [
+    "solo",
+    2697
+   ],
+   [
+    "looking at viewer",
+    2063
+   ],
+   [
+    "shirt",
+    1934
+   ],
+   [
+    "long sleeves",
+    1409
+   ],
+   [
+    "dress",
+    1058
+   ],
+   [
+    "white shirt",
+    1013
+   ],
+   [
+    "bow",
+    1011
+   ],
+   [
+    "skirt",
+    995
+   ],
+   [
+    "jacket",
+    983
+   ],
+   [
+    "hair between eyes",
+    955
+   ],
+   [
+    "hair ornament",
+    950
+   ],
+   [
+    "gloves",
+    805
+   ],
+   [
+    "hat",
+    767
+   ],
+   [
+    "jewelry",
+    703
+   ],
+   [
+    "ribbon",
+    593
+   ],
+   [
+    "short sleeves",
+    516
+   ],
+   [
+    "frills",
+    461
+   ],
+   [
+    "flower",
+    453
+   ],
+   [
+    "collared shirt",
+    435
+   ],
+   [
+    "school uniform",
+    429
+   ],
+   [
+    "shoes",
+    405
+   ],
+   [
+    "hair bow",
+    389
+   ],
+   [
+    "bare shoulders",
+    385
+   ],
+   [
+    "necktie",
+    376
+   ],
+   [
+    "pants",
+    359
+   ]
+  ]
+ },
+ "tags_per_pair": {
+  "min": 4,
+  "max": 16,
+  "mean": 15.6
+ },
+ "schema": {
+  "sequence": "<bos> [identity tags] <sep> [scene text] <sep> [target tags] <eos>",
+  "sep_reuse": 2,
+  "vocab_unchanged": true,
+  "target": "identity_tags ∪ scene_tags (正準順序・identity 必ず含む)"
+ },
+ "sources": {
+  "wd14_csv": "SmilingWolf/wd-swinv2-tagger-v3/selected_tags.csv",
+  "danbooru_api": "danbooru.donmai.us/posts.json (tags-only, no pixels)"
+ }
+}

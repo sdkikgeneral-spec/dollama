@@ -8,6 +8,11 @@
 ja/en ≈ 50:50・rating g 100%・全件検証通過 (OOV/負語/順序/リーク/重複 すべて 0)・
 ユニーク text 比率 1.0・タグ語彙 4,994。** 詳細は §11 を参照。
 
+**Phase 4 A (A1): 同一性条件付きペア 5,000 (train 4,500 / val 500) を別ファイル
+`pairs.identity.{train,val}.jsonl` に追加 (源は #1 と同じ共起キャッシュ・vocab 不変・
+後方互換)。`<sep>` 2 回流用で identity/scene/target を区切る。全件検証 0・tokenizer 往復
+UNK 0。詳細は §13。**
+
 ## 0. 設計趣旨 (ユーザー確定方針)
 
 - **正解 = 実 danbooru のタグ共起** (人手アノテのタグ列)。LLM にタグを「推測」させない。
@@ -61,14 +66,18 @@ ja/en ≈ 50:50・rating g 100%・全件検証通過 (OOV/負語/順序/リー�
 ```
 data/bitnet/
   vocab.json                      — タグ語彙表 (tokenizer.hpp が読む)
-  pairs.train.jsonl               — 訓練ペア (4,500 行)
-  pairs.val.jsonl                 — 検証ペア (500 行)
-  stats.json                      — 件数・分布・出典・seed の記録
+  pairs.train.jsonl               — 訓練ペア (#1・4,500 行・source:synthetic)
+  pairs.val.jsonl                 — 検証ペア (#1・500 行)
+  stats.json                      — #1 の件数・分布・出典・seed の記録
+  pairs.identity.train.jsonl      — 同一性条件付き訓練ペア (A1・4,500 行・source:identity_cond, §13)
+  pairs.identity.val.jsonl        — 同一性条件付き検証ペア (A1・500 行)
+  stats.identity.json             — A1 の件数・identity 分布・重複率の記録
   cache/danbooru_posts.jsonl      — 生タグ共起キャッシュ (タグ文字列 + rating のみ・8,200 posts)
   cache/selected_tags.csv         — WD14 タグ csv キャッシュ
 docs/dataset-spec.md              — 本ファイル
 scripts/dollma_build_vocab.py     — vocab.json 生成
-scripts/dollma_make_pairs.py      — 共起取得 → 射影 → 自然文逆生成 → pairs/stats 出力
+scripts/dollma_make_pairs.py      — #1: 共起取得 → 射影 → 自然文逆生成 → pairs/stats 出力
+scripts/dollma_make_identity_pairs.py — A1: identity/scene 分離 → 同一性条件付きペア (§13)
 ```
 
 ## 3. スキーマ
@@ -285,17 +294,152 @@ python scripts/dollma_make_pairs.py --n 4500 --val 500 --seed 20260620 \
 - 検証 (`validate_pairs`) は source 非依存で全件に適用。OOV/負語/順序は同基準。
 - CPU 推論 64-71 tok/s (CLAUDE.md probe7) を前提に、バッチ時間を見積もって段階投入する。
 
-## 13. 将来拡張 — 同一性条件付きペア (Phase 4 A)
+## 13. 同一性条件付きペア (Phase 4 A・A1 確定版)
 
-Phase 4 A (同一性条件付きタグ生成) 用のデータ。本段 (#1) は「user text → tags」のみで、
-§4 のとおりキャラ同一性タグ (`tag_string_character`) を target から除外している。A は
-キャラ同一性を**条件入力**にするため、別形式のペアが要る:
+Phase 4 A (同一性条件付きタグ生成) 用のデータ。#1 (§1-§12) は「user text → tags」のみで、
+§4 のとおりキャラ同一性を target から扱わない。A は **キャラ同一性を条件入力** にする
+ため、各 danbooru post のタグを **identity / scene に分離** した別形式ペアを持つ。
+**生成: `scripts/dollma_make_identity_pairs.py`** (#1 の共起取得・§5 正準順序・§6 正規化・
+テンプレを再利用)。実測は §13.6。
 
-- **入力**: `CharacterIdentity` (同一性層。bible の主キーで参照) + scene 記述 (自然文)。
-- **target**: 同一性を保持した danbooru タグ列 (同一性由来タグ + シーン由来タグ)。
-- 既存 #1 ペアに character-bible の同一性条件を付与する形 (例: `meta.identity` 等で拡張) を想定し、
-  **既存スキーマ・検証 (`validate_pairs`) を壊さない後方互換**で追加する。
-- リーク防止は §8 を踏襲 (同一キャラが train/val に跨らない・`post_id`/`text` チェック)。
-- B (アニメ品質スコアラ) の正解ラベルもここで扱うか別仕様にするかは設計時に決める
-  (§11 の合格/不合格蓄積を教師に蒸留する案)。
-- 設計は別タスク (dataset-curator)。確定時に §3 スキーマへ正式追加する。
+### 13.1 条件付け機構 (承認済み・厳守)
+
+**(a-1) prompt prefix + `<sep>`(id=3) の 2 回流用**。訓練系列 (構築は A2 / `train_bitnet.py`):
+
+```
+<bos> [identity tags] <sep> [scene text のタグ] <sep> [target tags] <eos>
+```
+
+- **vocab.json / VOCAB_SIZE / `specials` / tokenizer は一切変更しない**。`<sep>` を 2 回
+  使うだけで、各区間の意味は **位置** で決まる (id=3 が 2 個出るのは仕様)。
+- 既存 #1 系列は `<bos> text <sep> tags <eos>` (`<sep>` 1 回)。A は prefix に identity を
+  足し `<sep>` を 1 個増やすだけ。tokenizer.hpp / `decode` は `<sep>` を構造トークンとして
+  読み飛ばすため (§3.2)、`<sep>` の回数に依存せず後方互換。
+
+### 13.2 identity / scene 分離規則 (典拠: character-bible-spec §1/§2)
+
+- **identity_tags** = `CharacterIdentity.canonical_tags` 相当 = コマ間で **不変** の外見属性。
+  §5 バケット 1 (canonical) の **部分集合** として定義する (バケット 2..6 は定義上すべて scene):
+  - 主体数/性別 (`1girl`/`1boy`/`multiple girls`/`futanari`/`otoko no ko` …)
+  - 髪 色/長さ/型 (`long hair`/`silver hair`/`twintails`/`ahoge` …)
+  - 目 色/瞳/特徴 (`blue eyes`/`heterochromia`/`slit pupils` …)
+  - 肌 (`dark skin`/`pale skin`/`colored skin` …)
+  - 体型/外見年齢 (`large breasts`/`mature female`/`loli`/`muscular`/`petite` …)
+  - 種族形質 (`animal ears`/`tail`/`horns`/`wings`/`elf`/`pointy ears` …)
+- **scene_tags** = それ以外すべて (pose/expression/composition/isolation/color_mode +
+  **服飾・小物・状態・背景単色**)。
+- 判定は `dollma_make_identity_pairs.py` の `is_identity_tag` (パターン群 `_IDENTITY_PATTERNS`
+  + 除外 `_IDENTITY_EXCLUDE_EXACT` / 服飾 `_CLOTHING_RE`)。「`hair ornament`/`hair ribbon`」
+  「`closed eyes`/`one eye closed`」「`breasts out`/`cleavage`」等の **装飾・状態・行為** は
+  identity から除外する (不変外見ではない)。
+
+**服装の扱い (論点・保守判断 = scene)**: canonical 思想 (bible §1) では服も同一性になり得る
+(制服キャラ等) が、danbooru の 1 post = 1 イラストでは服は post ごとに変わる可変要素。
+服を identity に含めると ① 同一性集合が衣装違いで膨れ「同一キャラの汎化」を測れない
+② identity 重複率が人工的に下がる ③ retention 教師が「服も毎回同じ」を強制する。よって
+**服飾・小物 (`shirt`/`dress`/`gloves`/`hat`/`ribbon`/`necklace`/`glasses` …) は scene 側に寄せる**。
+キャラ固有衣装の固定は運用側が `CharacterIdentity.canonical_tags` に明示する設計
+(compose_prompt が canonical を先頭に置く) で担保され、データ側で服を identity と決め打つ
+必要はない。
+
+### 13.3 ペア生成
+
+- **target tags** = identity_tags ∪ scene_tags を **§5 正準バケット順**で並べる
+  (#1 の `make_pair` と同一の分類 → freq 降順安定ソート → バケット順 → **16 件打ち切り**)。
+  identity/scene 分離は **打ち切り後** の正準列に対して行うため、`identity_tags + scene_tags`
+  は target の完全な分割 (集合一致・順序は target の部分列)。
+- **identity_tags は必ず target に含める** (identity retention の教師信号の核 =
+  定義上 retention 100% の正解)。identity が空になる post (同一性の核なし) は教師にならず
+  **スキップ**する。
+- **text** = identity を保持した状況記述 (自然文)。#1 テンプレ (`JA/EN_TEMPLATES`) を流用し、
+  identity 由来語を冒頭に明示する。これにより A2 の text 側 greedy 最長一致が identity を拾える。
+
+### 13.4 スキーマ (後方互換必須)
+
+既存 #1 行 (`source:"synthetic"`) は **無改修で読める** まま。新形式は `source:"identity_cond"`
++ `meta` 拡張を足すのみ。`text`/`tags` の意味は #1 と同じ枠 (`tags` = target)。
+
+```json
+{
+  "text": "long hair・blue eyes・animal earsの女の子が一人を描いてください。",
+  "tags": ["1girl", "long hair", "blue eyes", "animal ears", "solo", "looking at viewer", "shirt", "skirt"],
+  "lang": "ja",
+  "source": "identity_cond",
+  "meta": {
+    "rating": "g", "post_id": 11620731, "n_tags": 8, "tmpl": 2,
+    "identity_tags": ["1girl", "long hair", "blue eyes", "animal ears"],
+    "scene_tags": ["solo", "looking at viewer", "shirt", "skirt"]
+  }
+}
+```
+
+| フィールド | 説明 |
+|---|---|
+| `source` | `"identity_cond"`。#1 は `"synthetic"`・将来 `"llm_distill"` (§12)。 |
+| `meta.identity_tags` | 同一性タグ列 (target の正準順序部分列・バケット 1 のみ・必ず非空)。 |
+| `meta.scene_tags` | シーンタグ列 (target の残り・正準順序部分列)。`identity ∪ scene == tags`。 |
+
+- A2 は `meta.identity_tags` / `meta.scene_tags` から §13.1 の 2-`<sep>` 系列を組む。
+  #1 の `load_pairs` / `build_sequence` でこの行を読んでも **追加 meta キーは無視され壊れない**
+  (後方互換を実測確認・§13.6)。
+
+### 13.5 検証・リーク防止 (source 非依存で全件)
+
+`validate_identity` = #1 の `validate_pairs` を全件適用 + identity 固有検査:
+
+- OOV 0 (target/identity/scene の全タグが vocab 内)・負語 0 (`NEGATIVE_BLOCKLIST`)・
+  タグ順序 §5 正準順。
+- `identity ∪ scene == target` (集合一致)・identity ∩ scene == ∅・identity ⊆ target・
+  identity は全要素がバケット 1。
+- **リーク防止 (§8 踏襲)**: 同一 `post_id` / 同一 `text` が train/val に跨らない (0 件)。
+- **同一性汎化チェック (新)**: identity_tags の組の train/val 重複を測り stats に記録
+  (`train_val_identity_overlap_rate`)。重複しすぎると同一性の汎化を測れない。
+- **tokenizer 往復**: `dollma_make_identity_pairs.py` の `_Tok` が tokenizer.hpp /
+  `train_bitnet.Tokenizer` と同一の normalize / specials id / `tags[i].id==5+i` を再現し、
+  target/identity/scene を encode→decode して **UNK 0・完全一致** を検査する。
+
+### 13.6 A1 実測 (確定ライン)
+
+- **出力ファイル**: `data/bitnet/pairs.identity.{train,val}.jsonl` + `stats.identity.json`。
+  **#1 (`pairs.{train,val}.jsonl`) とは別ファイル** にして #1 を汚さず、A2 が両方読んで混合する。
+- 元データ: #1 と同じ `cache/danbooru_posts.jsonl` (8,200 posts・タグのみ・画像非取得)。
+- **総 5,000 (train 4,500 / val 500, split 0.9/0.1)・seed 20260620**。
+  lang ja 0.498 / en 0.502・source identity_cond 1.0・rating g 1.0・ユニーク text 比率 1.0。
+- **分離分布**: identity/pair mean 5.81 (min 1 / max 16)・scene/pair mean 9.79 (min 0 / max 15)・
+  target/pair mean 15.6。distinct identity 語彙 265 / distinct scene 語彙 1920。
+- **同一性汎化**: unique identity sets 4,155/5,000 (0.831)・**train/val identity 重複率 0.2531**
+  (val 識別子の ~75% が train 未出 = 汎化を測れる)。
+- identity 頻出: 1girl 3002 / long hair 2266 / short hair 1396 / black hair 984 /
+  blue eyes 952 / multiple girls 923 / 1boy 909 …
+- scene 頻出: solo 2697 / looking at viewer 2063 / shirt 1934 / long sleeves 1409 /
+  dress 1058 / white shirt 1013 / bow 1011 …(服飾・状態は scene に寄っている)。
+- **全件検証 0**: OOV 0 / 負語 0 / 非正準順序 0 / post_id リーク 0 / text リーク 0 /
+  identity∪scene≠target 0 / identity-not-in-target 0。**tokenizer 往復 UNK 0・mismatch 0**。
+- **後方互換実測**: 既存 `pairs.train.jsonl` (synthetic 4,500) を `train_bitnet.load_pairs` +
+  `build_sequence` で無改修ロード OK。新 `pairs.identity.train.jsonl` も同経路でロード OK
+  (追加 meta キーは #1 リーダに無視される)。
+
+### 13.7 再現手順
+
+```sh
+py -3.12 scripts/dollma_make_identity_pairs.py --n 4500 --val 500 --seed 20260620     --vocab data/bitnet/vocab.json --out-dir data/bitnet
+```
+
+キャッシュ (`cache/danbooru_posts.jsonl`) があれば再利用し、無ければ #1 と同じ keyset
+ページングで取得する (タグ + rating のみ・画像非取得・§1.2/§1.3)。
+
+### 13.8 引き渡し
+
+- **model-trainer** (`train_bitnet.py` / A2): `pairs.identity.{train,val}.jsonl` を #1 と
+  **混合**して読む。identity_cond 行は `meta.identity_tags`/`scene_tags` から §13.1 の
+  2-`<sep>` 系列を組む。synthetic 行は従来どおり 1-`<sep>`。tokenizer / vocab は不変。
+- **cpp-implementer** (`tokenizer.hpp`): **変更不要**。`<sep>` を 2 回受けても decode は
+  構造トークンとして読み飛ばす。vocab.json も不変。
+- **prompt-engineer**: §13.2 の identity/scene 分離規則 (特に「服=scene」) を共有し、
+  compose_prompt の canonical/scene 配置と矛盾しないことを確認済み (canonical=identity・
+  scene 各バケット=scene に対応)。
+
+### 13.9 B (品質スコアラ) の扱い
+
+B (アニメ品質スコアラ・§11 蒸留) の正解ラベルは **別仕様**とする (本 A1 では扱わない)。
+§11 の合格/不合格蓄積を teacher にする設計時に、本 §13 とは独立の dataset として起こす。
