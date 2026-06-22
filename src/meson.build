@@ -131,6 +131,24 @@ test_wd14_exe = executable('test_wd14',
 # OV モデルロードが重く既定 30s を超えうる (並列実行時の CPU 競合で顕著)。
 test('wd14', test_wd14_exe, timeout : 120)
 
+# マッティング (ISNet-anime) CPU 推論テスト (M-4)
+# matting.hpp は OV ガード越し (HAVE_OPENVINO 未定義時は推論 [SKIP]・compose_rgba は常時)。
+# モデル (model_ov_fp32.xml) は .gitignore 済・再生成可。golden は src/tests/data/matting/。
+# パスは meson の cpp_args で -D 埋め込み (cwd 非依存)。OV/モデル/golden 不在は test 側で [SKIP]。
+matting_model_xml   = meson.project_source_root() / 'models' / 'isnet-anime' / 'model_ov_fp32.xml'
+matting_golden_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'matting' / 'golden_isnet.safetensors'
+test_matting_exe = executable('test_matting',
+  sources             : files('tests/test_matting.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DMATTING_MODEL_XML="' + matting_model_xml + '"',
+    '-DMATTING_GOLDEN_PATH="' + matting_golden_path + '"',
+  ],
+)
+# ISNet-anime は重い (CPU ~583ms/推論 x ベンチ N=7 + ロード)。既定 30s を超えうるため延伸。
+test('matting', test_matting_exe, timeout : 180)
+
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
   sources             : files('tests/test_affinity.cpp'),
@@ -194,6 +212,16 @@ test_safetensors_exe = executable('test_safetensors',
   cpp_args            : cpp_args + ['-DGOLDEN_PATH="' + golden_path + '"'],
 )
 test('safetensors', test_safetensors_exe)
+
+# PNG エンコーダ (RGB8 / RGBA8) テスト (M-3 RGBA 透過 PNG 追加)
+# 純 C++ (CUDA/OpenVINO/JSON 非依存)・常時実行。
+test_png_exe = executable('test_png',
+  sources             : files('tests/test_png.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('png', test_png_exe)
 
 # PNG メタ往復 (character-bible-spec §7 tEXt 焼き込み) テスト + ベンチ
 # 純 C++ (CUDA/OpenVINO 非依存)・常時実行。JSON は nlohmann/json (json_dep)。

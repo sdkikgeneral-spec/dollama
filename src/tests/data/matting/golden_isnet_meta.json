@@ -1,0 +1,86 @@
+{
+  "model": "ISNet-anime (skytnt/anime-seg isnetis.onnx)",
+  "license": "Apache-2.0",
+  "onnx_src": "C:\\Users\\s.kikuta_monobit\\.cache\\huggingface\\hub\\models--skytnt--anime-seg\\snapshots\\976cbb9ba61600e0993d1ee2a8a247ae05d183ee\\isnetis.onnx",
+  "ir_fp32": "models/isnet-anime/model_ov_fp32.xml",
+  "ir_fp16": "models/isnet-anime/model_ov_fp16.xml",
+  "input": {
+    "name": "img",
+    "element_type": "f32",
+    "shape": [
+      1,
+      3,
+      1024,
+      1024
+    ],
+    "layout": "NCHW",
+    "range": "[0,1] = img/255 (正規化なし)"
+  },
+  "output": {
+    "name": "mask",
+    "element_type": "f32",
+    "shape": [
+      1,
+      1,
+      1024,
+      1024
+    ],
+    "semantics": "sigmoid 済み soft マスク [0,1]"
+  },
+  "golden": {
+    "file": "golden_isnet.safetensors",
+    "format": "safetensors (F32). src/io/safetensors.hpp で読める。",
+    "source_image": "input_real_anime.png",
+    "tensors": {
+      "input": {
+        "dtype": "F32",
+        "shape": [
+          1,
+          3,
+          1024,
+          1024
+        ],
+        "note": "前処理済み NCHW [0,1]。C++ M-4 はこれを IR 入力にコピーして渡す。"
+      },
+      "mask": {
+        "dtype": "F32",
+        "shape": [
+          1,
+          1,
+          1024,
+          1024
+        ],
+        "note": "OV IR(FP32) CPU 出力 = 期待 soft マスク。C++ は IoU/MAE で突合。"
+      }
+    },
+    "note": "golden は OV IR(FP32) の出力を正とする (C++ も同じ IR を使うので一致するはず)。"
+  },
+  "convert_ms": 419.0,
+  "accuracy": {
+    "input_real_anime.png": {
+      "max_abs_onnx_vs_ovfp32": 6.139278411865234e-06,
+      "max_abs_ovfp32_vs_ovfp16": 0.0015144646167755127,
+      "max_abs_onnx_vs_ovfp16": 0.0015147626399993896,
+      "ov_fp32_cpu_ms": 583.1
+    },
+    "input_simple.png": {
+      "max_abs_onnx_vs_ovfp32": 1.3183034752728418e-07,
+      "max_abs_ovfp32_vs_ovfp16": 5.071517080068588e-06,
+      "max_abs_onnx_vs_ovfp16": 5.093403160572052e-06,
+      "ov_fp32_cpu_ms": 588.0
+    },
+    "input_white.png": {
+      "max_abs_onnx_vs_ovfp32": 1.4753095456399024e-07,
+      "max_abs_ovfp32_vs_ovfp16": 5.4372940212488174e-06,
+      "max_abs_onnx_vs_ovfp16": 5.448469892144203e-06,
+      "ov_fp32_cpu_ms": 602.6
+    },
+    "input_grey.png": {
+      "max_abs_onnx_vs_ovfp32": 1.4735996956005692e-07,
+      "max_abs_ovfp32_vs_ovfp16": 1.3719545677304268e-05,
+      "max_abs_onnx_vs_ovfp16": 1.372327096760273e-05,
+      "ov_fp32_cpu_ms": 721.5
+    }
+  },
+  "io_warning_for_M4": "入力 element_type は f32 ([1,3,1024,1024] NCHW)。C++ では ov::element::f32 で テンソルを作り IR と厳密一致させること (CLIP の i32/i64 0xC0000409 教訓)。出力は f32 [1,1,1024,1024]、get_output_tensor(0)。"
+}

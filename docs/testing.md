@@ -194,6 +194,21 @@ HAVE_OPENVINO 未定義・モデル不在は [SKIP]。BOS(49406)+anime(2368)+EOS
 | `bench_infer_latency` | ベンチ | warmup5 + 100回中央値/min/max (実測: 中央値 105.3ms / min 99.1 / max 132.8 / N=100, CPU) |
 | `info_top_tags` | 情報 | selected_tags.csv があれば top-10 タグ名を出力 (assert 外) |
 
+### `src/tests/test_matting.cpp` — Matter (ISNet-anime マッティング)
+
+`meson test` 名: `matting`
+
+ISNet-anime α 抽出グルー (`src/infer/matting.hpp`)。入出力は M-1 厳守: 入力 `img` f32 [1,3,1024,1024] NCHW (前処理 = `/255` のみ・正規化なし・[0,1])、出力 `mask` f32 [1,1,1024,1024] sigmoid 済み soft マスク [0,1] (`get_output_tensor(0)`)。入力 element_type は IR と厳密一致 (f32)。device 引数 既定 "CPU" (研究機 M-5 で "NPU"/"GPU.0" 差替)。golden (`src/tests/data/matting/golden_isnet.safetensors`: `input`/`mask`) は同じ FP32 IR の CPU 出力を正とする。`compose_rgba` は OV 非依存の純 C++ で常時実行。**HAVE_OPENVINO 未定義 / モデル (model_ov_fp32.xml) 不在 / golden 不在は推論部 [SKIP]** (この開発 PC は OV C++ 無し → compose_rgba/PNG 部のみ実走)。モデル/golden パスは meson の `-DMATTING_MODEL_XML=` / `-DMATTING_GOLDEN_PATH=` で埋め込み (cwd 非依存)。
+
+| テスト関数 | 種別 | 内容 |
+|---|---|---|
+| `test_rgba_encode` | 機能 (OV 非依存・常時) | compose_rgba (soft α・ストレート・RGB 非改変) → `encode_png_rgba8` が color_type=6 PNG を吐く (M-3 結線) |
+| `test_golden_iou_mae` | 機能 | golden input を `infer_nchw` に通し出力 mask を golden と突合。IoU≥0.99 (thr 0.5 二値化) / MAE≤1e-3 |
+| `test_mask_range` | 機能 | 出力全画素が [0,1] |
+| `test_determinism` | 機能 | 同一入力 2 回で完全一致 |
+| `test_input_size_guard` | エラー | 不正サイズ入力で `std::invalid_argument` が飛ぶ |
+| `bench_infer` | ベンチ | warmup3 + N=7 中央値 CPU レイテンシ (期待 ~583ms / M-1 Python。研究機 M-5 で HW 比較) |
+
 
 ### `src/tests/test_affinity.cpp` — set_current_thread_affinity
 

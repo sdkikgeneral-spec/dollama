@@ -1,4 +1,6 @@
 # モデルファイル (大容量バイナリ)。ルート直下のみ無視 (src/models/ のソースは追跡する)。
+# ISNet-anime OV IR (models/isnet-anime/model_ov_fp32.* 176MB / fp16 88MB) もここで無視。
+# scripts/dollma_convert_matting.py で再生成する (ONNX は HF キャッシュ・_matting_paths.json)。
 /models/
 
 # VAE ゴールデンデータ (計 ~400MB, GitHub 100MB 制限超)。
@@ -11,6 +13,10 @@ src/tests/data/vae_golden.png
 # scripts/dollma_dump_unet_golden.py で再生成する。不在時 test_unet は [SKIP]。
 src/tests/data/unet_weights.safetensors
 src/tests/data/unet_io.safetensors
+
+# マッティング probe の中間 .npy マスク (32MB・golden と冗長・再生成可)。
+# scripts/dollma_probe_matting.py で再生成。golden_isnet.safetensors / 比較 PNG は追跡。
+src/tests/data/matting/*.npy
 
 # Meson subprojects: wrap 定義のみ追跡し DL ソース/キャッシュは無視
 # (meson が wrap から再取得する。ヘッダオンリーなので再現容易)

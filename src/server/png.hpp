@@ -1,12 +1,12 @@
-// 最小 PNG エンコーダ (RGB8, zlib stored block)
+// 最小 PNG エンコーダ (RGB8 / RGBA8, zlib stored block)
 //
-// 目的: 生成画像 (RGB8 ピクセル列) を PNG バイト列に変換する。
+// 目的: 生成画像 (RGB8 / RGBA8 ピクセル列) を PNG バイト列に変換する。
 // 圧縮は行わず zlib の「非圧縮ブロック (stored / BTYPE=00)」で IDAT を構築する。
 // 圧縮率は犠牲になるが、依存ライブラリゼロ・実装が小さく検証しやすい。
 // CUDA / OpenVINO 依存は一切ない純 C++。
 //
 // PNG 構造: シグネチャ + IHDR + IDAT + IEND。
-//   - IHDR: width, height, bit_depth=8, color_type=2 (truecolor RGB)
+//   - IHDR: width, height, bit_depth=8, color_type=2 (RGB) または 6 (RGBA)
 //   - 各スキャンラインの先頭に filter byte 0x00 を付ける (フィルタなし)
 //   - IDAT は zlib ストリーム (2 バイトヘッダ + deflate stored blocks + Adler-32)
 #pragma once
@@ -169,6 +169,61 @@ inline std::vector<uint8_t> encode_png_rgb8(const std::vector<uint8_t>& rgb,
     {
         raw.push_back(0x00); // filter type: none
         const uint8_t* row = rgb.data() + static_cast<size_t>(y) * row_bytes;
+        raw.insert(raw.end(), row, row + row_bytes);
+    }
+
+    // IDAT (zlib stored)
+    detail::put_chunk(out, "IDAT", detail::zlib_store(raw));
+
+    // IEND
+    detail::put_chunk(out, "IEND", {});
+
+    return out;
+}
+
+// RGBA8 ピクセル列を PNG バイト列にエンコードする (透過 PNG / マッティング出力用)。
+//   rgba: サイズ width*height*4 の RGBA8 (行優先、各画素 R,G,B,A の 4 バイト)。
+//   戻り値: PNG ファイルバイト列 (color_type=6 truecolor with alpha)。
+// encode_png_rgb8 と同じ仕組み (CRC/Adler/zlib stored block/フィルタなし) を
+// 4 チャンネルへ拡張しただけ。RGB 経路は非破壊で別関数のまま残す。
+inline std::vector<uint8_t> encode_png_rgba8(const std::vector<uint8_t>& rgba,
+                                             int width, int height)
+{
+    if (width <= 0 || height <= 0)
+    {
+        throw std::runtime_error("encode_png_rgba8: 幅/高さが不正");
+    }
+    const size_t expect = static_cast<size_t>(width) * height * 4;
+    if (rgba.size() != expect)
+    {
+        throw std::runtime_error("encode_png_rgba8: ピクセル数が width*height*4 と不一致");
+    }
+
+    std::vector<uint8_t> out;
+
+    // PNG シグネチャ 89 50 4E 47 0D 0A 1A 0A
+    const uint8_t sig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    out.insert(out.end(), sig, sig + 8);
+
+    // IHDR
+    std::vector<uint8_t> ihdr;
+    detail::put_be32(ihdr, static_cast<uint32_t>(width));
+    detail::put_be32(ihdr, static_cast<uint32_t>(height));
+    ihdr.push_back(8);    // bit depth
+    ihdr.push_back(6);    // color type 6 = truecolor + alpha (RGBA)
+    ihdr.push_back(0);    // compression method
+    ihdr.push_back(0);    // filter method
+    ihdr.push_back(0);    // interlace method
+    detail::put_chunk(out, "IHDR", ihdr);
+
+    // raw スキャンライン (各行頭に filter byte 0x00)
+    std::vector<uint8_t> raw;
+    raw.reserve(static_cast<size_t>(height) * (1 + static_cast<size_t>(width) * 4));
+    const size_t row_bytes = static_cast<size_t>(width) * 4;
+    for (int y = 0; y < height; ++y)
+    {
+        raw.push_back(0x00); // filter type: none
+        const uint8_t* row = rgba.data() + static_cast<size_t>(y) * row_bytes;
         raw.insert(raw.end(), row, row + row_bytes);
     }
 
