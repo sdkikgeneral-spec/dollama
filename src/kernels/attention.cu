@@ -1,22 +1,29 @@
-// Attention カーネル実装 (Phase 2 マイルストーン 2-2-5 / S2 flash 化)
+// Attention カーネル実装 (Phase 2 マイルストーン 2-2-5 / S2 flash 化 / S3-C wmma 化)
 // 対象: RTX5080 (Blackwell / sm_120) / CUDA Runtime API のみ
 //
 // 設計判断 (後続カーネルでも参照する):
 //   - 入出力 FP16 / 内部計算 (内積・softmax・PV 積和) は必ず FP32 蓄積。最後に
 //     __float2half で書き戻す (GEMM / GroupNorm / Conv と同規約)。
-//   - 経路は 2 本:
+//   - 経路は 3 本:
 //       (A) naive (attention_fp16): 1 ブロック = 1 つの (b,h,query 行 i)。scores[Sk]
 //           を動的 shared に materialize し 2 パス softmax。Dh が大きい VAE mid_block
 //           (Dh=512) 用フォールバック。
 //       (B) flash (attention_flash_fp16): online softmax。scores を materialize せず
-//           K/V を Bk 行ずつタイル走査。UNet self/cross (Dh=64) の主役。S2 で追加。
+//           K/V を Bk 行ずつタイル走査。1 スレッド = 1 query 行。Dh<=128 の汎用版。
+//       (C) flash + wmma (attention_flash_wmma_fp16): online softmax を warp-tile
+//           (16x16) で書き直し、QK^T と P·V を Tensor Core (wmma) で計算する。
+//           Dh が 16 の倍数 (UNet self/cross の Dh=64) のときの主役。S3-C で追加。
 //   - self / cross は同一カーネルで扱う。違いは Sq と Sk (および Dh) のみ。
 //   - reduction ヘルパー (warp/block の sum/max) は本 TU 内に閉じる (utils.cuh 不変)。
-//   - 経路選択は launch_attention で Dh により行う (Dh<=128 は flash、それ超は naive)。
+//   - 経路選択は launch_attention で Dh により行う:
+//       Dh が 16 の倍数かつ <=128 → flash+wmma (C)
+//       それ以外で Dh<=128       → flash (B)
+//       Dh>128 (VAE mid Dh=512)  → naive (A)
 #include "kernels/attention.cuh"
 #include "kernels/utils.cuh"
 
 #include <cuda_fp16.h>
+#include <mma.h>
 
 namespace dollama
 {
@@ -346,6 +353,245 @@ __global__ void attention_flash_fp16(const __half* __restrict__ q,
     }
 }
 
+// ================================================================
+// flash-attention + wmma 経路 (S3-C: Tensor Core 化)
+// ================================================================
+// 設計 (PL レビュー確定):
+//   - per-thread flash (B) は 1 スレッド = 1 query 行で q_reg[Dh]/acc[Dh] をスレッド
+//     ローカル保持するため wmma (warp 単位 16x16 タイル協調) と非互換。そこで flash を
+//     warp-tile online-softmax として書き直す。
+//   - 1 ブロック = 1 warp (32 スレッド) = 1 つの (b, h) の query 行 16 行ブロック (WM_BQ)。
+//     gridDim.x = ceil(Sq/16)、gridDim.y = B*H。
+//   - QK^T: Q[16,Dh] x K^T[Dh,16] を wmma で計算 (Dh を 16 ずつ K 次元に分割し蓄積)。
+//     accumulator は FP32 fragment。結果スコア S[16,16] を shared に FP32 で書く。
+//   - online softmax の m/l 補正は FP32 のまま (SSIM 条件)。S に scale を掛け、行 max を
+//     warp で求め、P=exp(S-m_new) を計算。acc[16][Dh] (shared FP32) を corr で行スケール。
+//   - P·V: P[16,16] (FP16 にダウンキャスト) x V[16,Dh] を wmma で計算し、その FP32
+//     accumulator (16xDh) を shared acc に加算。
+//   - cross の Sk=77 は 16 の倍数でない → 末尾タイルは K/V/P を 0 パディング。スコアの
+//     パディング列は -INF にして exp→0 にし、softmax に混入させない (マスク処理)。
+//   - 末尾 query 行タイル (Sq が 16 の倍数でない) も行マスクで書き戻しを抑止。
+//
+// 対応範囲: Dh が 16 の倍数 かつ Dh<=128。UNet self/cross の Dh=64 が主役。
+// ----------------------------------------------------------------
+
+using namespace nvcuda;
+
+// wmma タイル寸法 (16x16x16 固定)。
+static constexpr int WM_M   = 16; // query 行タイル
+static constexpr int WM_N   = 16; // K 行タイル (= スコア列)
+static constexpr int WM_K   = 16; // 内積分割幅 (Dh / 16 回)
+static constexpr int WM_BQ  = 16; // 1 ブロックが担当する query 行数 (= WM_M)
+static constexpr int WM_BK  = 16; // K/V タイル行数 (= WM_N)
+// shared に置く最大 Dh (acc[16][Dh] と K/V/P タイルのため)。Dh<=128 を想定。
+static constexpr int WM_MAX_DH = 128;
+
+__global__ void attention_flash_wmma_fp16(const __half* __restrict__ q,
+                                          const __half* __restrict__ k,
+                                          const __half* __restrict__ v,
+                                          __half* __restrict__       out,
+                                          int                        B,
+                                          int                        H,
+                                          int                        Sq,
+                                          int                        Sk,
+                                          int                        Dh,
+                                          float                      scale)
+{
+    // blockIdx.y = (b*H + h)、blockIdx.x = query 行タイル番号 (16 行)。
+    const long bh       = blockIdx.y;
+    const int  row_base = static_cast<int>(blockIdx.x) * WM_BQ;
+
+    const long q_head = bh * Sq * Dh;
+    const long k_head = bh * Sk * Dh;
+    const long v_head = bh * Sk * Dh;
+    const long o_head = bh * Sq * Dh;
+
+    const int tid  = static_cast<int>(threadIdx.x); // 0..31 (1 warp)
+    const int lane = tid;                            // warp 内レーン
+
+    // この query 行タイルの有効行数 (末尾タイルでは <16)。
+    const int q_rows = min(WM_BQ, Sq - row_base);
+
+    // ---- shared レイアウト ----
+    // Q_tile : [WM_BQ][Dh]      (FP16)  K^T 入力用に row-major (Q[m,d])
+    // K_tile : [WM_BK][Dh]      (FP16)  K[n,d] row-major
+    // V_tile : [WM_BK][Dh]      (FP16)  V[n,d] row-major
+    // P_tile : [WM_BQ][WM_BK]   (FP16)  ダウンキャスト済み確率
+    // S_tile : [WM_BQ][WM_BK]   (FP32)  QK^T スコア (一時)
+    // acc    : [WM_BQ][Dh]      (FP32)  出力アキュムレータ
+    // m_row  : [WM_BQ]          (FP32)  running max
+    // l_row  : [WM_BQ]          (FP32)  running sum
+    extern __shared__ unsigned char smem_raw[];
+    __half* q_tile = reinterpret_cast<__half*>(smem_raw);
+    __half* k_tile = q_tile + WM_BQ * Dh;
+    __half* v_tile = k_tile + WM_BK * Dh;
+    __half* p_tile = v_tile + WM_BK * Dh;
+    // FP32 領域は __half 領域の直後 (16B 境界に揃う: 上の __half 数は全て偶数)。
+    float*  s_tile = reinterpret_cast<float*>(p_tile + WM_BQ * WM_BK);
+    float*  acc    = s_tile + WM_BQ * WM_BK;
+    float*  m_row  = acc + WM_BQ * Dh;
+    float*  l_row  = m_row + WM_BQ;
+
+    // ---- 初期化 ----
+    // acc を 0、m を -INF、l を 0 に。warp 32 レーンで分担。
+    for (int e = lane; e < WM_BQ * Dh; e += 32)
+    {
+        acc[e] = 0.0f;
+    }
+    if (lane < WM_BQ)
+    {
+        m_row[lane] = -INFINITY;
+        l_row[lane] = 0.0f;
+    }
+
+    // Q タイルを shared にロード (有効行のみ。無効行は 0 パディング)。
+    for (int e = lane; e < WM_BQ * Dh; e += 32)
+    {
+        const int m = e / Dh;
+        const int d = e - m * Dh;
+        const int qi = row_base + m;
+        q_tile[e] = (qi < Sq) ? q[q_head + static_cast<long>(qi) * Dh + d]
+                              : __float2half(0.0f);
+    }
+    __syncwarp();
+
+    // K 次元の分割数 (Dh / 16)。
+    const int kchunks = Dh / WM_K;
+
+    // ---- K/V を WM_BK 行ずつタイル走査 (online softmax) ----
+    for (int j0 = 0; j0 < Sk; j0 += WM_BK)
+    {
+        const int tile_rows = min(WM_BK, Sk - j0);
+
+        // K/V タイルを shared にロード (パディング行は 0)。
+        for (int e = lane; e < WM_BK * Dh; e += 32)
+        {
+            const int n = e / Dh;
+            const int d = e - n * Dh;
+            const int kj = j0 + n;
+            if (kj < Sk)
+            {
+                k_tile[e] = k[k_head + static_cast<long>(kj) * Dh + d];
+                v_tile[e] = v[v_head + static_cast<long>(kj) * Dh + d];
+            }
+            else
+            {
+                k_tile[e] = __float2half(0.0f);
+                v_tile[e] = __float2half(0.0f);
+            }
+        }
+        __syncwarp();
+
+        // ---- QK^T を wmma で。S[16,16] = Q[16,Dh] * K^T[Dh,16] ----
+        // K は row-major [n][d] なので、wmma の b 行列を col_major で K^T として読む:
+        //   K^T[d, n] = K[n, d]。col_major fragment は「列が連続」を仮定するので、
+        //   K[n][d] (n が行) を col_major で渡すと b[d][n]=K[n][d] と解釈され狙い通り。
+        wmma::fragment<wmma::accumulator, WM_M, WM_N, WM_K, float> c_frag;
+        wmma::fill_fragment(c_frag, 0.0f);
+        for (int kc = 0; kc < kchunks; ++kc)
+        {
+            wmma::fragment<wmma::matrix_a, WM_M, WM_N, WM_K, __half, wmma::row_major> a_frag;
+            wmma::fragment<wmma::matrix_b, WM_M, WM_N, WM_K, __half, wmma::col_major> b_frag;
+            // a = Q[0..15][kc*16 .. kc*16+15], leading dim = Dh。
+            wmma::load_matrix_sync(a_frag, q_tile + kc * WM_K, Dh);
+            // b = K^T。K_tile は [n][d]、col_major で leading dim = Dh、起点は列 d=kc*16。
+            wmma::load_matrix_sync(b_frag, k_tile + kc * WM_K, Dh);
+            wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        }
+        // S_tile に FP32 で書く (row-major)。
+        wmma::store_matrix_sync(s_tile, c_frag, WM_BK, wmma::mem_row_major);
+        __syncwarp();
+
+        // ---- online softmax 補正 (FP32, 各 query 行ごと) ----
+        // 1 行を 1 レーンが担当 (WM_BQ=16 <= 32)。パディング列/行はマスク。
+        if (lane < WM_BQ)
+        {
+            const int m = lane;
+            const bool row_valid = (m < q_rows);
+
+            // この行の scaled スコア最大 (パディング列は除外)。
+            float tile_max = -INFINITY;
+            for (int n = 0; n < tile_rows; ++n)
+            {
+                const float s = scale * s_tile[m * WM_BK + n];
+                s_tile[m * WM_BK + n] = s; // scale 済みを書き戻し (後段で再利用)
+                tile_max = fmaxf(tile_max, s);
+            }
+            // パディング列を -INF にしておく (P=0 になる)。
+            for (int n = tile_rows; n < WM_BK; ++n)
+            {
+                s_tile[m * WM_BK + n] = -INFINITY;
+            }
+
+            const float m_old = m_row[m];
+            const float m_new = fmaxf(m_old, tile_max);
+            const float corr  = (m_old == -INFINITY) ? 0.0f : __expf(m_old - m_new);
+
+            // 既存 acc をこの行について corr でスケール。
+            for (int d = 0; d < Dh; ++d)
+            {
+                acc[m * Dh + d] *= corr;
+            }
+
+            // P[m][n] = exp(s - m_new) を p_tile に FP16 で。l を更新。
+            float l_new = l_row[m] * corr;
+            for (int n = 0; n < WM_BK; ++n)
+            {
+                const float s = s_tile[m * WM_BK + n];
+                const float p = (s == -INFINITY) ? 0.0f : __expf(s - m_new);
+                p_tile[m * WM_BK + n] = __float2half(row_valid ? p : 0.0f);
+                l_new += (row_valid ? p : 0.0f);
+            }
+            m_row[m] = row_valid ? m_new : m_old;
+            l_row[m] = l_new;
+        }
+        __syncwarp();
+
+        // ---- P·V を wmma で。acc[16,Dh] += P[16,16] * V[16,Dh] ----
+        // Dh を 16 列ずつ出力タイルに分けて計算 (Dh/16 = kchunks タイル)。
+        // P[m][n] row_major、V[n][d] row_major → そのまま a (row_major), b (row_major)。
+        for (int dc = 0; dc < kchunks; ++dc)
+        {
+            wmma::fragment<wmma::accumulator, WM_M, WM_N, WM_K, float> o_frag;
+            wmma::fill_fragment(o_frag, 0.0f);
+
+            wmma::fragment<wmma::matrix_a, WM_M, WM_N, WM_K, __half, wmma::row_major> pa;
+            wmma::fragment<wmma::matrix_b, WM_M, WM_N, WM_K, __half, wmma::row_major> vb;
+            // a = P[0..15][0..15], leading dim = WM_BK。
+            wmma::load_matrix_sync(pa, p_tile, WM_BK);
+            // b = V[0..15][dc*16 .. dc*16+15], leading dim = Dh。
+            wmma::load_matrix_sync(vb, v_tile + dc * WM_K, Dh);
+            wmma::mma_sync(o_frag, pa, vb, o_frag);
+
+            // o_frag (16x16) を一時 shared (s_tile を再利用) に書いて acc に加算。
+            wmma::store_matrix_sync(s_tile, o_frag, WM_BK, wmma::mem_row_major);
+            __syncwarp();
+            for (int e = lane; e < WM_M * WM_K; e += 32)
+            {
+                const int m = e / WM_K;
+                const int d = e - m * WM_K;
+                acc[m * Dh + dc * WM_K + d] += s_tile[m * WM_BK + d];
+            }
+            __syncwarp();
+        }
+        __syncwarp();
+    }
+
+    // ---- 正規化して書き戻す (有効行のみ) ----
+    for (int e = lane; e < WM_BQ * Dh; e += 32)
+    {
+        const int m  = e / Dh;
+        const int d  = e - m * Dh;
+        const int qi = row_base + m;
+        if (qi < Sq)
+        {
+            const float l    = l_row[m];
+            const float invl = (l > 0.0f) ? (1.0f / l) : 0.0f;
+            out[o_head + static_cast<long>(qi) * Dh + d] = __float2half(acc[m * Dh + d] * invl);
+        }
+    }
+}
+
 // ----------------------------------------------------------------
 // ホストラッパー
 // ----------------------------------------------------------------
@@ -359,8 +605,33 @@ void launch_attention(const __half* d_q, const __half* d_k, const __half* d_v,
     }
 
     // ---- 経路選択 ----
-    // Dh <= FLASH_MAX_DH (=128): flash 経路 (online softmax)。UNet self/cross の主役。
-    // Dh > FLASH_MAX_DH (VAE mid Dh=512 等): naive 経路にフォールバック。
+    // (C) flash+wmma: Dh が 16 の倍数 かつ Dh<=128。UNet self/cross の Dh=64 主役。
+    // (B) flash:      その他 Dh<=128。
+    // (A) naive:      Dh>128 (VAE mid Dh=512)。
+    if (Dh <= WM_MAX_DH && (Dh % WM_K) == 0)
+    {
+        // グリッド: x = query 行タイル数 (16 行), y = B*H。各ブロック 1 warp (32 スレッド)。
+        const int  qtiles = (Sq + WM_BQ - 1) / WM_BQ;
+        const dim3 grid(static_cast<unsigned>(qtiles),
+                        static_cast<unsigned>(static_cast<long>(B) * H), 1);
+
+        // shared サイズ:
+        //   __half: Q(WM_BQ*Dh) + K(WM_BK*Dh) + V(WM_BK*Dh) + P(WM_BQ*WM_BK)
+        //   float : S(WM_BQ*WM_BK) + acc(WM_BQ*Dh) + m(WM_BQ) + l(WM_BQ)
+        const size_t half_elems =
+            static_cast<size_t>(WM_BQ) * Dh + static_cast<size_t>(WM_BK) * Dh * 2
+            + static_cast<size_t>(WM_BQ) * WM_BK;
+        const size_t float_elems =
+            static_cast<size_t>(WM_BQ) * WM_BK + static_cast<size_t>(WM_BQ) * Dh
+            + 2 * static_cast<size_t>(WM_BQ);
+        const size_t shmem = half_elems * sizeof(__half) + float_elems * sizeof(float);
+
+        attention_flash_wmma_fp16<<<grid, 32, shmem>>>(d_q, d_k, d_v, d_out,
+                                                       B, H, Sq, Sk, Dh, scale);
+        CUDA_CHECK_KERNEL();
+        return;
+    }
+
     if (Dh <= FLASH_MAX_DH)
     {
         // グリッド: x = query 行ブロック数, y = B*H。各ブロック FLASH_BQ スレッド。
