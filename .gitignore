@@ -33,6 +33,7 @@ data/bitnet/*.safetensors
 data/bitnet/golden/
 # smoke ラン成果物 (本番と別名・追跡しない)。
 data/bitnet/train_stats_smoke.json
+data/bitnet/train_stats_identity_smoke.json
 
 # Python
 __pycache__/

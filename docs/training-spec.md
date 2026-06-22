@@ -218,3 +218,123 @@ golden は `.gitignore` 済み (大容量・再生成可)。生成は CPU 既定
 
 (case 3 は語彙外の日本語のため `encode_text_greedy` がほぼ空 → prompt は `<bos><sep>` の 2 トークン。
 読み取れる語彙が無くてもモデルは `<sep>` 以降の自己回帰で生成を続ける。)
+
+## 9. Phase 4 A (A2) — 同一性条件付き混合訓練
+
+`scripts/train_bitnet.py --identity` で #1 (synthetic) と A1 (identity_cond, dataset-spec §13)
+を**混合訓練**し、同一性条件付きタグ生成を学習する。アーキ・vocab・specials・dtype・
+重み safetensors レイアウト (74 テンソル [out,in]) は #4 と**完全に不変**。`--identity`
+未指定なら従来の #4 純 synthetic 訓練 (出力名・挙動とも) のまま (非回帰)。
+
+### 9.1 条件付け機構 (承認済み・厳守 / dataset-spec §13.1)
+
+`<sep>`(id=3) を 2 回流用した prompt prefix 方式。`build_sequence` を source で分岐する:
+
+- `source=="synthetic"` (#1・1-`<sep>`): `<bos> text(greedy タグ) <sep> tags <eos>`。
+- `source=="identity_cond"` (A1・2-`<sep>`):
+  `<bos> [identity ids] <sep> [scene text の greedy タグ] <sep> [target ids] <eos>`。
+  - identity 区間 = `meta.identity_tags` を `tag_to_id` で直接 id 化。
+  - scene 区間 = 自然文 `text` を `encode_text_greedy` で greedy 最長一致したタグ列
+    (推論時 prompt は自然文しか来ないため scene 条件も自然文由来トークンで揃える)。
+  - target 区間 = 正準順序 `tags` を id 化。
+- vocab/specials/MAX_SEQ_LEN は不変。`<sep>` が 2 個出るのは仕様 (区間は **位置** で決まる)。
+
+### 9.2 損失マスク (両形式とも「target 区間のみ hard CE」)
+
+`build_sequence` が返す `tags_start` を「最後の構造区切り (`<sep>`) の次」に置く
+(identity_cond は 2 個目 `<sep>` の次、synthetic は 1 個目の次)。`collate(loss_mode="tags")`
+は `tags_start-1` 未満の target を `-100` (ignore_index) でマスクするため、identity prefix
+と scene 区間は loss から除外され、両形式が同じ「target のみ CE」原則で揃う。
+
+### 9.3 混合・source 別指標
+
+- 混合 = `pairs.train.jsonl` + `pairs.identity.train.jsonl` を **単純結合 + シャッフル**
+  (seed 固定)。比率は両ファイル 4500/500 で 1:1 相当。val も両方含む。
+- `eval_loss_and_recall_by_source` が混合 val を 1 走査し source 別に val_loss / top-k recall
+  を分離集計する (per-token CE を `reduction="none"` で取り source へ振り分け)。毎 epoch +
+  最終に `synthetic` / `identity_cond` / `all` を報告し `train_stats_identity.json` に記録。
+
+### 9.4 identity retention rate (A2 最重要新指標)
+
+```
+retention = mean over identity_cond val (
+  |生成 target に出た identity 集合 (語彙内)| / |入力 identity 集合 (語彙内)| )
+```
+
+- `eval_identity_retention`: 各 identity_cond val 行で prompt =
+  `<bos> identity <sep> scene_text(greedy) <sep>` を組み、`_greedy_generate`
+  (GREEDY_STOP_RULE 準拠・`<eos>` で停止 / MAX_SEQ_LEN 打ち切り) で target を生成。
+  生成集合に入力 identity id が何個含まれるかを測る。`<unk>` は分母から除外。
+
+### 9.5 出力ファイル (設計判断 = #4 と別名)
+
+identity 対応モデルは #4 の純 dense と**別名**にする。理由: #4 の
+`bitnet_dense_fp32.safetensors` は #6 (`src/infer/bitnet.hpp`) の golden 突合に使われており
+壊せない。混合訓練したモデルは別物なので名前を分け #4/#6 を保全する。
+
+| 出力 | ファイル |
+|---|---|
+| FP16 本体 | `data/bitnet/bitnet_dense_identity.safetensors` |
+| FP32 golden | `data/bitnet/bitnet_dense_identity_fp32.safetensors` |
+| 学習統計 | `data/bitnet/train_stats_identity.json` (追跡・小) |
+| smoke (上書き禁止) | `bitnet_dense_identity_smoke*.safetensors` / `train_stats_identity_smoke.json` |
+
+`--smoke` は本番重み/stats を一切上書きしない (#4 と同じ footgun 対策)。
+
+### 9.6 A2 ラン結果 (採用: 6 epoch / tags loss / 混合 9000 train・seed 20260620)
+
+| 指標 | 値 |
+|---|---|
+| device | CUDA / GTX 1080 Ti (sm_61) |
+| 訓練時間 | 110.9 s (6 epoch・混合 train 9000 / val 1000) |
+| final val_loss (all) | 1.5102 |
+| final top10 recall (all) | 0.9233 |
+| **synthetic** val_loss / recall | **1.6708 / 0.9003** (n=500・target tags 8254) |
+| **identity_cond** val_loss / recall | **1.3517 / 0.9460** (n=500・target tags 8363) |
+| **identity retention rate** | **0.9474** (n_cases=500) |
+| params / モデルサイズ | 32,976,896 / FP16 62.9 MB |
+
+- **retention 0.9474**: identity 条件付け prompt を与えると、生成 target が入力 identity の
+  ~95% を再現する。条件付け機構が効いていることの直接証拠。#4 (synthetic のみ) は identity
+  条件入力の系列を学習していないため retention の同条件比較対象を持たない (#4 は
+  `<bos> text <sep>` プロンプトで identity prefix を解さない) が、混合訓練後の絶対値 0.9474 は
+  「2 個目 `<sep>` 以降の target が prefix identity を強く引き継ぐ」ことを示す。
+- source 別では identity_cond の方が val_loss 低・recall 高 (prompt に identity が露出する分
+  予測が容易)。両 source とも val_loss は ep0→ep5 で単調下降し収束。
+- 混合で train が 2 倍 (9000) になったため #4 (4500・recall 0.7767) より過学習が緩く、
+  6 epoch 時点の recall が高い。
+
+### 9.7 identity golden dump (`--dump-golden-identity`, A3 C++ 突合用)
+
+`bitnet_dense_identity_fp32.safetensors` を `BitNetDense` にロードし、identity 条件付き系列の
+golden を `data/bitnet/golden/` に **identity_ 別ファイル**で出力する (#4 の synthetic golden
+`logits_golden`/`gen_golden`/`manifest.json` は**非回帰**・byte 一致を確認済み):
+
+| ファイル | 内容 |
+|---|---|
+| `logits_golden_identity.safetensors` | identity_cond 2-`<sep>` 系列 (seq 8/32/63) の FP32 logits + input_ids (I32)。seq63 は `<sep>` 4 個 (連結 2 系列分)。 |
+| `gen_golden_identity.safetensors` | 5 ケース × (prompt_ids / gen_ids / identity_ids、各 I32)。prompt = identity prefix + scene greedy + `<sep>`。 |
+| `manifest_identity.json` | 条件付け機構・各ケース (post_id/text/identity/gen/retained)・GREEDY_STOP_RULE。 |
+
+- サニティ: logits 自己整合 (再 forward max_abs 0.0)・生成決定性・読み戻し shape/dtype/NaN/Inf・
+  manifest 値一致を dump 時に検証 (全通過)。生成 5 ケースの identity_retained は
+  9/9・7/7・7/7・5/5・5/5 (golden レベルでも retention=1.0 のケースが揃う)。
+
+### 9.8 再現手順
+
+```sh
+# 混合訓練 (採用設定)
+py -3.12 scripts/train_bitnet.py --identity --epochs 6 --loss-mode tags --batch-size 32 --lr 3e-4
+# identity golden dump (A3 用)
+py -3.12 scripts/train_bitnet.py --dump-golden-identity
+# smoke (疎通・本番を上書きしない)
+py -3.12 scripts/train_bitnet.py --identity --smoke
+```
+
+### 9.9 引き渡し (A3 = cpp-implementer)
+
+- `src/infer/bitnet.hpp` は `bitnet_dense_identity_fp32.safetensors` (#4 と同一 74 テンソル
+  [out,in] レイアウト) をロードし、`<bos> identity <sep> scene <sep>` prompt から
+  `manifest_identity.json` の GREEDY_STOP_RULE で生成、`logits_golden_identity` /
+  `gen_golden_identity` と突合する。tokenizer.hpp / vocab.json は変更不要 (`<sep>` 2 回は
+  decode が構造トークンとして読み飛ばす)。

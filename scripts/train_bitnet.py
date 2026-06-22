@@ -261,27 +261,62 @@ def load_pairs(path):
 
 
 def build_sequence(tok, row, max_len):
-    """1 ペアを自己回帰列に整形する。
+    """1 ペアを自己回帰列に整形する (source で分岐・dataset-spec §13.1)。
 
-    形式: <bos> text(タグ化) <sep> tags <eos>
-      - text 側: tokenizer.hpp::encode_text の greedy 最長一致は再現が重いので、
-        ここではデータの構造を利用する。text は tags 列から逆生成された自然文なので、
-        text 中に現れる語彙タグを greedy 最長一致で拾う。tokenizer.hpp と同じく
-        非語彙単語はスキップする。
-      - tags 側: 正準順序の target タグ列をそのまま id 化 (encode の tag_to_id 相当)。
-    返り値: (ids[list], tags_start_index)  tags_start_index は <sep> の次の位置。
+    - source=="synthetic" (#1 既存形式・1-<sep>):
+        <bos> text(タグ化) <sep> tags <eos>
+        loss target 区間 = tags (1 個目 <sep> の次以降)。
+    - source=="identity_cond" (A1 形式・2-<sep>):
+        <bos> [identity tags] <sep> [scene text の greedy タグ] <sep> [target tags] <eos>
+        loss target 区間 = target (2 個目 <sep> の次以降)。
+
+    両形式とも「target 区間のみ CE」原則で揃う (tags_start = 最後の構造区切りの次)。
+
+    トークン化:
+      - text / scene text 側: tokenizer.hpp::encode_text と同じ greedy 最長一致
+        (正規化 → 英数字連結語へ分割 → 最長連結タグを貪欲一致・非語彙語スキップ)。
+        identity_cond の scene 区間も自然文 text の greedy タグ列とする。推論時 prompt は
+        自然文しか来ないため、scene 条件も自然文由来トークンで揃える (§13: scene 区間 =
+        scene text を greedy 一致したタグ列)。
+      - identity / tags 側: 正準順序の id 列を tag_to_id で直接 id 化 (未知は <unk>)。
+
+    返り値: (ids[list], tags_start_index)  tags_start_index は loss を取り始める
+    ids-position (= 最後の <sep> の次)。
     """
-    # --- text 側: greedy 最長一致 (tokenizer.hpp::encode_text 相当) ---
-    text_ids = encode_text_greedy(tok, row["text"])
-    # --- tags 側 ---
-    tag_ids = [tok.tag_to_id_lookup(t) for t in row["tags"]]
+    source = row.get("source", "synthetic")
+    if source == "identity_cond":
+        meta = row.get("meta", {})
+        identity_tags = meta.get("identity_tags")
+        if identity_tags is None or "scene_tags" not in meta:
+            # meta が欠ける identity_cond は仕様違反 (A1 で必ず付く・§13.4)。
+            raise ValueError(
+                "source=identity_cond だが meta.identity_tags/scene_tags が無い "
+                f"(post_id={meta.get('post_id')})")
+        # --- identity 区間: identity_tags をそのまま id 化 (§13.3 identity ⊆ target) ---
+        identity_ids = [tok.tag_to_id_lookup(t) for t in identity_tags]
+        # --- scene 区間: 自然文 text を greedy 最長一致でタグ化 (§13 / A1 の意図) ---
+        scene_ids = encode_text_greedy(tok, row["text"])
+        # --- target 区間: 正準順序 target をそのまま id 化 ---
+        target_ids = [tok.tag_to_id_lookup(t) for t in row["tags"]]
 
-    ids = [TOK_BOS] + text_ids + [TOK_SEP] + tag_ids + [TOK_EOS]
-    sep_pos = 1 + len(text_ids)  # <sep> の位置
-    tags_start = sep_pos + 1     # tags 部の先頭位置
+        ids = ([TOK_BOS] + identity_ids + [TOK_SEP]
+               + scene_ids + [TOK_SEP] + target_ids + [TOK_EOS])
+        # 2 個目 <sep> の位置 = 1 + len(identity) + 1 + len(scene)
+        sep2_pos = 1 + len(identity_ids) + 1 + len(scene_ids)
+        tags_start = sep2_pos + 1  # target 部の先頭位置
+    else:
+        # --- synthetic (#1): 従来 1-<sep> 形式 ---
+        text_ids = encode_text_greedy(tok, row["text"])
+        tag_ids = [tok.tag_to_id_lookup(t) for t in row["tags"]]
+        ids = [TOK_BOS] + text_ids + [TOK_SEP] + tag_ids + [TOK_EOS]
+        sep_pos = 1 + len(text_ids)  # <sep> の位置
+        tags_start = sep_pos + 1     # tags 部の先頭位置
+
     if len(ids) > max_len:
         ids = ids[:max_len]
         ids[-1] = TOK_EOS
+        # 切り詰めで tags_start が列外に出ると loss 区間が空になるが、
+        # collate 側の start_t clamp で安全 (CE が全 -100 → 当該サンプル寄与 0)。
     return ids, tags_start
 
 
@@ -331,13 +366,21 @@ def encode_text_greedy(tok, text):
 
 
 class PairDataset:
-    """整形済みシーケンスを保持する単純なデータセット。"""
+    """整形済みシーケンスを保持する単純なデータセット。
+
+    samples[i] = (ids, tags_start, source, row)。
+      - source: "synthetic" / "identity_cond" (混合訓練の source 別集計・retention 用)。
+      - row: 元 JSON 行 (retention 計測で meta.identity_tags / text を参照する)。
+    既存呼び出しは (ids, tags_start) の 2 要素だけを使うので、collate / eval は
+    タプル先頭 2 要素のみ取り出す (後方互換)。
+    """
 
     def __init__(self, tok, rows, max_len):
         self.samples = []
         for r in rows:
             ids, tags_start = build_sequence(tok, r, max_len)
-            self.samples.append((ids, tags_start))
+            source = r.get("source", "synthetic")
+            self.samples.append((ids, tags_start, source, r))
 
     def __len__(self):
         return len(self.samples)
@@ -353,11 +396,12 @@ def collate(batch, max_len, loss_mode):
     pad 位置は ignore_index で除外する。
     """
     B = len(batch)
-    L = max(len(ids) for ids, _ in batch)
+    L = max(len(s[0]) for s in batch)
     L = min(L, max_len)
     inp = torch.full((B, L - 1), TOK_PAD, dtype=torch.long)
     tgt = torch.full((B, L - 1), -100, dtype=torch.long)  # ignore_index=-100
-    for bi, (ids, tags_start) in enumerate(batch):
+    for bi, sample in enumerate(batch):
+        ids, tags_start = sample[0], sample[1]
         ids = ids[:L]
         seq = torch.tensor(ids, dtype=torch.long)
         n = len(ids)
@@ -416,7 +460,8 @@ def eval_loss_and_recall(model, dataset, batch_size, max_len, loss_mode,
         total_tok += n_tok
         # top-k recall は tags 部 (loss_mode に関係なく tags_start 以降) で測る
         topk_idx = logits.topk(topk, dim=-1).indices  # [B, L-1, topk]
-        for bi, (ids, tags_start) in enumerate(batch):
+        for bi, sample in enumerate(batch):
+            ids, tags_start = sample[0], sample[1]
             ids = ids[:max_len]
             n = len(ids)
             for t in range(n - 1):
@@ -433,6 +478,137 @@ def eval_loss_and_recall(model, dataset, batch_size, max_len, loss_mode,
     recall = total_hit / max(total_tgt, 1)
     random_baseline = topk / VOCAB_SIZE
     return avg_loss, recall, random_baseline, total_tgt
+
+
+@torch.no_grad()
+def eval_loss_and_recall_by_source(model, dataset, batch_size, max_len, loss_mode,
+                                   device, topk=10):
+    """source ("synthetic" / "identity_cond") 別に val loss / recall を出す。
+
+    混合 val を 1 度走査し、各サンプルの source でロス・recall を振り分ける。
+    返り値: {source: {"val_loss", "recall", "n_target_tags", "n_samples"}} +
+            全体集計 ("all")。loss は target 区間 (collate の -100 マスク後) のみ。
+    """
+    model.eval()
+    agg = {}
+
+    def _slot(s):
+        if s not in agg:
+            agg[s] = {"loss_sum": 0.0, "tok": 0, "hit": 0, "tgt": 0, "n": 0}
+        return agg[s]
+
+    for batch in make_batches(dataset, batch_size, False, None):
+        inp, tgt = collate(batch, max_len, loss_mode)
+        inp = inp.to(device)
+        tgt = tgt.to(device)
+        logits = model(inp)                       # [B, L-1, V]
+        Lm1 = logits.shape[1]
+        # サンプルごとに per-token CE を取り source 別に積算する。
+        ce = F.cross_entropy(
+            logits.reshape(-1, VOCAB_SIZE), tgt.reshape(-1),
+            ignore_index=-100, reduction="none").reshape(len(batch), Lm1)
+        valid = (tgt != -100)
+        topk_idx = logits.topk(topk, dim=-1).indices  # [B, L-1, topk]
+        for bi, sample in enumerate(batch):
+            ids, tags_start, source = sample[0], sample[1], sample[2]
+            slot = _slot(source)
+            slot["n"] += 1
+            v = valid[bi]
+            slot["loss_sum"] += ce[bi][v].sum().item()
+            slot["tok"] += int(v.sum().item())
+            ids = ids[:max_len]
+            n = len(ids)
+            for t in range(min(n - 1, Lm1)):
+                pos = t + 1
+                if pos < tags_start:
+                    continue
+                gold = ids[pos]
+                if gold in (TOK_PAD, TOK_SEP, TOK_BOS):
+                    continue
+                slot["tgt"] += 1
+                if gold in topk_idx[bi, t].tolist():
+                    slot["hit"] += 1
+
+    out = {}
+    tot = {"loss_sum": 0.0, "tok": 0, "hit": 0, "tgt": 0, "n": 0}
+    for s, d in agg.items():
+        for k in tot:
+            tot[k] += d[k]
+        out[s] = {
+            "val_loss": d["loss_sum"] / max(d["tok"], 1),
+            f"top{topk}_recall": d["hit"] / max(d["tgt"], 1),
+            "n_target_tags": d["tgt"],
+            "n_samples": d["n"],
+        }
+    out["all"] = {
+        "val_loss": tot["loss_sum"] / max(tot["tok"], 1),
+        f"top{topk}_recall": tot["hit"] / max(tot["tgt"], 1),
+        "n_target_tags": tot["tgt"],
+        "n_samples": tot["n"],
+    }
+    out["_random_baseline"] = topk / VOCAB_SIZE
+    return out
+
+
+def build_identity_prompt(tok, row, max_len):
+    """identity_cond 行の retention 用 prompt を組む (target 区間直前まで)。
+
+    prompt = <bos> identity_ids <sep> scene_text(greedy) <sep>
+    build_sequence の identity_cond 分岐と同じ前半を再現する (2 個目 <sep> まで)。
+    返り値: prompt_ids (list)。max_len を超える場合は None (retention 対象外)。
+    """
+    meta = row.get("meta", {})
+    identity_tags = meta.get("identity_tags") or []
+    identity_ids = [tok.tag_to_id_lookup(t) for t in identity_tags]
+    scene_ids = encode_text_greedy(tok, row["text"])
+    prompt = [TOK_BOS] + identity_ids + [TOK_SEP] + scene_ids + [TOK_SEP]
+    if len(prompt) >= max_len:
+        return None  # prompt だけで列が埋まる → 生成余地なし・retention 対象外
+    return prompt
+
+
+@torch.no_grad()
+def eval_identity_retention(model, tok, val_rows, device, max_len=MAX_SEQ_LEN):
+    """identity retention rate を計測する (A2 最重要新指標)。
+
+    各 identity_cond val 行について prompt = <bos> identity <sep> scene_text <sep>
+    から greedy デコードし、生成 target に identity_tags が何個含まれるかを測る:
+      retention_i = |生成 target に出た identity_ids (集合)| / |入力 identity_ids (集合)|
+    返り値: (mean_retention, n_cases, details(list of dict))。
+    identity_ids は <unk> を除いた集合 (語彙内 identity のみ)。
+    """
+    model.eval()
+    ret_sum = 0.0
+    n = 0
+    details = []
+    for row in val_rows:
+        if row.get("source") != "identity_cond":
+            continue
+        meta = row.get("meta", {})
+        identity_tags = meta.get("identity_tags") or []
+        identity_ids = set(tok.tag_to_id_lookup(t) for t in identity_tags)
+        identity_ids.discard(TOK_UNK)  # 語彙外 identity は分母から除外
+        if not identity_ids:
+            continue
+        prompt = build_identity_prompt(tok, row, max_len)
+        if prompt is None:
+            continue
+        gen_ids = _greedy_generate(model, prompt, device, max_len)
+        gen_set = set(gen_ids)
+        hit = len(identity_ids & gen_set)
+        ret = hit / len(identity_ids)
+        ret_sum += ret
+        n += 1
+        details.append({
+            "post_id": meta.get("post_id"),
+            "n_identity": len(identity_ids),
+            "n_retained": hit,
+            "retention": ret,
+            "gen_len": len(gen_ids),
+        })
+    mean_ret = ret_sum / max(n, 1)
+    return mean_ret, n, details
+
 
 
 # ==============================================================
@@ -773,6 +949,246 @@ def dump_golden(args):
 
 
 # ==============================================================
+# golden dump (identity 条件付き版・A3 C++ 突合用)
+# ==============================================================
+#
+# 設計判断 (#4 非回帰):
+#   identity 版 golden は #4 の synthetic golden (logits_golden / gen_golden /
+#   manifest.json) を**上書きしない**よう、すべて identity_ プレフィックスの別ファイルへ
+#   書く (logits_golden_identity / gen_golden_identity / manifest_identity)。同じ
+#   golden/ ディレクトリに synthetic と identity が併存する。重みも別物
+#   (bitnet_dense_identity_fp32.safetensors) を使う。
+ID_LOGITS_PATH = "logits_golden_identity.safetensors"
+ID_GEN_PATH = "gen_golden_identity.safetensors"
+ID_MANIFEST_PATH = "manifest_identity.json"
+
+
+def _load_dense_from_export(fp32_path, device):
+    """export_safetensors 命名の FP32 重みを BitNetDense にロードする (共通化)。"""
+    from safetensors.torch import load_file
+    sd = load_file(fp32_path)
+    model = BitNetDense().to(device)
+    new_sd = {}
+    new_sd["embed.weight"] = sd["embed"]
+    new_sd["final_norm.weight"] = sd["final_norm"]
+    for i in range(N_LAYERS):
+        p = f"layers.{i}."
+        new_sd[p + "attn_norm.weight"] = sd[p + "attn_norm"]
+        new_sd[p + "ffn_norm.weight"] = sd[p + "ffn_norm"]
+        for w in ("wq", "wk", "wv", "wo", "w_gate", "w_up", "w_down"):
+            new_sd[p + w + ".weight"] = sd[p + w]
+    model.load_state_dict(new_sd, strict=True)
+    model.eval()
+    return model
+
+
+def dump_golden_identity(args):
+    """bitnet_dense_identity_fp32.safetensors で identity 条件付き golden を dump。
+
+    A3 (C++ src/infer/bitnet.hpp の identity 条件付き推論) 突合用。
+    (a) ロジット golden: 固定の 2-<sep> identity_cond 系列 (seq 8/32/63) の FP32 logits。
+    (b) 生成 golden: identity prompt (<bos> identity <sep> scene_text(greedy) <sep>) を
+        greedy デコードした tag id 列 (GREEDY_STOP_RULE 準拠)。
+    #4 の synthetic golden は一切触らず identity_ 別ファイルへ書く。
+    """
+    from safetensors.torch import save_file, load_file
+    import random
+
+    seed = args.seed
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+    data_dir = args.data_dir
+    vocab_path = args.vocab or os.path.join(data_dir, "vocab.json")
+    device = args.device or "cpu"
+    print(f"[golden-id] device={device} torch={torch.__version__}")
+
+    tok = Tokenizer(vocab_path)
+    print(f"[golden-id] vocab_size={tok.vocab_size()} tags={len(tok.tags)}")
+
+    fp32_path = os.path.join(data_dir, "bitnet_dense_identity_fp32.safetensors")
+    if not os.path.exists(fp32_path):
+        raise FileNotFoundError(
+            f"{fp32_path} が無い。先に `--identity` で混合訓練して identity FP32 重みを "
+            f"出力すること。")
+    model = _load_dense_from_export(fp32_path, device)
+    print(f"[golden-id] loaded {fp32_path} (strict state_dict 一致)")
+
+    id_val_rows = load_pairs(os.path.join(data_dir, "pairs.identity.val.jsonl"))
+    out_dir = os.path.join(data_dir, "golden")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # ---- (a) ロジット golden -- identity_cond 2-<sep> 系列を seq 8/32/63 で ----
+    logit_seq_lens = [8, 32, 63]
+    logit_tensors = {}
+    logit_cases = []
+    for sl in logit_seq_lens:
+        # identity_cond の build_sequence 列 (2-<sep>) を固定順に連結して seq_len 切出し。
+        ids = []
+        for r in id_val_rows:
+            seq, _ = build_sequence(tok, r, MAX_SEQ_LEN)
+            ids.extend(seq)
+            if len(ids) >= sl:
+                break
+        if len(ids) < sl:
+            raise RuntimeError(f"identity val を連結しても seq_len={sl} に届かない")
+        ids = ids[:sl]
+        inp = torch.tensor([ids], dtype=torch.long, device=device)
+        logits_cpu = model(inp)[0].detach().float().contiguous().cpu()
+        re_logits = model(inp)[0].detach().float().contiguous().cpu()
+        max_abs = (logits_cpu - re_logits).abs().max().item()
+        if max_abs != 0.0:
+            raise RuntimeError(f"自己整合失敗 seq={sl}: max_abs={max_abs}")
+        name = f"logits_s{sl}"
+        ids_name = f"input_ids_s{sl}"
+        logit_tensors[name] = logits_cpu
+        logit_tensors[ids_name] = torch.tensor(ids, dtype=torch.int32)
+        nan = bool(torch.isnan(logits_cpu).any() or torch.isinf(logits_cpu).any())
+        n_sep = sum(1 for x in ids if x == TOK_SEP)
+        logit_cases.append({
+            "seq_len": sl, "input_ids": ids,
+            "logits_tensor": name, "input_ids_tensor": ids_name,
+            "logits_shape": [sl, VOCAB_SIZE], "logits_dtype": "F32",
+            "input_ids_dtype": "I32", "has_nan_inf": nan, "n_sep": n_sep,
+        })
+        print(f"[golden-id] (a) seq={sl}: logits {list(logits_cpu.shape)} "
+              f"n_sep={n_sep} 自己整合 max_abs={max_abs:.1e} nan/inf={nan}")
+    logits_path = os.path.join(out_dir, ID_LOGITS_PATH)
+    save_file(logit_tensors, logits_path)
+    print(f"[golden-id] saved {logits_path} ({len(logit_tensors)} tensors)")
+
+    # ---- (b) 生成 golden -- identity prompt を greedy デコード ----
+    gen_tensors = {}
+    gen_cases = []
+    # val の identity_cond 行から先頭 5 件を固定採用 (再現的・prompt が max_len 内のもの)。
+    picked = 0
+    for r in id_val_rows:
+        if r.get("source") != "identity_cond":
+            continue
+        prompt_ids = build_identity_prompt(tok, r, MAX_SEQ_LEN)
+        if prompt_ids is None:
+            continue
+        meta = r.get("meta", {})
+        identity_tags = meta.get("identity_tags") or []
+        identity_ids = [tok.tag_to_id_lookup(t) for t in identity_tags]
+        gen_ids = _greedy_generate(model, prompt_ids, device, MAX_SEQ_LEN)
+        gen_ids2 = _greedy_generate(model, prompt_ids, device, MAX_SEQ_LEN)
+        if gen_ids != gen_ids2:
+            raise RuntimeError(f"生成が非決定的 post_id={meta.get('post_id')}")
+        ci = picked
+        name = f"gen_ids_c{ci}"
+        prompt_name = f"prompt_ids_c{ci}"
+        idt_name = f"identity_ids_c{ci}"
+        gen_tensors[name] = (torch.tensor(gen_ids, dtype=torch.int32)
+                             if gen_ids else torch.zeros((0,), dtype=torch.int32))
+        gen_tensors[prompt_name] = torch.tensor(prompt_ids, dtype=torch.int32)
+        gen_tensors[idt_name] = (torch.tensor(identity_ids, dtype=torch.int32)
+                                 if identity_ids else torch.zeros((0,), dtype=torch.int32))
+        gen_tags_readable = []
+        for tid in gen_ids:
+            if 5 <= tid < VOCAB_SIZE:
+                gen_tags_readable.append(tok.tags[tid - 5])
+            elif tid < 5:
+                gen_tags_readable.append(tok.specials[tid])
+        id_set = set(identity_ids) - {TOK_UNK}
+        retained = len(id_set & set(gen_ids))
+        gen_cases.append({
+            "case": ci, "post_id": meta.get("post_id"), "text": r["text"],
+            "identity_tags": identity_tags, "identity_ids": identity_ids,
+            "prompt_ids": prompt_ids, "prompt_ids_tensor": prompt_name,
+            "gen_ids": gen_ids, "gen_ids_tensor": name, "gen_len": len(gen_ids),
+            "identity_ids_tensor": idt_name,
+            "gen_tags_readable": gen_tags_readable,
+            "n_identity": len(id_set),
+            "n_retained": retained,
+            "gen_ids_dtype": "I32",
+        })
+        print(f"[golden-id] (b) case={ci} post_id={meta.get('post_id')} "
+              f"prompt_len={len(prompt_ids)} gen_len={len(gen_ids)} "
+              f"identity_retained={retained}/{len(id_set)} "
+              f"tags={gen_tags_readable[:6]}...")
+        picked += 1
+        if picked >= 5:
+            break
+    gen_path = os.path.join(out_dir, ID_GEN_PATH)
+    save_file(gen_tensors, gen_path)
+    print(f"[golden-id] saved {gen_path} ({len(gen_tensors)} tensors)")
+
+    # ---- manifest_identity.json ----
+    manifest = {
+        "purpose": "dollama Phase 4 A (A3) -- C++ identity 条件付き推論の数値突合 golden",
+        "generator": "scripts/train_bitnet.py --dump-golden-identity",
+        "source_weights": "data/bitnet/bitnet_dense_identity_fp32.safetensors",
+        "device": device, "torch": torch.__version__, "seed": seed,
+        "conditioning": {
+            "scheme": "(a-1) prompt prefix + <sep>(id=3) 2 回流用 (dataset-spec §13.1)",
+            "sequence": "<bos> [identity ids] <sep> [scene_text greedy ids] <sep> "
+                        "[target ids] <eos>",
+            "prompt_for_generation": "<bos> [identity ids] <sep> [scene_text greedy ids] <sep>",
+            "note": "vocab/specials/arch は #4 と不変。<sep> が 2 個出るのは仕様 "
+                    "(区間は位置で決まる)。",
+        },
+        "arch": {
+            "VOCAB_SIZE": VOCAB_SIZE, "D_MODEL": D_MODEL, "N_LAYERS": N_LAYERS,
+            "N_HEADS": N_HEADS, "HEAD_DIM": HEAD_DIM, "FFN_DIM": FFN_DIM,
+            "MAX_SEQ_LEN": MAX_SEQ_LEN, "ROPE_BASE": ROPE_BASE, "RMS_EPS": RMS_EPS,
+        },
+        "specials": {"PAD": TOK_PAD, "BOS": TOK_BOS, "EOS": TOK_EOS,
+                     "SEP": TOK_SEP, "UNK": TOK_UNK},
+        "format": {
+            "container": "safetensors (little-endian raw)",
+            "logits_file": ID_LOGITS_PATH, "gen_file": ID_GEN_PATH,
+            "logits_dtype": "F32", "ids_dtype": "I32",
+            "reader": "src/io/safetensors.hpp で読める",
+        },
+        "logits_golden": {
+            "note": "identity_cond 2-<sep> 系列 (val) を連結し seq_len ちょうどで切出した "
+                    "input_ids を BitNetDense に通した FP32 logits [seq, vocab]。",
+            "cases": logit_cases,
+        },
+        "generation_golden": {
+            "greedy_stop_rule": GREEDY_STOP_RULE,
+            "prompt_note": "prompt は identity prefix + scene greedy + <sep>。"
+                           "identity_ids_c{ci} は retention 検証用の入力 identity 集合。",
+            "cases": gen_cases,
+        },
+    }
+    manifest_path = os.path.join(out_dir, ID_MANIFEST_PATH)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=1)
+    print(f"[golden-id] saved {manifest_path}")
+
+    # ---- 読み戻しサニティ ----
+    problems = []
+    lt = load_file(logits_path)
+    for c in logit_cases:
+        t = lt[c["logits_tensor"]]
+        if list(t.shape) != c["logits_shape"]:
+            problems.append(f"{c['logits_tensor']} shape {list(t.shape)} != {c['logits_shape']}")
+        if t.dtype != torch.float32:
+            problems.append(f"{c['logits_tensor']} dtype {t.dtype} != float32")
+        if torch.isnan(t).any() or torch.isinf(t).any():
+            problems.append(f"{c['logits_tensor']} has NaN/Inf")
+        it = lt[c["input_ids_tensor"]]
+        if it.dtype != torch.int32 or it.tolist() != c["input_ids"]:
+            problems.append(f"{c['input_ids_tensor']} ids/dtype 不一致")
+    gt = load_file(gen_path)
+    for c in gen_cases:
+        t = gt[c["gen_ids_tensor"]]
+        if t.dtype != torch.int32 or t.tolist() != c["gen_ids"]:
+            problems.append(f"{c['gen_ids_tensor']} ids/dtype 不一致")
+    if not gen_cases:
+        problems.append("identity_cond 生成ケースが 0 件 (val に identity_cond 行が無い?)")
+    if problems:
+        print("[golden-id] SANITY PROBLEMS:")
+        for p in problems:
+            print("   ", p)
+        raise SystemExit(1)
+    print("[golden-id] サニティ OK: shape/dtype 一致・NaN/Inf なし・自己整合 OK")
+    print(f"[golden-id] done. 出力先 {out_dir}/ (synthetic golden は非回帰)")
+
+
+# ==============================================================
 # 訓練ループ
 # ==============================================================
 def main():
@@ -794,11 +1210,21 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--dump-golden", action="store_true",
                     help="bitnet_dense_fp32.safetensors から #6 突合用 golden を dump (独立サブモード)")
+    ap.add_argument("--identity", action="store_true",
+                    help="A2: #1 (synthetic) と identity_cond を混合訓練し、source 別 val "
+                         "loss / identity retention を計測。出力は bitnet_dense_identity*。"
+                         "未指定なら #4 純 synthetic 訓練 (bitnet_dense*.safetensors を更新)")
+    ap.add_argument("--dump-golden-identity", action="store_true",
+                    help="A3: identity 条件付き系列の golden を dump (独立サブモード・"
+                         "bitnet_dense_identity_fp32.safetensors を使う)")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
     if args.dump_golden:
         dump_golden(args)
+        return
+    if args.dump_golden_identity:
+        dump_golden_identity(args)
         return
 
     import random
@@ -820,14 +1246,40 @@ def main():
     tok = Tokenizer(vocab_path)
     print(f"[tok] vocab_size={tok.vocab_size()} tags={len(tok.tags)}")
 
-    train_rows = load_pairs(os.path.join(data_dir, "pairs.train.jsonl"))
-    val_rows = load_pairs(os.path.join(data_dir, "pairs.val.jsonl"))
-    if args.smoke:
-        train_rows = train_rows[:128]
-        val_rows = val_rows[:64]
-        args.epochs = 1
-    print(f"[data] train={len(train_rows)} val={len(val_rows)} "
-          f"loss_mode={args.loss_mode}")
+    # --- データ読み込み (A2: --identity で #1 + identity_cond を混合) ---
+    syn_train = load_pairs(os.path.join(data_dir, "pairs.train.jsonl"))
+    syn_val = load_pairs(os.path.join(data_dir, "pairs.val.jsonl"))
+    if args.identity:
+        id_train = load_pairs(os.path.join(data_dir, "pairs.identity.train.jsonl"))
+        id_val = load_pairs(os.path.join(data_dir, "pairs.identity.val.jsonl"))
+        if args.smoke:
+            syn_train, syn_val = syn_train[:64], syn_val[:32]
+            id_train, id_val = id_train[:64], id_val[:32]
+            args.epochs = 1
+        # 混合 = 単純結合 + シャッフル (混合比は 1:1 相当・両ファイルとも 4500/500)。
+        # シャッフルは make_batches 側でも毎 epoch 行うが、source の偏りを避けるため
+        # 結合直後にも 1 度シャッフルしておく (seed 固定で再現的)。
+        train_rows = syn_train + id_train
+        val_rows = syn_val + id_val
+        rng_mix = random.Random(seed)
+        rng_mix.shuffle(train_rows)
+        n_syn_tr = sum(1 for r in train_rows if r.get("source") == "synthetic")
+        n_id_tr = sum(1 for r in train_rows if r.get("source") == "identity_cond")
+        n_syn_va = sum(1 for r in val_rows if r.get("source") == "synthetic")
+        n_id_va = sum(1 for r in val_rows if r.get("source") == "identity_cond")
+        print(f"[data] MIXED train={len(train_rows)} "
+              f"(synthetic={n_syn_tr} identity_cond={n_id_tr}) "
+              f"val={len(val_rows)} (synthetic={n_syn_va} identity_cond={n_id_va}) "
+              f"loss_mode={args.loss_mode}")
+    else:
+        train_rows = syn_train
+        val_rows = syn_val
+        if args.smoke:
+            train_rows = train_rows[:128]
+            val_rows = val_rows[:64]
+            args.epochs = 1
+        print(f"[data] train={len(train_rows)} val={len(val_rows)} "
+              f"loss_mode={args.loss_mode} (synthetic only)")
 
     train_ds = PairDataset(tok, train_rows, args.max_len)
     val_ds = PairDataset(tok, val_rows, args.max_len)
@@ -888,17 +1340,36 @@ def main():
             model, val_ds, args.batch_size, args.max_len, args.loss_mode,
             device, args.topk)
         elapsed = time.time() - t0
-        print(f"[ep {epoch:3d}] train_loss={train_loss:.4f} "
-              f"val_loss={val_loss:.4f} top{args.topk}_recall={recall:.4f} "
-              f"(rand={rand_base:.4f}) lr={lr:.2e} t={elapsed:.1f}s")
-        history.append({
+        hrec = {
             "epoch": epoch,
             "train_loss": train_loss,
             "val_loss": val_loss,
             f"top{args.topk}_recall": recall,
             "lr": lr,
             "elapsed_s": elapsed,
-        })
+        }
+        if args.identity:
+            # source 別 val loss / recall を毎 epoch 出す (混合の偏りを監視)。
+            by_src = eval_loss_and_recall_by_source(
+                model, val_ds, args.batch_size, args.max_len, args.loss_mode,
+                device, args.topk)
+            syn = by_src.get("synthetic", {})
+            idc = by_src.get("identity_cond", {})
+            rk = f"top{args.topk}_recall"
+            hrec["val_loss_synthetic"] = syn.get("val_loss")
+            hrec["val_loss_identity_cond"] = idc.get("val_loss")
+            hrec[f"top{args.topk}_recall_synthetic"] = syn.get(rk)
+            hrec[f"top{args.topk}_recall_identity_cond"] = idc.get(rk)
+            print(f"[ep {epoch:3d}] train_loss={train_loss:.4f} "
+                  f"val_loss={val_loss:.4f} top{args.topk}_recall={recall:.4f} "
+                  f"| syn(vl={syn.get('val_loss'):.4f} r={syn.get(rk):.4f}) "
+                  f"id(vl={idc.get('val_loss'):.4f} r={idc.get(rk):.4f}) "
+                  f"lr={lr:.2e} t={elapsed:.1f}s")
+        else:
+            print(f"[ep {epoch:3d}] train_loss={train_loss:.4f} "
+                  f"val_loss={val_loss:.4f} top{args.topk}_recall={recall:.4f} "
+                  f"(rand={rand_base:.4f}) lr={lr:.2e} t={elapsed:.1f}s")
+        history.append(hrec)
 
     train_time = time.time() - t0
 
@@ -906,16 +1377,21 @@ def main():
     # footgun 対策: --smoke は疎通確認専用なので本番の重み/stats を絶対に上書きしない。
     #   smoke 時は別名 (bitnet_dense_smoke*.safetensors / train_stats_smoke.json) へ書く。
     #   本番訓練モード (--smoke なし) の挙動・ファイル名は一切変えない。
+    #   identity 版 (--identity) は #4 純 dense と別名 (bitnet_dense_identity*) に分ける:
+    #     #4 の bitnet_dense_fp32.safetensors は #6 golden 突合に使われており壊せない。
+    #     混合訓練したモデルは別物なので名前を分け、#4 と #6 を保全する (設計判断)。
+    base = "bitnet_dense_identity" if args.identity else "bitnet_dense"
+    stats_base = "train_stats_identity" if args.identity else "train_stats"
     if args.smoke:
-        fp16_path = os.path.join(data_dir, "bitnet_dense_smoke.safetensors")
-        fp32_path = os.path.join(data_dir, "bitnet_dense_smoke_fp32.safetensors")
-        stats_filename = "train_stats_smoke.json"
-        print("[smoke] 出力は smoke 別名へ (本番 bitnet_dense*.safetensors / "
-              "train_stats.json は上書きしない)")
+        fp16_path = os.path.join(data_dir, base + "_smoke.safetensors")
+        fp32_path = os.path.join(data_dir, base + "_smoke_fp32.safetensors")
+        stats_filename = stats_base + "_smoke.json"
+        print(f"[smoke] 出力は smoke 別名へ ({base}*.safetensors / "
+              f"{stats_base}.json は上書きしない)")
     else:
-        fp16_path = os.path.join(data_dir, "bitnet_dense.safetensors")
-        fp32_path = os.path.join(data_dir, "bitnet_dense_fp32.safetensors")
-        stats_filename = "train_stats.json"
+        fp16_path = os.path.join(data_dir, base + ".safetensors")
+        fp32_path = os.path.join(data_dir, base + "_fp32.safetensors")
+        stats_filename = stats_base + ".json"
     keys = export_safetensors(model, fp16_path, torch.float16)
     export_safetensors(model, fp32_path, torch.float32)
     print(f"[save] {fp16_path} ({len(keys)} tensors, FP16)")
@@ -939,10 +1415,50 @@ def main():
         model, val_ds, args.batch_size, args.max_len, args.loss_mode,
         device, args.topk)
 
+    result = {
+        "final_train_loss": history[-1]["train_loss"] if history else None,
+        "final_val_loss": final_loss,
+        f"final_top{args.topk}_recall": final_recall,
+        "random_baseline_recall": rand_base,
+        "recall_vs_random_x": (final_recall / rand_base) if rand_base else None,
+        "val_target_tags": n_tgt,
+        "train_time_s": round(train_time, 1),
+    }
+
+    # ---- A2: source 別 val 指標 + identity retention rate ----
+    by_source = None
+    retention = None
+    if args.identity:
+        by_source = eval_loss_and_recall_by_source(
+            model, val_ds, args.batch_size, args.max_len, args.loss_mode,
+            device, args.topk)
+        mean_ret, n_ret, ret_details = eval_identity_retention(
+            model, tok, val_rows, device, args.max_len)
+        retention = {
+            "mean_retention": mean_ret,
+            "n_cases": n_ret,
+            "definition": "mean over identity_cond val ( |生成 target に出た identity 集合| "
+                          "/ |入力 identity 集合(語彙内)| )。prompt=<bos> identity <sep> "
+                          "scene_text(greedy) <sep>、greedy デコード (GREEDY_STOP_RULE 準拠)。",
+        }
+        result["by_source"] = by_source
+        result["identity_retention"] = retention
+        rk = f"top{args.topk}_recall"
+        syn = by_source.get("synthetic", {})
+        idc = by_source.get("identity_cond", {})
+        print(f"[A2] source 別 val: "
+              f"synthetic(val_loss={syn.get('val_loss'):.4f} {rk}={syn.get(rk):.4f} "
+              f"n={syn.get('n_samples')}) "
+              f"identity_cond(val_loss={idc.get('val_loss'):.4f} {rk}={idc.get(rk):.4f} "
+              f"n={idc.get('n_samples')})")
+        print(f"[A2] identity retention rate = {mean_ret:.4f} "
+              f"(n_cases={n_ret}・1.0=生成 target が入力 identity を全部含む)")
+
     stats = {
         "seed": seed,
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
+        "mode": "identity_mixed" if args.identity else "synthetic_only",
         "hyperparams": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -957,6 +1473,7 @@ def main():
             "train": len(train_rows),
             "val": len(val_rows),
             "vocab_size": tok.vocab_size(),
+            "mixed": bool(args.identity),
         },
         "model": {
             "params": n_params,
@@ -964,15 +1481,7 @@ def main():
             "fp16_mb": round(fp16_mb, 3),
             "fp32_mb": round(fp32_mb, 3),
         },
-        "result": {
-            "final_train_loss": history[-1]["train_loss"] if history else None,
-            "final_val_loss": final_loss,
-            f"final_top{args.topk}_recall": final_recall,
-            "random_baseline_recall": rand_base,
-            "recall_vs_random_x": (final_recall / rand_base) if rand_base else None,
-            "val_target_tags": n_tgt,
-            "train_time_s": round(train_time, 1),
-        },
+        "result": result,
         "tensor_keys": keys,
         "history": history,
     }
