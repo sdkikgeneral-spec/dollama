@@ -5,6 +5,9 @@
 // 入力に noise → latent → 画像 (1024×1024 RGB uint8) を生成する。
 // scheduler は host float、UNet/VAE は FP16 デバイス。中間 latent の D2H/H2D は
 // 1 step あたり ~256KB で無視可能なので素直に往復する。
+//
+// 2-6b Stage E: generate_txt2img で CFG (classifier-free guidance) を追加。
+//   各 step で UNet を cond / uncond の 2 回回し host で合成する。
 
 #include "infer/diffusion.cuh"
 
@@ -136,6 +139,32 @@ private:
     }
 };
 
+// ----------------------------------------------------------------
+// VAE 出力 (FP16, [-1,1] 値域, NCHW [3,1024,1024]) を HWC uint8 RGB へ変換する。
+// (x*0.5+0.5) で [0,1] に写し clamp 後 ×255。generate / generate_txt2img 共通。
+// ----------------------------------------------------------------
+void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t>& rgb_out)
+{
+    rgb_out.assign(kImgN, 0);
+    for (int c = 0; c < kImgC; ++c)
+    {
+        const size_t cbase = static_cast<size_t>(c) * kImgH * kImgW;
+        for (int y = 0; y < kImgH; ++y)
+        {
+            for (int x = 0; x < kImgW; ++x)
+            {
+                const float v   = __half2float(h_image[cbase + static_cast<size_t>(y) * kImgW + x]);
+                float       n01 = v * 0.5f + 0.5f;
+                if (n01 < 0.0f) { n01 = 0.0f; }
+                if (n01 > 1.0f) { n01 = 1.0f; }
+                const int   q   = static_cast<int>(n01 * 255.0f + 0.5f);
+                const size_t dst = (static_cast<size_t>(y) * kImgW + x) * 3 + c;
+                rgb_out[dst] = static_cast<uint8_t>(q < 0 ? 0 : (q > 255 ? 255 : q));
+            }
+        }
+    }
+}
+
 } // namespace
 
 // ----------------------------------------------------------------
@@ -196,7 +225,7 @@ void DiffusionPipeline::generate(int                   steps,
 }
 
 // ----------------------------------------------------------------
-// 拡散ループ本体。
+// 拡散ループ本体 (CFG なし・golden 埋め込み使い回し)。
 // ----------------------------------------------------------------
 void DiffusionPipeline::generate(int                   steps,
                                  uint64_t              seed,
@@ -209,11 +238,12 @@ void DiffusionPipeline::generate(int                   steps,
     {
         throw std::runtime_error("DiffusionPipeline::generate: steps must be > 0");
     }
-    // CFG > 1 は今回 TODO スタブ (テキストエンコード未結線・negative 埋め込みもない)。
+    // CFG > 1 は generate では非対応 (CFG は generate_txt2img を使う)。
     if (std::fabs(guidance_scale - 1.0f) > 1e-6f)
     {
         throw std::runtime_error(
-            "DiffusionPipeline::generate: guidance_scale != 1.0 is not supported yet (TODO)");
+            "DiffusionPipeline::generate: guidance_scale != 1.0 is not supported "
+            "(use generate_txt2img for CFG)");
     }
 
     // --- S0 プロファイル: 総時間計測開始 + カウンタリセット (DOLLAMA_PROFILE 時のみ) ---
@@ -327,29 +357,10 @@ void DiffusionPipeline::generate(int                   steps,
     CUDA_CHECK(cudaMemcpy(h_image.data(), d_image,
                           kImgN * sizeof(__half), cudaMemcpyDeviceToHost));
 
-    // --- 画像化: VAE 出力は [-1,1] 系。dump_vae_golden.py と同じく
-    //     (x*0.5+0.5) で [0,1] へ写し、clamp 後 ×255 で uint8。
-    //     出力は NCHW [3,1024,1024] → HWC [1024,1024,3] row-major へ並べ替え。
+    // --- 画像化: VAE 出力は [-1,1] 系。(x*0.5+0.5)→clamp→×255、NCHW→HWC。
     w = kImgW;
     h = kImgH;
-    rgb_out.assign(kImgN, 0);
-    for (int c = 0; c < kImgC; ++c)
-    {
-        const size_t cbase = static_cast<size_t>(c) * kImgH * kImgW;
-        for (int y = 0; y < kImgH; ++y)
-        {
-            for (int x = 0; x < kImgW; ++x)
-            {
-                const float v   = __half2float(h_image[cbase + static_cast<size_t>(y) * kImgW + x]);
-                float       n01 = v * 0.5f + 0.5f;
-                if (n01 < 0.0f) { n01 = 0.0f; }
-                if (n01 > 1.0f) { n01 = 1.0f; }
-                const int   q   = static_cast<int>(n01 * 255.0f + 0.5f);
-                const size_t dst = (static_cast<size_t>(y) * kImgW + x) * 3 + c;
-                rgb_out[dst] = static_cast<uint8_t>(q < 0 ? 0 : (q > 255 ? 255 : q));
-            }
-        }
-    }
+    image_f16_to_rgb_u8(h_image, rgb_out);
 
     // --- S0 プロファイル: 総時間確定 + 内訳テーブル出力 (DOLLAMA_PROFILE 時のみ) ---
     if (prof)
@@ -402,6 +413,194 @@ void DiffusionPipeline::generate(int                   steps,
     CUDA_CHECK(cudaFree(d_latent));
     CUDA_CHECK(cudaFree(d_noise_pred));
     CUDA_CHECK(cudaFree(d_image));
+}
+
+// ----------------------------------------------------------------
+// 2-6b Stage E: CFG (classifier-free guidance) 付き txt2img 拡散ループ。
+//   各 step で UNet を cond / uncond の 2 回回し、
+//     noise = uncond + guidance_scale * (cond - uncond)
+//   を host で合成して Euler step に渡す。
+// ----------------------------------------------------------------
+void DiffusionPipeline::generate_txt2img(int                   steps,
+                                         uint64_t              seed,
+                                         float                 guidance_scale,
+                                         const float*          cond_ehs,
+                                         const float*          cond_text_embeds,
+                                         const float*          uncond_ehs,
+                                         const float*          uncond_text_embeds,
+                                         const float*          time_ids,
+                                         std::vector<uint8_t>& rgb_out,
+                                         int&                  w,
+                                         int&                  h)
+{
+    if (steps <= 0)
+    {
+        throw std::runtime_error("DiffusionPipeline::generate_txt2img: steps must be > 0");
+    }
+    if (cond_ehs == nullptr || cond_text_embeds == nullptr
+        || uncond_ehs == nullptr || uncond_text_embeds == nullptr || time_ids == nullptr)
+    {
+        throw std::runtime_error("DiffusionPipeline::generate_txt2img: null embedding pointer");
+    }
+
+    // --- 外部 cond / uncond 埋め込みを FP16 へ変換してデバイス常駐させる ---
+    //     コンストラクタ常駐の golden 埋め込みは使わない (本 txt2img 経路)。
+    __half* d_cond_ehs    = nullptr;  // [77*2048]
+    __half* d_cond_txt    = nullptr;  // [1280]
+    __half* d_uncond_ehs  = nullptr;  // [77*2048]
+    __half* d_uncond_txt  = nullptr;  // [1280]
+    __half* d_time_ids    = nullptr;  // [6] (cond/uncond 共通)
+    CUDA_CHECK(cudaMalloc(&d_cond_ehs,   kEhsN  * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_cond_txt,   kTxtN  * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_uncond_ehs, kEhsN  * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_uncond_txt, kTxtN  * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_time_ids,   kTidsN * sizeof(__half)));
+
+    {
+        std::vector<__half> tmp_ce(kEhsN), tmp_ue(kEhsN);
+        std::vector<__half> tmp_ct(kTxtN), tmp_ut(kTxtN);
+        std::vector<__half> tmp_ti(kTidsN);
+        for (size_t k = 0; k < kEhsN; ++k)
+        {
+            tmp_ce[k] = __float2half(cond_ehs[k]);
+            tmp_ue[k] = __float2half(uncond_ehs[k]);
+        }
+        for (size_t k = 0; k < kTxtN; ++k)
+        {
+            tmp_ct[k] = __float2half(cond_text_embeds[k]);
+            tmp_ut[k] = __float2half(uncond_text_embeds[k]);
+        }
+        for (size_t k = 0; k < kTidsN; ++k)
+        {
+            tmp_ti[k] = __float2half(time_ids[k]);
+        }
+        CUDA_CHECK(cudaMemcpy(d_cond_ehs,   tmp_ce.data(), kEhsN  * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_uncond_ehs, tmp_ue.data(), kEhsN  * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_cond_txt,   tmp_ct.data(), kTxtN  * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_uncond_txt, tmp_ut.data(), kTxtN  * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_time_ids,   tmp_ti.data(), kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
+    }
+
+    // --- scheduler 構築 ---
+    EulerDiscreteScheduler sched;
+    sched.set_timesteps(steps);
+    const std::vector<float>& timesteps = sched.timesteps();
+    const std::vector<float>& sigmas    = sched.sigmas();
+
+    // --- 初期ノイズ: randn(seed) * sigmas[0] (init_noise_sigma) ---
+    std::vector<float> latent_host(kLatentN);
+    {
+        Randn rng(seed);
+        const double init_sigma = static_cast<double>(sigmas[0]);
+        for (size_t k = 0; k < kLatentN; ++k)
+        {
+            latent_host[k] = static_cast<float>(rng.next() * init_sigma);
+        }
+    }
+
+    // --- デバイスバッファ確保 ---
+    __half* d_latent      = nullptr;  // UNet 入力 (scale_model_input 済み)
+    __half* d_noise_cond  = nullptr;  // UNet 出力 (cond)
+    __half* d_noise_unc   = nullptr;  // UNet 出力 (uncond)
+    __half* d_image       = nullptr;  // VAE 出力
+    CUDA_CHECK(cudaMalloc(&d_latent,     kLatentN * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_noise_cond, kLatentN * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_noise_unc,  kLatentN * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_image,      kImgN    * sizeof(__half)));
+
+    std::vector<float>  scaled_host(kLatentN);
+    std::vector<__half> h_latent_f16(kLatentN);
+    std::vector<float>  noise_cond(kLatentN);    // D2H cond (FP32)
+    std::vector<float>  noise_unc(kLatentN);     // D2H uncond (FP32)
+    std::vector<__half> h_nc_f16(kLatentN);
+    std::vector<__half> h_nu_f16(kLatentN);
+    std::vector<float>  noise_cfg(kLatentN);     // CFG 合成後の noise
+    std::vector<float>  latent_next(kLatentN);
+
+    // --- CFG 拡散ループ ---
+    for (int i = 0; i < steps; ++i)
+    {
+        // scale_model_input (host, in-place) → cond/uncond 共通の d_latent へ H2D。
+        scaled_host = latent_host;
+        sched.scale_model_input(scaled_host.data(), kLatentN, i);
+        for (size_t k = 0; k < kLatentN; ++k)
+        {
+            h_latent_f16[k] = __float2half(scaled_host[k]);
+        }
+        CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
+                              kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
+
+        // UNet を cond 埋め込みで 1 回。
+        launch_unet(unet_weights_handle_,
+                    d_latent,
+                    timesteps[i],
+                    d_cond_ehs,
+                    d_cond_txt,
+                    d_time_ids,
+                    d_noise_cond);
+
+        // UNet を uncond 埋め込みで 1 回 (同じ d_latent)。
+        launch_unet(unet_weights_handle_,
+                    d_latent,
+                    timesteps[i],
+                    d_uncond_ehs,
+                    d_uncond_txt,
+                    d_time_ids,
+                    d_noise_unc);
+
+        // D2H: cond / uncond noise_pred を FP32 へ。
+        CUDA_CHECK(cudaMemcpy(h_nc_f16.data(), d_noise_cond,
+                              kLatentN * sizeof(__half), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h_nu_f16.data(), d_noise_unc,
+                              kLatentN * sizeof(__half), cudaMemcpyDeviceToHost));
+        for (size_t k = 0; k < kLatentN; ++k)
+        {
+            noise_cond[k] = __half2float(h_nc_f16[k]);
+            noise_unc[k]  = __half2float(h_nu_f16[k]);
+        }
+
+        // CFG 合成 (host): noise = uncond + scale * (cond - uncond)。
+        //   noise_pred は 65536 要素と小さいので host 合成で十分。
+        for (size_t k = 0; k < kLatentN; ++k)
+        {
+            noise_cfg[k] = noise_unc[k] + guidance_scale * (noise_cond[k] - noise_unc[k]);
+        }
+
+        // Euler step: latent_next = step(noise_cfg, i, latent_host) (host)。
+        sched.step(noise_cfg.data(), i, latent_host.data(), latent_next.data(), kLatentN);
+        latent_host.swap(latent_next);
+    }
+
+    // --- VAE decode 用に latent を scaling_factor で割り FP16 で H2D ---
+    for (size_t k = 0; k < kLatentN; ++k)
+    {
+        h_latent_f16[k] = __float2half(latent_host[k] / kScalingFactor);
+    }
+    CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
+                          kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
+
+    launch_vae_decode(vae_weights_handle_, d_latent, d_image);
+
+    // --- D2H: image (FP16, [-1,1] 値域) ---
+    std::vector<__half> h_image(kImgN);
+    CUDA_CHECK(cudaMemcpy(h_image.data(), d_image,
+                          kImgN * sizeof(__half), cudaMemcpyDeviceToHost));
+
+    // --- 画像化 ---
+    w = kImgW;
+    h = kImgH;
+    image_f16_to_rgb_u8(h_image, rgb_out);
+
+    // --- 後始末 ---
+    CUDA_CHECK(cudaFree(d_latent));
+    CUDA_CHECK(cudaFree(d_noise_cond));
+    CUDA_CHECK(cudaFree(d_noise_unc));
+    CUDA_CHECK(cudaFree(d_image));
+    CUDA_CHECK(cudaFree(d_cond_ehs));
+    CUDA_CHECK(cudaFree(d_cond_txt));
+    CUDA_CHECK(cudaFree(d_uncond_ehs));
+    CUDA_CHECK(cudaFree(d_uncond_txt));
+    CUDA_CHECK(cudaFree(d_time_ids));
 }
 
 } // namespace dollama

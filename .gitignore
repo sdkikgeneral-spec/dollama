@@ -14,6 +14,11 @@ src/tests/data/vae_golden.png
 src/tests/data/unet_weights.safetensors
 src/tests/data/unet_io.safetensors
 
+# txt2img (2-6b) 実テキスト golden。scripts/dollma_dump_txt2img_golden.py で再生成。
+# 不在時 test_text_conditioner / CFG E2E は [SKIP]。
+src/tests/data/txt2img_io.safetensors
+src/tests/data/txt2img_golden.png
+
 # マッティング probe の中間 .npy マスク (32MB・golden と冗長・再生成可)。
 # scripts/dollma_probe_matting.py で再生成。golden_isnet.safetensors / 比較 PNG は追跡。
 src/tests/data/matting/*.npy
