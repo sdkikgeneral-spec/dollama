@@ -1,0 +1,63 @@
+{
+  "_params_M": 11.181,
+  "_devices": [
+    "CPU",
+    "GPU.0",
+    "GPU.1",
+    "NPU"
+  ],
+  "runs": {
+    "448": {
+      "CPU": {
+        "median": 8.35,
+        "min": 8.01,
+        "max": 11.19,
+        "compile_ms": 125.0
+      },
+      "GPU.0": {
+        "median": 5.48,
+        "min": 4.95,
+        "max": 5.74,
+        "compile_ms": 3447.0
+      },
+      "GPU.1": {
+        "median": 11.51,
+        "min": 11.43,
+        "max": 11.65,
+        "compile_ms": 1237.0
+      },
+      "NPU": {
+        "median": 4.62,
+        "min": 4.28,
+        "max": 7.25,
+        "compile_ms": 462.0
+      }
+    },
+    "512": {
+      "CPU": {
+        "median": 10.54,
+        "min": 10.15,
+        "max": 13.72,
+        "compile_ms": 48.0
+      },
+      "GPU.0": {
+        "median": 6.63,
+        "min": 6.18,
+        "max": 7.11,
+        "compile_ms": 1753.0
+      },
+      "GPU.1": {
+        "median": 13.0,
+        "min": 12.9,
+        "max": 13.47,
+        "compile_ms": 625.0
+      },
+      "NPU": {
+        "median": 6.14,
+        "min": 5.54,
+        "max": 7.74,
+        "compile_ms": 603.0
+      }
+    }
+  }
+}

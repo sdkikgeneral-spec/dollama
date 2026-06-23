@@ -125,7 +125,7 @@ meson subproject (wrap) で取り込む。API 仕様: `docs/http-api-spec.md` �
 | dense 本線 | 6 | C++ 推論 (CPU dense 完了 / GPU は #6-GPU で完了 / 量子化は後段) | `src/infer/bitnet.hpp` | ✅ CPU dense 完了 (`BitNetDenseInfer`: safetensors FP32 ロード→forward+greedy デコード text→tags。models/bitnet.hpp の ternary は不使用・dense FP matmul double 蓄積。RoPE NeoX/tied lm_head)。PyTorch golden 突合: logits max abs err ≤2.29e-5・corr 1.0 (seq 8/32/63)、greedy 5/5 完全一致。test_bitnet_infer 緑。1 forward ~253ms (naive)。GPU=#6-GPU で完了・INT8 は別タスク |
 | dense 本線 | 6-GPU | C++ GPU 推論 (RTX5080 で自作 CUDA カーネル流用) | `src/infer/bitnet_gpu.cu` (T1 device forward) + `src/infer/bitnet_gpu.cuh` (T2 `BitNetGpuInfer`) | ✅ 完了 (純 FP32 で CPU 版 `BitNetDenseInfer` と数値一致)。device forward = embed gather / RMSNorm / RoPE / causal SDPA / SwiGLU の static `__global__` + Linear/lm_head は **LM ローカル純 FP32 cuBLAS (CUBLAS_COMPUTE_32F・TF32 厳禁)**・リダクション系は double 蓄積で CPU(double) と桁合わせ。74 テンソルを device 常駐・LM ローカル cublas ハンドル。**本番重み突合**: logits seq 8/32/63 で max abs err 1.49e-6〜6.44e-6 / corr 1.0、greedy `generate` 3/3・`generate_with_identity` 2/2 完全一致。**forward 中央値 (DOLLAMA_BENCH=1, warmup3/iters30)**: seq8 2.43ms (CPU 113.78ms=**46.8x**) / seq32 9.90ms (46.2x) / seq63 10.29ms (900.83ms=**87.5x**)。class と heavy include は `#ifndef __CUDACC__` で .cu(nvcc/C++14)非汚染。test_bitnet_gpu 緑 (重み/GPU 不在時 [SKIP]) |
 | 拡張 (A) | A | **同一性条件付きタグ生成** (character-bible を条件入力) | `bitnet.hpp` 拡張 + `character.hpp` 結線 + **同一性条件付きデータ** (dataset-spec §13) | ✅ 完了 (機構 = (a-1) prompt prefix `<bos> identity <sep> scene <sep> target <eos>`・`<sep>` 2回流用で vocab/tokenizer/アーキ無変更)。A1 §13 データ 5000ペア (identity/scene 分離・identity⊆target・validate 全件0)・A2 混合訓練 + **identity retention 0.947**・A3 `generate_with_identity` + CharacterBible 結線。identity golden 突合 logits corr 1.0 / greedy 5/5 一致。test_bitnet_infer 緑 |
-| 評価 (B) | B | **アニメ品質スコアラ** = §11 蒸留 QA スコアラ (生成画像を採点 → A へ FB) | `src/infer/` + OV (clip.hpp/wd14.hpp グルー流用) | ⏳ **Phase 2+ 並行** (画像が出てから)。conv 系のため **NPU 実行性は要 probe** (不可なら CPU) |
+| 評価 (B) | B | **アニメ品質スコアラ** = §11 蒸留 QA スコアラ (生成画像を採点 → A へ FB) | `src/infer/` + OV (clip.hpp/wd14.hpp グルー流用) | ⏳ **Phase 2+ 並行** (画像が出てから)。**NPU 実行性 probe 済 → scorer_device=NPU 妥当** (`scripts/dollma_probe_quality_scorer.py`: 純 conv backbone 11.18M で NPU 448² 4.62ms < iGPU 5.48 < CPU 8.35、NPU/CPU 0.55x。WD14 268ms は Window Attention 由来と切り分け確定・純 conv は NPU フレンドリー)。**前提: 実スコアラを純 conv で設計** (attention head は NPU 不利に戻す) |
 | 圧縮 | 5 | Ternary GEMM (重み{-1,0,+1}) — **圧縮実験** (目的ではない) | `src/kernels/ternary_gemm.cu` | ⏳ 降格 (dense が動いた後の研究軸) |
 
 **Phase 4 完了の定義**: user text → danbooru タグ変換が C++ (CPU/GPU) で動き、品質が
@@ -171,7 +171,7 @@ conv probe 次第。
 | ~~タグ生成 LM 基礎データ~~ | quality / quantity 未確定 | ✅ #1 で 5,000 ペア確保・解消 |
 | A 同一性条件付けデータ | 現 dataset は同一性を target 除外 (dataset-spec §4) → 条件付きペアが無い | dataset-spec §13 で新規設計 (dataset-curator) |
 | B 品質スコアラの正解ラベル | 「良い絵」の教師信号をどう得るか (難問) | §11 の合格/不合格蓄積 + 大型評価器を teacher に蒸留 |
-| B の NPU 実行性 | conv 系は NPU で遅い前科 (iGPU 8x・probe4) | 要 probe。不可なら CPU に載せる |
+| ~~B の NPU 実行性~~ | ~~conv 系は NPU で遅い前科 (iGPU 8x・probe4)~~ | ✅ 解消 (probe 済)。純 conv は **NPU 最速** (448² 4.62ms・NPU/CPU 0.55x)。WD14 268ms は Window Attention 由来と切り分け。scorer_device=NPU・実スコアラは純 conv 設計が前提 (`dollma_probe_quality_scorer.py`) |
 | safetensors パーサー | バイナリ仕様の正確な実装が必要 | 既存仕様書とテストファイルで検証 |
 | Linux 対応 (HTTP) | ~~Winsock2/POSIX 二重実装~~ | cpp-httplib がクロスプラットフォーム吸収 → 解消 |
 
