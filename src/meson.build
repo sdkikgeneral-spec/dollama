@@ -667,3 +667,35 @@ if ov_dll_dir != ''
     depends          : exe,
   )
 endif
+
+# ----------------------------------------------------------------
+# CLI 生成モード (build_image_generator / write_png_file) テスト (純 cpp)
+# ----------------------------------------------------------------
+# cli_generate.hpp は make_pipeline_generator (ファクトリ) を呼び、CUDA+OV 双方有効時のみ
+# Txt2ImgGenerator (→ make_diffusion_runner) を参照する。よって test 本体は .cpp (cl) で
+# ビルドし、ファクトリ / runner の実体だけ CUDA 有無で切り替えてリンクする (exe と同じ DI 設計):
+#   - CUDA 有効: pipeline_generator_factory.cu + diffusion_runner.cu + 全カーネル .cu をリンク。
+#   - CUDA 無効: pipeline_generator_factory_stub.cpp + diffusion_runner_stub.cpp をリンク。
+# 重み/OV アセットは存在しない (= 解決されない) 想定で、build_image_generator は実行時に
+# 必ず StubGenerator にフォールバックする (NPU/CUDA/OV に依存せず CI 緑)。
+if cuda_enabled
+  test_cli_generate_exe = executable('test_cli_generate',
+    sources             : files(['tests/test_cli_generate.cpp',
+                                 'server/pipeline_generator_factory.cu',
+                                 'server/diffusion_runner.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_args,
+  )
+else
+  test_cli_generate_exe = executable('test_cli_generate',
+    sources             : files('tests/test_cli_generate.cpp',
+                                'server/pipeline_generator_factory_stub.cpp',
+                                'server/diffusion_runner_stub.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+  )
+endif
+test('cli_generate', test_cli_generate_exe, timeout : 120)
