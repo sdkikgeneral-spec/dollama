@@ -1,0 +1,61 @@
+{
+  "_model": "ISNet-anime (skytnt/anime-seg isnetis.onnx, Apache-2.0)",
+  "_onnx": "C:\\Users\\sdkik\\.cache\\huggingface\\hub\\models--skytnt--anime-seg\\snapshots\\976cbb9ba61600e0993d1ee2a8a247ae05d183ee\\isnetis.onnx",
+  "_input": {
+    "name": "img",
+    "element_type": "f32",
+    "shape": [
+      1,
+      3,
+      1024,
+      1024
+    ]
+  },
+  "_output_shape": [
+    1,
+    1,
+    1024,
+    1024
+  ],
+  "_devices": [
+    "CPU",
+    "GPU.0",
+    "GPU.1",
+    "NPU"
+  ],
+  "_convert_ms": 343.0,
+  "runs": {
+    "CPU": {
+      "median": 204.2,
+      "min": 193.54,
+      "max": 232.85,
+      "compile_ms": 236.0
+    },
+    "GPU.0": {
+      "median": 99.96,
+      "min": 98.32,
+      "max": 101.32,
+      "compile_ms": 3583.0
+    },
+    "GPU.1": {
+      "median": 220.47,
+      "min": 220.26,
+      "max": 221.89,
+      "compile_ms": 10326.0
+    },
+    "NPU": {
+      "median": 142.96,
+      "min": 139.06,
+      "max": 145.81,
+      "compile_ms": 8631.0
+    }
+  },
+  "_fastest_all": {
+    "device": "iGPU",
+    "median_ms": 99.96
+  },
+  "_matting_device_recommend": {
+    "device": "iGPU",
+    "median_ms": 99.96
+  }
+}

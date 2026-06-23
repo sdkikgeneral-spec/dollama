@@ -174,6 +174,17 @@ test_wd14_exe = executable('test_wd14',
 # OV モデルロードが重く既定 30s を超えうる (並列実行時の CPU 競合で顕著)。
 test('wd14', test_wd14_exe, timeout : 120)
 
+# Model B Stage 1: QualityGate (WD14 異常タグ soft ゲート) テスト
+# quality_gate.hpp は OV 非依存 (WD14 スコアベクタを引数で受ける)。
+# 合成 CSV + 合成スコアで実走するため OV ロード不要・常時緑 (timeout 延伸不要)。
+test_quality_gate_exe = executable('test_quality_gate',
+  sources             : files('tests/test_quality_gate.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('quality_gate', test_quality_gate_exe)
+
 # マッティング (ISNet-anime) CPU 推論テスト (M-4)
 # matting.hpp は OV ガード越し (HAVE_OPENVINO 未定義時は推論 [SKIP]・compose_rgba は常時)。
 # モデル (model_ov_fp32.xml) は .gitignore 済・再生成可。golden は src/tests/data/matting/。

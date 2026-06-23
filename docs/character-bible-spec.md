@@ -312,7 +312,7 @@ inline std::vector<std::string> default_quality_negatives()
 
 ## 9. 未確定事項 (probe / 後続タスク)
 
-- マッティングを乗せる HW (`matting_device`): iGPU / NPU / CPU を probe 比較して決定
+- ~~マッティングを乗せる HW (`matting_device`): iGPU / NPU / CPU を probe 比較して決定~~ → **M-5 で "iGPU" 確定** (ISNet 1024²: iGPU 99.96ms < NPU 142.96 < CPU 204.20 < RTX5080-OV 220.47)
 - 既定の `isolation_tag` (背景色): `simple background` / `white background` / `grey background`
   を切り抜き品質 (縁スピル・白系キャラのコントラスト) で probe 比較して決定
 - `identity_features` の次元・抽出元: WD14 (1536dim) か CLIP pooler (768dim) か

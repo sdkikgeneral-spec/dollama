@@ -109,7 +109,8 @@ struct SceneSpec
 // ------------------------------------------------------------
 // OutputSpec: 出力・合成設定
 // 背景は生成しない。キャラのみを透過 PNG で出す。
-// matting_device は probe 比較で決定するため未確定 (空文字 = 自動)。
+// matting_device は M-5 probe で "iGPU" 確定 (ISNet 1024²: iGPU 99.96ms 最速・NPU 142.96 / CPU 204.20 / RTX5080-OV 220.47)。
+// 既定は "" のまま (= 自動。M-6 PipelineGenerator 結線で確定値を消費する)。
 // ------------------------------------------------------------
 struct OutputSpec
 {
