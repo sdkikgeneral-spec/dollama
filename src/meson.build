@@ -565,6 +565,27 @@ if cuda_enabled
     ],
   )
   test('pipeline_generator', test_pipeline_generator_exe, timeout : 600, is_parallel : false)
+
+  # BitNet dense (FP32) GPU 推論テスト (Phase 4 #6-GPU / T2)
+  # class BitNetGpuInfer (bitnet_gpu.cuh) + device forward 本体 (bitnet_gpu.cu) を
+  # 同一重みで CPU 版 BitNetDenseInfer と突合する (CPU を golden 代わりに使うため
+  # PyTorch golden は不要)。test 本体は .cpp だが BitNetGpuInfer が cudaMalloc/cublas を
+  # 呼ぶため infer/bitnet_gpu.cu を同時リンクし cuda_dep (cudart/cublas) を依存に取る。
+  # 重み (bitnet_dense{,_identity}_fp32.safetensors) / vocab.json は gitignore 対象。
+  # 不在 or 例外 (GPU 不在含む) なら test 側で [SKIP] (CI でビルド緑維持)。
+  test_bitnet_gpu_exe = executable('test_bitnet_gpu',
+    sources             : files('tests/test_bitnet_gpu.cpp', 'infer/bitnet_gpu.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args + [
+      '-DWEIGHTS_PATH="' + bn_weights_path + '"',
+      '-DIDENTITY_WEIGHTS_PATH="' + bn_id_weights_path + '"',
+      '-DVOCAB_PATH="' + bn_vocab_path + '"',
+    ],
+    cuda_args           : cuda_test_args,
+  )
+  # CPU 版を golden 代わりに greedy 生成を複数回回すため重い (CPU naive forward x ステップ)。
+  test('bitnet_gpu', test_bitnet_gpu_exe, timeout : 600)
 endif
 
 # ----------------------------------------------------------------
