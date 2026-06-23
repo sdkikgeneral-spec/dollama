@@ -40,6 +40,12 @@ data/bitnet/golden/
 # smoke ラン成果物 (本番と別名・追跡しない)。
 data/bitnet/train_stats_smoke.json
 data/bitnet/train_stats_identity_smoke.json
+# D6 (案c) の α/温度 sweep 変種・smoke (代表 train_stats_d6.json のみ追跡)。
+data/bitnet/train_stats_d6_*.json
+# seed 頑健性 sweep の scratch dir (本番 pairs/vocab のコピー + 結果・再生成可)。
+data/bitnet/_seedsweep/
+# 生成ログ (npz 生成等)。
+scripts/archives/*.log
 
 # Python
 __pycache__/

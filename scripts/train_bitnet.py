@@ -577,6 +577,144 @@ class CoOccurrenceTeacher:
         return out
 
 
+# ==============================================================
+# D6: 外部教師 (TIPO-200M) soft target を npz から引く teacher (案c)
+# ==============================================================
+#
+# 動機 (D5 を踏まえて):
+#   D5 (案A 共起 teacher) は過学習を抑制したが top10 recall を底上げしなかった
+#   (soft 追従と one-hot val recall のトレードオフ・training-spec 11)。D6 は
+#   **真の外部知識転移** を狙い、TIPO-200M が学習した「条件付きタグ集合」を
+#   自作 4999 vocab の疎 soft target として注入する (案b-tagset)。
+#
+# 設計 (KL plumbing は無改修流用):
+#   teacher 本体 (transformers/CUDA) は訓練時にロードしない。事前に
+#   scripts/dollma_d6_teacher_cache.py が出力した COO npz
+#     (rows=sample_idx, poss=target_index_t, cols=vocab_id, probs)
+#   を読むだけ。各 (sample_idx, t) の soft 分布は D5 と同様 gold に main_mass・
+#   残余を TIPO 生成由来タグへ温度付きで配ったもの (和=1.0)。
+#
+#   インターフェースは CoOccurrenceTeacher と同一の soft_target(prefix_ids, gold_id)。
+#   precompute_soft_targets / build_soft_target_tensor を一切変えずに使えるよう、
+#   bind(dataset) で各 sample の soft 位置数を先に把握し、compute_sample_soft の
+#   決定的反復順序 (sample を 0,1,2,... 順・各 sample 内は t 昇順に 1 回ずつ呼ぶ) に
+#   同期して npz の (sample_idx, t) 分布を順送りで返す。soft 位置 0 の sample は
+#   呼び出されないので自動でスキップする (順送りポインタが破綻しない)。
+#   gold_id<5 (specials) は D5 同様 hard ({gold:1.0})・npz には soft 位置を持たない。
+class ExternalTagTeacher:
+    """D6: dollma_d6_teacher_cache.py の COO npz を読み、CoOccurrenceTeacher と同一
+    I/F で疎 soft 分布を返す teacher。訓練時に TIPO 本体はロードしない (npz を読むだけ)。
+
+    使い方 (CoOccurrenceTeacher と完全に同じ + bind を 1 行足すだけ):
+        teacher = ExternalTagTeacher(tok, soft_npz_path)
+        teacher.bind(dataset, max_len)            # 順送りの基準 (各 sample の呼数) を確定
+        soft_cache = precompute_soft_targets(teacher, dataset, max_len)
+        soft = build_soft_target_tensor(teacher, batch, tgt, max_len, soft_cache)
+    """
+
+    def __init__(self, tok, soft_npz_path):
+        import numpy as np
+        self.tok = tok
+        self.soft_npz_path = soft_npz_path
+        if not os.path.exists(soft_npz_path):
+            raise FileNotFoundError(
+                f"{soft_npz_path} が無い (D6 外部教師 soft npz)。"
+                f"scripts/dollma_d6_teacher_cache.py で生成する。")
+        z = np.load(soft_npz_path)
+        rows = z["rows"]; poss = z["poss"]; cols = z["cols"]; probs = z["probs"]
+        # by_sample[sample_idx] = list of (t, {vocab_id: prob})  (t 昇順)。
+        tmp = {}
+        for r, p, c, pr in zip(rows.tolist(), poss.tolist(),
+                               cols.tolist(), probs.tolist()):
+            tmp.setdefault(int(r), {}).setdefault(int(p), {})[int(c)] = float(pr)
+        self.by_sample = {}
+        for si, posmap in tmp.items():
+            self.by_sample[si] = [(t, posmap[t]) for t in sorted(posmap.keys())]
+        self.n_samples = int(z["n_samples"][0]) if "n_samples" in z.files \
+            else (max(self.by_sample.keys()) + 1 if self.by_sample else 0)
+        self.max_len = int(z["max_len"][0]) if "max_len" in z.files else None
+        # bind 後に確定する順送り状態。
+        self._order = None        # bind した dataset での sample_idx の走査順
+        self._calls_per = None    # 各 sample が soft_target を呼ぶ回数 (= soft 位置数)
+        self._oi = 0              # _order 内の現在 sample インデックス
+        self._served = 0          # 現 sample で配信済みの呼数
+        self._cur_list = []       # 現 sample の (t, dist) 列
+
+    def bind(self, dataset, max_len):
+        """dataset の走査順 (= precompute_soft_targets の順) で各 sample の soft 位置数を
+        先に計算し、順送りの基準を確定する。compute_sample_soft の位置ロジックを teacher
+        非依存に再現 (specials/tags_start 規則は同一) するだけで teacher.soft_target は呼ばない。
+        """
+        order = []
+        calls = []
+        for s in dataset.samples:
+            ids, tags_start = s[0], s[1]
+            order.append(id(ids))
+            calls.append(self._count_soft_positions(ids, tags_start, max_len))
+        self._order = order
+        self._calls_per = calls
+        # id(ids) -> その sample の soft 位置数 (precompute は id(ids) 順だが順送りで足りる)。
+        self.reset()
+        return self
+
+    @staticmethod
+    def _count_soft_positions(ids, tags_start, max_len):
+        """compute_sample_soft が soft_target を呼ぶ回数 (= soft 位置数)。teacher 非依存。"""
+        ids = ids[:max_len]
+        n = len(ids)
+        start_t = max(tags_start - 1, 0)
+        cnt = 0
+        for t in range(n - 1):
+            pos = t + 1
+            gold = ids[pos]
+            if pos >= tags_start and gold >= 5:
+                if t >= start_t:
+                    cnt += 1
+        return cnt
+
+    def _advance_to_next_active(self):
+        """次に soft_target を呼ぶ sample (soft 位置 > 0) までポインタを進める。"""
+        while self._oi < len(self._calls_per) and self._calls_per[self._oi] == 0:
+            self._oi += 1
+        if self._oi < len(self._calls_per):
+            si = self._sample_idx_at(self._oi)
+            self._cur_list = self.by_sample.get(si, [])
+        else:
+            self._cur_list = []
+        self._served = 0
+
+    def _sample_idx_at(self, oi):
+        """_order[oi] (= id(ids)) に対応する npz sample_idx。bind した dataset の
+        走査順は precompute_soft_targets の走査順と同一 (どちらも dataset.samples 順) で、
+        npz の sample_idx も dataset.samples 順に振られているので oi == sample_idx。"""
+        return oi
+
+    def soft_target(self, prefix_ids, gold_id):
+        """1 target 位置の soft 分布 dict (CoOccurrenceTeacher と同一 I/F)。"""
+        if gold_id < 5:
+            return {gold_id: 1.0}
+        if self._calls_per is None:
+            raise RuntimeError("ExternalTagTeacher.bind(dataset, max_len) を先に呼ぶこと。")
+        # 現 sample を配信し切ったら次の active sample へ。
+        if self._served >= (self._calls_per[self._oi] if self._oi < len(self._calls_per) else 0):
+            self._oi += 1
+            self._advance_to_next_active()
+        if self._oi >= len(self._calls_per):
+            return {gold_id: 1.0}  # 理論上来ない (フォールバック)
+        if self._served < len(self._cur_list):
+            t, dist = self._cur_list[self._served]
+            self._served += 1
+            return dict(dist)
+        self._served += 1
+        return {gold_id: 1.0}
+
+    def reset(self):
+        """順送り状態をリセットし、最初の active sample に合わせる。"""
+        self._oi = 0
+        self._served = 0
+        self._advance_to_next_active()
+
+
 def compute_sample_soft(teacher, ids, tags_start, max_len):
     """1 サンプルの target 位置ごとの soft 分布を疎リストで返す (事前計算用)。
 
@@ -1514,6 +1652,18 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.0,
                     help="D5 (②): 訓練時 residual dropout 率 (eval で恒等=golden 非回帰)。"
                          "既定 0.0 で従来挙動。")
+    # --- D6: 外部教師 (TIPO-200M) soft-label KL 蒸留 (案c) ---
+    ap.add_argument("--distill-ext", action="store_true",
+                    help="D6: 外部教師 (TIPO-200M) soft-label KL 蒸留。"
+                         "dollma_d6_teacher_cache.py が出した COO npz を読んで "
+                         "target 分布を軟化し L=alpha*T^2*KL+(1-alpha)*hardCE で学習。"
+                         "TIPO 本体は訓練時にロードしない (npz を読むだけ)。"
+                         "出力は bitnet_dense_d6* / train_stats_d6.json (別名・"
+                         "#1/#4/#6/distill/identity/kl は無改変)。val は #1 と同一 (不変)。"
+                         "--kl-alpha/--kl-temp を流用 (--cooc-* は案A 専用のまま)。")
+    ap.add_argument("--ext-soft-cache", default=None,
+                    help="D6: 外部教師 soft npz パスの接頭辞 "
+                         "(既定 data/bitnet/cache/d6_teacher_soft.{train,val}.npz)。")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
@@ -1592,6 +1742,17 @@ def main():
         print(f"[data] DISTILL-MIXED train={len(train_rows)} "
               f"(synthetic={n_syn_tr} llm_distill={n_dis_tr}) "
               f"val={len(val_rows)} (synthetic・不変) loss_mode={args.loss_mode}")
+    elif args.distill_ext:
+        # D6: synthetic(4500) のみ。案c も target 分布を軟化するのでペア数は増やさない。
+        #   val は #1 と同一 (固定 val 500・不変・#1 との突合用)。
+        train_rows = syn_train
+        val_rows = syn_val
+        if args.smoke:
+            train_rows = train_rows[:128]
+            val_rows = val_rows[:64]
+            args.epochs = 1
+        print(f"[data] EXT-DISTILL train={len(train_rows)} val={len(val_rows)} "
+              f"loss_mode={args.loss_mode} (synthetic only・target は案c TIPO 教師 npz で軟化)")
     elif args.distill_kl:
         # D5: synthetic(4500) のみ。案A は target 分布を軟化するのでペア数は増やさない。
         #   val は #1 と同一 (固定 val 500・不変・#1 との突合用)。
@@ -1634,7 +1795,23 @@ def main():
     # --- D5: 案A 共起 teacher を 1 度だけ構築 (KL 蒸留時のみ) ---
     teacher = None
     soft_cache = None
-    if args.distill_kl:
+    if args.distill_ext:
+        # D6: 外部教師 npz を読むだけ (TIPO 本体はロードしない)。
+        #   --ext-soft-cache は train/val 共通の接頭辞 (例 ".../d6_teacher_soft")。
+        #   未指定なら data/bitnet/cache/d6_teacher_soft を既定接頭辞とする。
+        ext_prefix = args.ext_soft_cache or os.path.join(
+            data_dir, "cache", "d6_teacher_soft")
+        tr_npz = ext_prefix + ".train.npz"
+        teacher = ExternalTagTeacher(tok, tr_npz)
+        teacher.bind(train_ds, args.max_len)
+        print(f"[teacher] 案c 外部教師 (TIPO-200M) npz 読込 {tr_npz} "
+              f"(samples={teacher.n_samples}) | KL alpha={args.kl_alpha} T={args.kl_temp}")
+        import time as _t
+        _ts = _t.time()
+        soft_cache = precompute_soft_targets(teacher, train_ds, args.max_len)
+        print(f"[teacher] soft target 事前計算 {len(soft_cache)} サンプル "
+              f"({_t.time()-_ts:.1f}s・以後 epoch で再計算しない)")
+    elif args.distill_kl:
         posts_path = os.path.join(data_dir, "cache", "danbooru_posts.jsonl")
         if not os.path.exists(posts_path):
             raise FileNotFoundError(
@@ -1760,7 +1937,10 @@ def main():
     #   identity 版 (--identity) は #4 純 dense と別名 (bitnet_dense_identity*) に分ける:
     #     #4 の bitnet_dense_fp32.safetensors は #6 golden 突合に使われており壊せない。
     #     混合訓練したモデルは別物なので名前を分け、#4 と #6 を保全する (設計判断)。
-    if args.distill_kl:
+    if args.distill_ext:
+        base = "bitnet_dense_d6"
+        stats_base = "train_stats_d6"
+    elif args.distill_kl:
         base = "bitnet_dense_kl"
         stats_base = "train_stats_kl"
     elif args.identity and args.distill:
@@ -1818,8 +1998,8 @@ def main():
         "train_time_s": round(train_time, 1),
     }
 
-    # ---- D5: val_loss 反転(底) epoch + 生成多様性 (§10.3 同等) ----
-    if args.distill_kl:
+    # ---- D5/D6: val_loss 反転(底) epoch + 生成多様性 (§10.3 同等) ----
+    if args.distill_kl or args.distill_ext:
         vls = [h["val_loss"] for h in history]
         argmin_ep = int(min(range(len(vls)), key=lambda i: vls[i])) if vls else None
         diversity = eval_generation_diversity(
@@ -1834,11 +2014,16 @@ def main():
             "cooc_main_mass": args.cooc_main_mass, "cooc_temp": args.cooc_temp,
             "cooc_topn": args.cooc_topn, "dropout": args.dropout,
             "weight_decay": args.weight_decay,
-            "teacher": "案A 共起 (cache/danbooru_posts.jsonl・prefix 条件付き soft label)",
+            "teacher": ("TIPO-200M (apache-2.0)・案c 外部教師 soft npz" if args.distill_ext
+                        else "案A 共起 (cache/danbooru_posts.jsonl・prefix 条件付き soft label)"),
         }
-        print(f"[D5] val_loss 反転(底) epoch={argmin_ep} (min={min(vls):.4f}) "
+        if args.distill_ext:
+            result["kl_settings"]["ext_soft_cache"] = (
+                (args.ext_soft_cache or os.path.join(data_dir, "cache",
+                 "d6_teacher_soft")) + ".train.npz")
+        print(f"[D5/D6] val_loss 反転(底) epoch={argmin_ep} (min={min(vls):.4f}) "
               f"final gap={result['final_train_val_gap']:.4f}")
-        print(f"[D5] 生成多様性: unique_tags={diversity['corpus_unique_tags']} "
+        print(f"[D5/D6] 生成多様性: unique_tags={diversity['corpus_unique_tags']} "
               f"per_seq_unique={diversity['mean_per_seq_unique']:.3f} "
               f"norm_entropy={diversity['norm_entropy']:.3f} "
               f"(n_cases={diversity['n_cases']})")
@@ -1876,7 +2061,8 @@ def main():
         "seed": seed,
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
-        "mode": ("kl_distill_cooc" if args.distill_kl
+        "mode": ("kl_distill_ext" if args.distill_ext
+                 else "kl_distill_cooc" if args.distill_kl
                  else "identity_distill_mixed" if (args.identity and args.distill)
                  else "distill_mixed" if args.distill
                  else "identity_mixed" if args.identity

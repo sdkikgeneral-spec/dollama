@@ -334,6 +334,28 @@ D5 (soft-label KL 蒸留・training-spec §11) の案A teacher は、**新しい
   再利用する (再現的)。dataset としての新ファイルは増えない。
 - A/B 結果・採否は training-spec §11 (採用せず・ただし過学習/gap は明確に改善する正の機構)。
 
+### 12.4 D6 — 案c 外部教師 soft target (TIPO-200M・新ペアではない)
+
+D6 (soft-label KL 蒸留・training-spec §12) の案c teacher も、**新しいペアファイルを一切作らない**。
+外部教師 **TIPO-200M** (KBlueLeaf/TIPO-200M・apache-2.0) に各サンプルのタグ補完を生成させ、
+出力**タグ文字列**を自作 4999 vocab に**完全一致**写像 (vocab 外は drop + in-vocab 質量で再正規化)
+した「条件付きタグ集合」を、各 target 位置の soft 分布に注入する (案b-tagset)。`pairs.*.jsonl` も
+`tags` も**不変**で、学習時に target one-hot を TIPO 生成由来の soft 分布へ置き換えるだけ。
+
+- **D5 (§12.3) との違い**: D5 案A は既存 corpus の**タグ共起**で soft 化 (外部モデル不使用)。
+  D6 案c は**外部 LM (TIPO) の生成タグ頻度**で soft 化 (真の知識転移)。どちらも新ペアを作らない
+  出力側 soft label だが、teacher 信号の出所が共起統計か外部 LM かで別物。
+- **教師キャッシュ (新ファイル・本番非破壊)**: `dollma_d6_teacher_cache.py` が position 軸付き
+  COO npz `cache/d6_teacher_soft.{train,val}.npz` (rows/poss/cols/probs・pickle なし) と
+  `cache/d6_teacher_stats.json` (OOV 保持率 train 0.791/val 0.790・平均エントロピー 0.85 nats)
+  を出力。生成は train 4,500 件 ~1.5h・val 500 件 574s (TIPO 本体は生成時のみロード・訓練時は npz)。
+- **写像規則 (絶対制約)**: カンマ split (空白では割らない = `long hair` を壊さない) →
+  `Tokenizer.normalize` 再利用 → `vocab.json` 完全一致 → OOV drop + 再正規化。next-subword logit
+  の直写像 (案b-logit) は却下 (TIPO BPE は 1 タグ = 複数 subword のため)。
+- A/B 結果・採否は training-spec §12 (**不採用** — 単一 seed の recall 上振れは seed 頑健性
+  sweep で再現せず seed ノイズと確定・#1 本線維持。再現する効果は過学習抑制のみ)。dataset
+  としての新ファイルは npz キャッシュのみで `pairs.*.jsonl` は不変。
+
 ## 13. 同一性条件付きペア (Phase 4 A・A1 確定版)
 
 Phase 4 A (同一性条件付きタグ生成) 用のデータ。#1 (§1-§12) は「user text → tags」のみで、

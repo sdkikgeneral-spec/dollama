@@ -516,3 +516,124 @@ py -3.12 scripts/train_bitnet.py --data-dir <scratch> --distill-kl --kl-alpha 0 
 py -3.12 scripts/train_bitnet.py --distill-kl --smoke
 ```
 
+## 12. D6 — 外部教師 (TIPO-200M) soft-label KL 蒸留 (案c)
+
+`scripts/train_bitnet.py --distill-ext` + `scripts/dollma_d6_teacher_cache.py`。D5 (案A 共起
+teacher・§11) は過学習を抑えたが top10 recall を底上げしなかった (soft 追従と one-hot val
+recall のトレードオフ・§11.4)。D6 は **真の外部知識転移** を狙い、外部教師 **TIPO-200M**
+(KBlueLeaf/TIPO-200M・apache-2.0) が学習した「条件付きタグ集合」を自作 4999 vocab の疎 soft
+target に注入する (案b-tagset)。KL plumbing (§11.1) は無改修流用・**新規ペアは作らない**・val は
+#1 と同一 500 で**不変**。出力は**別名** `bitnet_dense_d6{,_fp32}.safetensors` /
+`train_stats_d6.json` (#1/#4/#6/distill/identity/kl の重み・golden は無改変)。seed 20260620・
+FP32・GTX1080Ti。
+
+### 12.1 案b-tagset 教師 (絶対制約 — logit 直写像は却下)
+
+TIPO の vocab32013 は SentencePiece BPE で「1 タグ = 複数 subword」。next-subword logits を
+自作タグ単位 4999 分布へ直接写像してはいけない (案b-logit は却下)。必ず TIPO に**タグ補完を
+生成**させ、出力**タグ文字列**を自作 vocab に写像する (`dollma_d6_teacher_cache.py`):
+
+1. TIPO 出力をカンマで split (空白では割らない = `long hair` を壊さない)。
+2. 各タグ片を `train_bitnet.Tokenizer.normalize` で正規化 (import 再利用・二重実装禁止)。
+3. `data/bitnet/vocab.json` に**完全一致**引き。
+4. vocab 外タグは drop し in-vocab 質量で**再正規化** (alias 表は作らない)。
+
+teacher I/F は D5 `CoOccurrenceTeacher` と同一 `soft_target(prefix_ids, gold_id)`: gold に
+`main_mass`、残余を「TIPO が予測した次タグ候補」上位 `topn` へ温度付きで配る (共起カウントの
+代わりに **TIPO 生成由来のタグ頻度**を使う)。
+
+- **コスト圧縮 (per-sample 粒度)**: generate は ~1.15s/sample (FP32 batched N=8)。per-position
+  個別生成は破綻するので、1 サンプルにつき seed タグ群 (自然文 greedy タグ + 先頭 target タグ)
+  を渡して N=8 回 generate → **サンプル単位のタグ頻度分布**を作り、そのサンプルの全 target
+  位置で共有する。生成実測: train 4,500 件 5,338s (~1.5h)・val 500 件 574s (overnight 余裕)。
+- **訓練時に TIPO 本体はロードしない**: 事前生成した position 軸付き COO npz
+  (`cache/d6_teacher_soft.{train,val}.npz`) を `ExternalTagTeacher` が**順送り**で読むだけ
+  (各 sample の soft 位置数を `bind(dataset)` で先に把握し、`precompute_soft_targets` の決定的
+  反復順序に同期して COO 分布を返す)。teacher は決定的 → epoch 不変。
+- **教師品質 (`cache/d6_teacher_stats.json`)**: OOV (vocab 外タグ) 保持率 **train 0.791 / val
+  0.790** (in-vocab 質量で再正規化後)・平均エントロピー **0.85 nats**・val soft 位置 7,754。
+
+### 12.2 A/B 評価 (固定 val 500・#1 6ep=2.41/0.777 基準・seed 20260620)
+
+teacher 共通: main_mass=0.85 / 生成温度=2.0 / topn=32。student 側 `--kl-alpha` / `--kl-temp` を
+掃引 (6ep cosine・#1 採用 epoch)。
+
+| 指標 | #1 6ep (本線) | α=0.5 | α=0.35 | α=0.2 | α=0.1 T=2.0 | α=0.05 | **α=0.1 T=1.5** |
+|---|---|---|---|---|---|---|---|
+| 最終 val_loss | 2.411 | 2.690 | 2.569 | 2.473 | 2.421 | 2.408 | 2.413 |
+| **最良 val_loss (底)** | 2.382 | 2.676 | 2.550 | 2.450 | 2.400 | **2.386** | 2.388 |
+| 最終 top10 recall | 0.7767 | 0.7329 | 0.7550 | 0.7698 | 0.7790 | 0.7773 | 0.7797 |
+| **最良 recall** | 0.7767 | 0.7349 | 0.7573 | 0.7716 | 0.7800 | **0.7811** | **0.7818** |
+| val_loss 反転(底) epoch | ep4 | ep4 | ep4 | ep4 | ep4 | ep4 | ep4 |
+| 最終 train-val gap | 1.091 | −2.476 | −1.566 | −0.559 | **0.183** | 0.599 | 0.721 |
+
+(α=0.1 T=2.0 = 代表 `train_stats_d6.json`。生成多様性 α=0.1: unique tag 310・per-seq unique
+0.947・norm entropy 0.869。)
+
+> ⚠️ **この表の「#1 = 0.7767」は ≒ final epoch 測定**。seed sweep (§12.5) は epoch 最大 recall で
+> 両 config を統一して測り、原値 seed の #1 best は **0.7787** (D6 0.7800 との差は +0.0013)。
+> ここで見える「#1 を +0.004–0.005 上回る」は #1 を低く取った比較の産物で、再現しない (§12.3)。
+
+### 12.3 判定 — recall 上振れは seed ノイズと確定・不採用 (#1 本線維持)
+
+単一 seed の §12.2 では案C が #1 を僅かに上回って見えたが、**seed 頑健性 sweep (§12.5) で
+recall 改善は再現せず**、D5 と同じ「過学習抑制はするが recall は上げない」性質に帰着した。
+
+- **測定方法論の補正 (重要)**: §12.2 の「#1 = 0.7767」は別測定 (≒ final epoch) で、sweep の
+  **epoch 最大 recall で両 config を統一して測る**と原値 seed の #1 best は **0.7787**。D6 0.7800
+  との差は **+0.0013** (§12.2 で見えた +0.004–0.005 は #1 を低く取った比較の産物だった)。
+- **recall 改善は seed ノイズ**: 4 seed (20260620/1/42/7) の delta = D6 − #1 は
+  **+0.0013 / −0.0027 / +0.0015 / −0.0031** (符号が seed で反転・2 正 2 負)、平均 **−0.0008**。
+  最大 |delta| 0.0031 は **#1 単独の seed 分散** (sd 0.0020・range [0.7764, 0.7819] = 幅 0.0055)
+  に完全に埋もれる。**外部 TIPO soft-label KL に再現する recall 利得は無い**。
+- **再現する D6 効果は過学習抑制のみ (recall 非寄与)**: final train-val gap を全 4 seed で
+  #1 ≈ 1.06–1.09 → D6 ≈ 0.18–0.20 (~5.5x 縮小) と一貫して潰す。これは D5 と同じ正則化機構で、
+  one-hot val recall には転化しない (soft 追従 vs val recall のトレードオフ・§11.4 と整合)。
+- **α を上げると D5 同様 over-soft で劣化** (§12.2): gap は α とともに単調に負へ・recall は
+  単調低下 (α=0.5 で 0.735)。
+- **方針**: **#1 (6ep synthetic hard CE) を本線維持**・**D6 (案c) は採用しない**。D2/D4 (負) と
+  違い D6/D5 は過学習を確実に潰す**正則化ノブ**として、データを増やせず汎化を底上げしたい
+  局面 (小規模 split・early-stopping 前提) で再利用価値がある。本番 `bitnet_dense{,_fp32}`・
+  golden は無改変 (sweep は scratch `_seedsweep/` で実行・本番非破壊)。
+
+### 12.4 非回帰・検証 (ルール#4・Python のため C++ meson test 対象外)
+
+- `--distill-ext --kl-alpha 0` は plain hardCE と数値一致 (§11.1 と同じ KL plumbing・α=0 で KL 項消失)。
+- smoke (`--distill-ext --smoke`): 疎通・本番非破壊 (別名 `bitnet_dense_d6_smoke*`)。
+- `test_dollma_d6_teacher_cache.py`: 案b-tagset 写像 (normalize → vocab 完全一致 → OOV drop +
+  再正規化) と `ExternalTagTeacher` の順送り (`bind` の呼数カウント = `compute_sample_soft` の
+  反復・soft 位置 0 sample のスキップ) を検証。
+
+### 12.5 seed 頑健性 sweep (実施済・判定の根拠)
+
+§12.2 の「α=0.05–0.1 で #1 を +0.005 上回る」が seed 横断で再現するかを検証。データ
+(`pairs.*.jsonl`) を固定し**訓練 seed のみ**振り (`--seed`)、#1 (plain) と D6 (α=0.1 T=2.0 =
+両立 sweet spot) を同一 seed 集合で対比。scratch data-dir `data/bitnet/_seedsweep/` (本番
+pairs/vocab と同一・本番重み/golden 非破壊・teacher npz は seed 非依存で再利用)。epoch 最大
+recall を両 config 統一で測定 (どちらも ep4 が最良)。
+
+| seed | #1 best recall | D6 best recall | delta = D6 − #1 |
+|---|---|---|---|
+| 20260620 (原値) | 0.7787 | 0.7800 | +0.0013 |
+| 1 | 0.7797 | 0.7771 | −0.0027 |
+| 42 | 0.7764 | 0.7778 | +0.0015 |
+| 7 | 0.7819 | 0.7788 | −0.0031 |
+
+delta 平均 **−0.0008**・符号 2 正 2 負・最大 |delta| 0.0031。#1 単独の seed 分散 (sd 0.0020・
+range 0.0055) が delta を完全に覆う → **recall 改善は seed ノイズ** (§12.3 判定)。一方 gap は
+全 seed で #1 ≈ 1.06–1.09 → D6 ≈ 0.18–0.20 と一貫縮小 (過学習抑制は再現する正則化効果)。原値
+seed は既存記録 (#1 ep4 0.7787 / D6 best 0.7800) を再現 = 再現性破れ無し。コード変更無し。
+
+### 12.6 再現手順
+
+```sh
+# 1) 教師 soft npz 生成 (TIPO 本体を 1 度だけロード・overnight ~1.6h)
+py -3.12 scripts/dollma_d6_teacher_cache.py            # train/val 両 npz + stats
+py -3.12 scripts/dollma_d6_teacher_cache.py --probe-only  # teacher-alone recall A/B (訓練しない)
+# 2) D6 訓練 (両立 sweet spot・本番別名へ出力)
+py -3.12 scripts/train_bitnet.py --distill-ext --kl-alpha 0.1 --kl-temp 2.0 \
+    --epochs 6 --batch-size 32 --lr 3e-4
+# smoke (疎通・本番を上書きしない)
+py -3.12 scripts/train_bitnet.py --distill-ext --smoke
+```
+
