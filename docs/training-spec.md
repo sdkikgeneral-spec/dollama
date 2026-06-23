@@ -637,3 +637,117 @@ py -3.12 scripts/train_bitnet.py --distill-ext --kl-alpha 0.1 --kl-temp 2.0 \
 py -3.12 scripts/train_bitnet.py --distill-ext --smoke
 ```
 
+## 13. 施策 C — 評価作り直し (diverse-val + 生成 set-metrics)
+
+蒸留 4 路線 (D2/D4/D5/D6) は **いずれも従来 proxy = 固定 val 500・テンプレ 3 種・
+teacher-forcing top10 recall** で #1 (0.777) を超えられず不採用とした (§10–12)。だが
+この proxy は「3 テンプレに合うか」を測るだけで、実ユーザーの自由文への汎化を測っていない
+(roadmap「見落としやすい罠」)。施策 C は **物差しそのものを実運用寄りに作り直し**、その新指標で
+4 路線を採点し直す。`scripts/train_bitnet.py --eval-only` + `scripts/dollma_make_eval_diverse.py`
++ `scripts/dollma_c_seedsweep{,_analyze}.py`。**本番重み/golden/既存 val は無改変・加算のみ**。
+
+### 13.1 構成 (C-1〜C-4)
+
+- **C-1 diverse-val 構築** (`dollma_make_eval_diverse.py`, dataset-spec §14): テンプレ 3 種の
+  偏りを排した多様な自然文 val。**tags-stay-real** (gold = 実 danbooru タグ固定・生成文から
+  タグを推測させない不変方針) を厳守し、散文のみを多様化する 3 段 (段a gold→プロンプト出力 /
+  段b main Claude が散文著述 / 段c 取り込み・検証・凍結)。Pool A = `pairs.val.jsonl` 由来
+  (in-distribution の gold)・Pool B = train∪val 非交差の未使用 post (リーク 0)。各 post×3
+  variant で `pairs.eval_diverse_a.jsonl` / `_b.jsonl` 各 **1,500 行**に凍結 (再現性アンカー)。
+- **C-2 生成ベース set-metrics** (`eval_generation_setmetrics`): teacher-forcing recall を
+  **greedy 自己回帰生成タグ集合 vs gold タグ集合の set-overlap** へ置換 (= 実運用 = 自由文→タグ集合
+  に近い)。macro/micro の precision / recall / **F1** / Jaccard / recall@k。#1/diversity/retention
+  と greedy・encode・Tokenizer を完全共有 (別スクリプト化せず単一ソース維持)。従来
+  `eval_loss_and_recall` は**非回帰アンカーとして残す** (#1 既知値 0.777 再現経路)。
+- **C-3 eval-only ハーネス** (`--eval-only --weights <export.safetensors>`): 訓練せず採点のみ。
+  legacy TF recall + 生成 set-metrics (pairs.val / diverse_a / _b・**存在ガード付き**) +
+  diversity + identity retention を provenance (重み/val sha256・seed・git rev) 付きで
+  `eval_report_<name>.json` に書く。schema `dollama/eval_report/C-1`。`--dump-persample` で
+  paired bootstrap/t 用の per-sample F1/Jaccard/precision/recall を `eval_persample_<name>.npz`
+  (rows と同順・NaN=skip/未定義) に出力。
+- **C-4 seed 頑健性 sweep** (`dollma_c_seedsweep.py` → `_analyze.py`): D6 の recall 上振れが
+  seed ノイズだった (§12.5) のと同じ手続きで、新指標上の **D5 vs #1** が seed 頑健かを検定。
+  4 seed (20260620/20260621/42/7) で各 arm 6ep FP32 訓練 → diverse で per-sample 採点 →
+  **同 seed paired delta (D5−#1)・paired bootstrap 95%CI・paired t**。scratch
+  `data/bitnet/_seedsweep/`・本番非破壊。判定軸 (a) 全 seed 符号一貫 (b) |delta 平均| が #1 自身の
+  seed 分散帯を超える (c) 各 seed CI が 0 を除外。
+
+### 13.2 本番重み採点 (eval-only・seed 20260620・CPU)
+
+`bitnet_dense_fp32` (#1 6ep) / `bitnet_dense_kl_fp32` (D5 10ep) / `bitnet_dense_d6_fp32`
+(D6 6ep) を同一ハーネスで採点。**legacy 列が旧 proxy・diverse 列が新 proxy**。
+
+| 指標 | #1 (本線) | D5 (KL 10ep) | D6 (TIPO 6ep) |
+|---|---|---|---|
+| legacy TF recall@10 (テンプレ val 500) | **0.7767** | 0.6673 | 0.7790 |
+| pairs.val 生成 macro F1 (in-dist) | 0.4715 | 0.4683 | 0.4703 |
+| diverse_a 生成 macro F1 | 0.1800 | **0.2024** | 0.1842 |
+| diverse_a 生成 macro precision | 0.2515 | **0.3762** | 0.3024 |
+| diverse_b 生成 macro F1 | 0.1921 | **0.2192** | 0.1976 |
+| diverse_b 生成 macro precision | 0.2644 | **0.4092** | 0.3249 |
+
+**proxy が逆順に並ぶ**: 旧 recall では D5 が**最下位** (0.667) だが、新 diverse F1 では D5 が
+**最上位**。in-distribution (pairs.val) では 3 者ほぼ同点 (~0.47) で、差は**テンプレ外の自由文**
+でのみ開く。D5 は precision が突出 (0.38–0.41 vs #1 0.25–0.26) — soft-label KL で**短く確信の高い
+タグ集合**を出すようになり、これがテンプレ外入力で効く。
+
+### 13.3 C-4 seed sweep (4 seed・6ep paired・diverse)
+
+per-sample paired delta = D5 − #1 (同 seed・両 arm 非 NaN 位置・n_pair≈1500/seed):
+
+| set / metric | per-seed delta | across-seed 平均±sd | 全 seed 符号 | 各 seed CI が 0 を除外 |
+|---|---|---|---|---|
+| diverse_a / F1 | +0.0117 / +0.0091 / +0.0085 / +0.0050 | **+0.0086 ± 0.0028** | **+ 一貫** | **4/4 除外** |
+| diverse_a / Jaccard | +0.0078 / +0.0054 / +0.0059 / +0.0034 | **+0.0057 ± 0.0018** | **+ 一貫** | **4/4 除外** |
+| diverse_b / F1 | +0.0136 / +0.0135 / +0.0108 / +0.0097 | **+0.0119 ± 0.0019** | **+ 一貫** | **4/4 除外** |
+| diverse_b / Jaccard | +0.0084 / +0.0087 / +0.0077 / +0.0065 | **+0.0078 ± 0.0010** | **+ 一貫** | **4/4 除外** |
+
+paired t は全 set/metric/seed で p < 8e-3 (大半 p < 1e-6)。
+
+### 13.4 判定 — 物差しを変えると D5 の符号が反転する (= C の本質的成果)
+
+- **D6 (§12.5) との決定的対比**: D6 の recall delta は seed 間で符号反転 (2 正 2 負・平均 −0.0008)
+  = **seed ノイズ**だった。D5 の diverse F1/Jaccard delta は **全 4 seed で正・各 seed の paired CI が
+  0 を除外** = **再現する実効果** (seed ノイズではない)。判定 (a)+(c) は満たす。
+- **strict 判定 (a∧b∧c) は "弱い"**: 判定 (b) のみ不成立 — |delta 平均| (~0.009–0.012 F1) が #1 自身の
+  diverse seed 分散帯 (sd 0.022–0.022, range ~0.048) 以下。ただしこの band は **seed 42 の外れ値**
+  (#1 diverse_a F1 が 0.139 へ低下) で膨張しており、paired 比較 (seed 効果を相殺済み) が有意な以上、
+  (b) は過度に保守的な尺度。**結論: D5 の diverse 優位は「小幅だが統計的に頑健」**。
+- **C の payoff**: **旧 proxy (template TF recall) は D5 を最下位に置き、新 proxy (diverse 生成 F1) は
+  最上位に置く — 物差しの変更が D5 判定の符号を反転させた。** これは施策 C が掲げた仮説
+  「テンプレ recall proxy が D5 の実力を隠していた可能性が高い」(roadmap) を実データで裏付ける。
+  D2 の「過学習悪化に見えた」件も同根 (proxy 由来の見かけ) の可能性が高い。
+- **採用判断は別件・本線は据え置き**: 本番重みは **#1 (6ep) を維持** (重み無改変)。C の成果物は
+  「**より良い凍結オフライン物差し**」(diverse-val + 生成 set-metrics + eval-only + seed sweep
+  方法論) であり、今後の施策 B/A/D/F はこの新指標で測る。**recall@10 (テンプレ val) を主要数値から
+  退役させ、diverse 生成 set-F1 を新たな主要オフライン proxy に据える**ことが C の確定事項。
+  D5 を本線へ昇格させるかは、この新物差しの下で改めて判断する (絶対値はなお低く ~0.18–0.22・
+  edge は小さいため、A 実ペア増 / D 容量増と束ねて再評価するのが妥当)。
+
+### 13.5 検証・非回帰 (ルール#4・Python のため C++ meson test 対象外)
+
+- `scripts/test_dollma_eval_diverse.py` (C-1・torch 非依存部): EvalTokenizer の tb.Tokenizer
+  バイト等価・段a スキーマ/リーク0/gold⊆vocab/Pool A バイト一致・段c 取り込み/検証/post_id 漏出弾き。**緑**。
+- `scripts/test_dollma_eval_setmetrics.py` (C-2・**要 torch**・`py -3.12` で実走): 手置き gen/gold で
+  空集合 0 除算ガード・recall@k 先頭 k 順序・macro/micro 定義・per-sample 配列が rows と同順 (NaN=skip)
+  を検証。`train_bitnet` を import するため torch 必須 (torch 無しの素 python では import 段で停止
+  = §11.6/§12.4 と同じく C++ meson test 対象外・py -3.12 で担保)。
+- 本番重み/golden/既存 val・#1/D5/D6 の既存数値はすべて無改変 (eval-only は読むだけ・seed sweep は
+  scratch `_seedsweep/`)。`--dump-persample` 既定 off で `eval_generation_setmetrics` の返り値・挙動は従来一致。
+
+### 13.6 再現手順
+
+```sh
+# C-1: diverse-val 構築 (段a → main Claude が texts → 段c で凍結。詳細 dataset-spec §14)
+py -3.12 scripts/dollma_make_eval_diverse.py --emit-prompts --n-variants 3 --seed 20260620
+#   (段b: main Claude が data/bitnet/eval_diverse_texts.jsonl を著述)
+py -3.12 scripts/dollma_make_eval_diverse.py --ingest
+# C-2/C-3: 本番重みを新指標で採点 (provenance 付き eval_report_<name>.json)
+py -3.12 scripts/train_bitnet.py --eval-only --weights data/bitnet/bitnet_dense_fp32.safetensors
+py -3.12 scripts/train_bitnet.py --eval-only --weights data/bitnet/bitnet_dense_kl_fp32.safetensors
+py -3.12 scripts/train_bitnet.py --eval-only --weights data/bitnet/bitnet_dense_d6_fp32.safetensors
+# C-4: seed 頑健性 sweep (4 seed・本番非破壊) → 集計・判定
+py -3.12 scripts/dollma_c_seedsweep.py
+py -3.12 scripts/dollma_c_seedsweep_analyze.py
+```
+

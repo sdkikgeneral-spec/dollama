@@ -226,7 +226,7 @@ proxy 数値でなく**実用品質**。
 
 | 施策 | 機構 | 依存 / ゲート |
 |---|---|---|
-| **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | なし — **起点** |
+| **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
 | **B** 入力多様化 | タグ集合固定で自然文を LLM/豊富な文法で多様生成。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12) 流用 | C (新 val で評価) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
@@ -237,6 +237,18 @@ proxy 数値でなく**実用品質**。
 卒業する話。**推奨着手順**: ① C 着手 + A の法務ゲートを PL に並行起票 (互いに待たない) →
 ② C 完了後 B を新 val で評価 (D2「悪化」の決着) → ③ 法務 GO 後 A+D 一括 → ④ F。
 **評価**: ◎ 本命だが、実装は CLAUDE.md ルール (プランモード設計→承認→PL 振り分け) に従う。
+
+> **C 完了 (2026-06-23) — 物差し変更が D5 判定の符号を反転させた**: diverse-val (テンプレ外
+> 自然文・tags-stay-real) + 生成 set-metrics + eval-only ハーネス + seed sweep を実装 (C-1〜C-4)。
+> **旧 proxy (テンプレ teacher-forcing recall@10) では D5 (soft-label KL) が最下位 (0.667)
+> だったのが、新 proxy (diverse 生成 F1) では最上位に反転** — C の仮説「テンプレ recall が D5 の
+> 実力を隠していた」を実データで裏付け。seed sweep で D5−#1 の diverse F1/Jaccard delta は
+> **全 4 seed で正・各 seed の paired CI が 0 を除外** (D6 の recall 上振れが符号反転した seed
+> ノイズだったのと対照的) = **小幅だが統計的に頑健**な実効果 (delta +0.009〜+0.012 F1・絶対値は
+> #1 の seed 分散帯以下)。**確定事項**: recall@10 (テンプレ) を主要数値から退役させ、**diverse 生成
+> set-F1 を新オフライン主指標**に据える。**未決**: D5 を本線昇格させるかは新物差しの下で別途判断
+> (絶対値はなお ~0.18–0.22 と低く edge は小さい → A 実ペア増 / D 容量増と束ねて再評価が妥当)。
+> 本番重みは #1 据え置き・無改変。詳細 training-spec §13。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 

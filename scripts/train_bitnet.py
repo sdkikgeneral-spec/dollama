@@ -1017,6 +1017,391 @@ def eval_generation_diversity(model, tok, val_rows, device, max_len=MAX_SEQ_LEN,
 
 
 # ==============================================================
+# C-2: 生成ベース set-metrics (実運用に近い物差し・training-spec C)
+# ==============================================================
+#
+# 動機 (C 設計):
+#   従来の eval_loss_and_recall は gold 接頭辞を毎位置で食わせる teacher-forcing
+#   top-k recall = 「3 テンプレに合うか」を測る proxy。本関数は **greedy 自己回帰生成**
+#   したタグ集合と gold タグ集合の set-overlap (実運用 = 自由文->タグ集合 に近い) を測る。
+#   従来 recall は eval_loss_and_recall として**残す** (継続比較・非回帰アンカー)。
+#
+# 規約 (#1 / diversity / retention と厳密に揃える):
+#   - prompt = [TOK_BOS] + encode_text_greedy(tok, row["text"]) + [TOK_SEP]  (:988-989)
+#   - gen    = _greedy_generate(model, prompt, device, max_len)              (:992)
+#   - gen_set = {g for g in gen if g >= 5}  specials 除外                     (:993)
+#   - gold_set = {tag_to_id_lookup(t)} - {UNK}  (retention :943-944 と同規約)
+#   集合指標なので順序は無視。recall@k のみ生成順の先頭 k タグを使う (順序情報を残す)。
+@torch.no_grad()
+def eval_generation_setmetrics(model, tok, rows, device, ks=(5, 10, 20),
+                               max_len=MAX_SEQ_LEN, collect_per_sample=False):
+    """greedy 生成タグ集合 vs gold タグ集合の set-metrics を計算する。
+
+    per-sample (集合ベース・0 除算ガード付き):
+      precision = |gen_set 交 gold_set| / |gen_set|
+      recall    = |gen_set 交 gold_set| / |gold_set|
+      f1        = 2PR / (P+R)
+      jaccard   = |交| / |gen_set 和 gold_set|
+      recall@k  = |{gen 先頭 k タグ (本体・順序維持・重複除去)} 交 gold_set| / |gold_set|
+
+    集計:
+      macro : 上記 per-sample 値のサンプル平均 (空集合等で値が定義できないサンプルは
+              当該指標の平均母数から除外する)。
+      micro : sum|交| / sum|gen| (precision)・sum|交| / sum|gold| (recall)・
+              sum|交| / sum|和| (jaccard)・recall@k は sum hit@k / sum|gold|。
+              micro_f1 は micro_precision / micro_recall の調和平均。
+
+    返り値: dict (macro / micro / メタ情報)。prompt が max_len を超える行はスキップ。
+    collect_per_sample=True のとき、入力 rows と同順 (1 行 1 要素・skip/未定義は NaN) の
+    per-sample F1 / Jaccard / precision / recall 配列を "per_sample" キーで追加返却する
+    (#1 と D5 で同じ rows・同じ skip 判定 = prompt 長のみ依存 → 行 index で paired 整合)。
+    既定 False では返り値・挙動とも従来一致 (golden/既存テスト非回帰)。
+    """
+    model.eval()
+    ks = tuple(sorted(set(int(k) for k in ks)))
+
+    # macro 用アキュムレータ (指標ごとに有効サンプル数を別管理)。
+    macro_sum = {"precision": 0.0, "recall": 0.0, "f1": 0.0, "jaccard": 0.0}
+    macro_cnt = {"precision": 0, "recall": 0, "f1": 0, "jaccard": 0}
+    macro_rk_sum = {k: 0.0 for k in ks}
+    macro_rk_cnt = {k: 0 for k in ks}
+
+    # micro 用アキュムレータ。
+    sum_inter = 0
+    sum_gen = 0
+    sum_gold = 0
+    sum_union = 0
+    sum_hit_at_k = {k: 0 for k in ks}
+
+    n_cases = 0
+    n_skipped = 0
+    n_empty_gold = 0
+    # per-sample 配列 (collect_per_sample 時のみ。rows と同順・1 行 1 要素・NaN=未定義/skip)。
+    import math as _math
+    ps_f1 = [] if collect_per_sample else None
+    ps_jac = [] if collect_per_sample else None
+    ps_prec = [] if collect_per_sample else None
+    ps_rec = [] if collect_per_sample else None
+    for row in rows:
+        text_ids = encode_text_greedy(tok, row["text"])
+        prompt = [TOK_BOS] + text_ids + [TOK_SEP]
+        if len(prompt) >= max_len:
+            n_skipped += 1
+            if collect_per_sample:
+                # skip 行も rows と同順を保つため NaN を 1 件積む (#1/D5 で skip 集合は同一)。
+                ps_f1.append(float("nan")); ps_jac.append(float("nan"))
+                ps_prec.append(float("nan")); ps_rec.append(float("nan"))
+            continue
+        gen = _greedy_generate(model, prompt, device, max_len)
+        # 本体タグのみ・順序維持で重複除去 (recall@k の「先頭 k」を順序通り取るため)。
+        gen_seq = []
+        seen = set()
+        for g in gen:
+            if g >= 5 and g not in seen:
+                seen.add(g)
+                gen_seq.append(g)
+        gen_set = set(gen_seq)
+        gold_set = {tok.tag_to_id_lookup(t) for t in row["tags"]}
+        gold_set.discard(TOK_UNK)
+        n_cases += 1
+        if not gold_set:
+            # gold が空 (全タグ語彙外) のサンプルは recall/F1/Jaccard の母数から除外。
+            n_empty_gold += 1
+        inter = gen_set & gold_set
+        ninter = len(inter)
+
+        # micro 集計。
+        sum_inter += ninter
+        sum_gen += len(gen_set)
+        sum_gold += len(gold_set)
+        sum_union += len(gen_set | gold_set)
+
+        # macro per-sample (0 除算ガード)。
+        if len(gen_set) > 0:
+            prec_i = ninter / len(gen_set)
+            macro_sum["precision"] += prec_i
+            macro_cnt["precision"] += 1
+        else:
+            prec_i = None
+        if len(gold_set) > 0:
+            rec_i = ninter / len(gold_set)
+            macro_sum["recall"] += rec_i
+            macro_cnt["recall"] += 1
+        else:
+            rec_i = None
+        if prec_i is not None and rec_i is not None:
+            denom = prec_i + rec_i
+            f1_i = (2.0 * prec_i * rec_i / denom) if denom > 0 else 0.0
+            macro_sum["f1"] += f1_i
+            macro_cnt["f1"] += 1
+        union_n = len(gen_set | gold_set)
+        if union_n > 0:
+            macro_sum["jaccard"] += ninter / union_n
+            macro_cnt["jaccard"] += 1
+
+        # recall@k (gen 先頭 k タグ)。
+        for k in ks:
+            topk_set = set(gen_seq[:k])
+            hit_k = len(topk_set & gold_set)
+            sum_hit_at_k[k] += hit_k
+            if len(gold_set) > 0:
+                macro_rk_sum[k] += hit_k / len(gold_set)
+                macro_rk_cnt[k] += 1
+
+        # per-sample 配列 (paired bootstrap/t 用)。macro と同じ定義域:
+        #   F1 は prec_i/rec_i 双方定義時のみ実値・他は NaN。Jaccard は union>0 で実値。
+        if collect_per_sample:
+            f1_val = (f1_i if (prec_i is not None and rec_i is not None)
+                      else float("nan"))
+            jac_val = (ninter / union_n) if union_n > 0 else float("nan")
+            ps_f1.append(float(f1_val)); ps_jac.append(float(jac_val))
+            ps_prec.append(float(prec_i) if prec_i is not None else float("nan"))
+            ps_rec.append(float(rec_i) if rec_i is not None else float("nan"))
+
+    macro = {
+        "precision": macro_sum["precision"] / max(macro_cnt["precision"], 1),
+        "recall": macro_sum["recall"] / max(macro_cnt["recall"], 1),
+        "f1": macro_sum["f1"] / max(macro_cnt["f1"], 1),
+        "jaccard": macro_sum["jaccard"] / max(macro_cnt["jaccard"], 1),
+    }
+    for k in ks:
+        macro[f"recall@{k}"] = macro_rk_sum[k] / max(macro_rk_cnt[k], 1)
+
+    micro_p = sum_inter / max(sum_gen, 1)
+    micro_r = sum_inter / max(sum_gold, 1)
+    micro_f1 = (2.0 * micro_p * micro_r / (micro_p + micro_r)
+                if (micro_p + micro_r) > 0 else 0.0)
+    micro = {
+        "precision": micro_p,
+        "recall": micro_r,
+        "f1": micro_f1,
+        "jaccard": sum_inter / max(sum_union, 1),
+    }
+    for k in ks:
+        micro[f"recall@{k}"] = sum_hit_at_k[k] / max(sum_gold, 1)
+
+    out = {
+        "macro": macro,
+        "micro": micro,
+        "ks": list(ks),
+        "n_cases": n_cases,
+        "n_skipped_prompt_overflow": n_skipped,
+        "n_empty_gold": n_empty_gold,
+        "sum_inter": sum_inter,
+        "sum_gen": sum_gen,
+        "sum_gold": sum_gold,
+        "sum_union": sum_union,
+    }
+    if collect_per_sample:
+        # rows と同順・1 行 1 要素 (len == len(rows))。NaN = skip/未定義。
+        out["per_sample"] = {
+            "n_rows": len(rows),
+            "f1": ps_f1,
+            "jaccard": ps_jac,
+            "precision": ps_prec,
+            "recall": ps_rec,
+        }
+    return out
+
+
+# ==============================================================
+# C-3: eval-only ハーネス (訓練せず採点のみ・training-spec C)
+# ==============================================================
+#
+# 設計判断 (単一ソース維持):
+#   greedy/encode を重複実装しないため別スクリプトを作らず train_bitnet.py に内包する
+#   (#1 と完全に同じ _greedy_generate / encode_text_greedy / Tokenizer を使う)。
+#   レポートは data/bitnet/eval_report_<name>.json に provenance 付きで書く。
+def _file_sha256(path):
+    """ファイルの sha256 (provenance 用)。存在しなければ None。"""
+    import hashlib
+    if not os.path.exists(path):
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _git_rev():
+    """現在の git rev (取得不能なら None)。"""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL)
+        return out.decode().strip()
+    except Exception:
+        return None
+
+
+def eval_only(args):
+    """--eval-only: 与えた重みで legacy teacher-forcing recall + 生成 set-metrics を採点。
+
+    - Legacy (非回帰アンカー): eval_loss_and_recall を pairs.val.jsonl で。
+      = #1 既知値 ~0.777 を再現できることを確認する経路。
+    - 新指標: eval_generation_setmetrics を ① pairs.val.jsonl ② eval_diverse_a ③ _b で。
+      diverse jsonl は **ファイル存在ガード付き** (無ければスキップ・C-1 未着手でも動く)。
+    - eval_generation_diversity も併記 (無料・情報量)。
+    出力 = data/bitnet/eval_report_<name>.json (全数値 + provenance)。
+    """
+    from safetensors.torch import load_file  # noqa: F401 (存在確認用)
+    import random
+
+    seed = args.seed
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+    data_dir = args.data_dir
+    vocab_path = args.vocab or os.path.join(data_dir, "vocab.json")
+    device = args.device or "cpu"  # eval は決定性重視で CPU 既定 (golden 経路に倣う)
+    weights = args.weights
+    if not weights:
+        raise SystemExit("--eval-only には --weights <export_safetensors path> が必須")
+    if not os.path.exists(weights):
+        raise FileNotFoundError(f"{weights} が無い (--weights)")
+
+    print(f"[eval-only] device={device} torch={torch.__version__} weights={weights}")
+    tok = Tokenizer(vocab_path)
+    print(f"[eval-only] vocab_size={tok.vocab_size()} tags={len(tok.tags)}")
+
+    # dump_golden と同じ経路で export_safetensors 命名重みをロードする。
+    model = _load_dense_from_export(weights, device)
+    print(f"[eval-only] loaded {weights} (strict state_dict 一致)")
+
+    val_path = os.path.join(data_dir, "pairs.val.jsonl")
+    val_rows = load_pairs(val_path)
+    val_ds = PairDataset(tok, val_rows, args.max_len)
+
+    # ---- Legacy teacher-forcing top-k recall (#1 既知値 ~0.777 再現アンカー) ----
+    tf_loss, tf_recall, tf_rand, tf_ntgt = eval_loss_and_recall(
+        model, val_ds, args.batch_size, args.max_len, args.loss_mode,
+        device, args.topk)
+    print(f"[eval-only] LEGACY teacher-forcing: val_loss={tf_loss:.4f} "
+          f"top{args.topk}_recall={tf_recall:.4f} "
+          f"(rand={tf_rand:.4f}, {tf_recall/tf_rand:.1f}x, n_tgt={tf_ntgt})")
+
+    # ---- 新: 生成ベース set-metrics on pairs.val.jsonl ----
+    ks = tuple(int(k) for k in args.set_ks.split(","))
+    set_val = eval_generation_setmetrics(model, tok, val_rows, device, ks, args.max_len)
+    print(f"[eval-only] GEN set-metrics (pairs.val): "
+          f"macro P={set_val['macro']['precision']:.4f} "
+          f"R={set_val['macro']['recall']:.4f} "
+          f"F1={set_val['macro']['f1']:.4f} "
+          f"J={set_val['macro']['jaccard']:.4f} | "
+          f"micro R={set_val['micro']['recall']:.4f} "
+          f"(n_cases={set_val['n_cases']} skip={set_val['n_skipped_prompt_overflow']})")
+
+    # ---- 新: diverse val (存在ガード付き) ----
+    diverse_reports = {}
+    persample_dump = {}  # tag -> per_sample dict (--dump-persample 時のみ)
+    for tag, fname in (("eval_diverse_a", "pairs.eval_diverse_a.jsonl"),
+                       ("eval_diverse_b", "pairs.eval_diverse_b.jsonl")):
+        fpath = os.path.join(data_dir, fname)
+        if not os.path.exists(fpath):
+            print(f"[eval-only] {fname} 無し -> スキップ (C-1 未着手・存在ガード)")
+            diverse_reports[tag] = {"skipped": True, "reason": "file not found",
+                                    "path": fpath}
+            continue
+        rows = load_pairs(fpath)
+        rep = eval_generation_setmetrics(
+            model, tok, rows, device, ks, args.max_len,
+            collect_per_sample=args.dump_persample)
+        rep["skipped"] = False
+        rep["file"] = fname
+        rep["sha256"] = _file_sha256(fpath)
+        if args.dump_persample and "per_sample" in rep:
+            # npz には別保存し、JSON レポートからは配列を外す (JSON 肥大回避)。
+            persample_dump[tag] = rep.pop("per_sample")
+        diverse_reports[tag] = rep
+        print(f"[eval-only] GEN set-metrics ({fname}): "
+              f"macro R={rep['macro']['recall']:.4f} F1={rep['macro']['f1']:.4f} "
+              f"(n_cases={rep['n_cases']})")
+
+    # ---- 生成多様性 (併記) ----
+    diversity = eval_generation_diversity(model, tok, val_rows, device, args.max_len)
+    print(f"[eval-only] diversity: unique_tags={diversity['corpus_unique_tags']} "
+          f"per_seq_unique={diversity['mean_per_seq_unique']:.3f} "
+          f"norm_entropy={diversity['norm_entropy']:.3f}")
+
+    # ---- identity retention (重みが identity_cond 評価対象なら・任意) ----
+    # pairs.val.jsonl は synthetic のみなので retention は 0 件になり得る。
+    # identity 重みの再採点用に pairs.identity.val.jsonl があれば併記する。
+    id_val_path = os.path.join(data_dir, "pairs.identity.val.jsonl")
+    retention_report = None
+    if os.path.exists(id_val_path):
+        id_rows = load_pairs(id_val_path)
+        mean_ret, n_ret, _ = eval_identity_retention(
+            model, tok, id_rows, device, args.max_len)
+        retention_report = {"mean_retention": mean_ret, "n_cases": n_ret,
+                            "file": "pairs.identity.val.jsonl"}
+        if n_ret > 0:
+            print(f"[eval-only] identity retention (pairs.identity.val)= "
+                  f"{mean_ret:.4f} (n={n_ret})")
+
+    # ---- レポート出力 ----
+    name = args.eval_name or os.path.splitext(os.path.basename(weights))[0]
+    report = {
+        "schema": "dollama/eval_report/C-1",
+        "provenance": {
+            "weights": os.path.abspath(weights),
+            "weights_sha256": _file_sha256(weights),
+            "val_file": "pairs.val.jsonl",
+            "val_sha256": _file_sha256(val_path),
+            "vocab": os.path.abspath(vocab_path),
+            "seed": seed,
+            "device": device,
+            "torch": torch.__version__,
+            "git_rev": _git_rev(),
+            "max_len": args.max_len,
+            "topk": args.topk,
+            "set_ks": list(ks),
+        },
+        "legacy_teacher_forcing": {
+            "val_loss": tf_loss,
+            f"top{args.topk}_recall": tf_recall,
+            "random_baseline": tf_rand,
+            "recall_vs_random_x": (tf_recall / tf_rand) if tf_rand else None,
+            "n_target_tags": tf_ntgt,
+            "note": "eval_loss_and_recall (gold prefix teacher forcing)・#1 継続比較アンカー",
+        },
+        "generation_setmetrics": {
+            "pairs_val": set_val,
+            "eval_diverse_a": diverse_reports.get("eval_diverse_a"),
+            "eval_diverse_b": diverse_reports.get("eval_diverse_b"),
+            "note": "greedy 自己回帰生成タグ集合 vs gold タグ集合の set-overlap (実運用寄り)",
+        },
+        "generation_diversity": diversity,
+        "identity_retention": retention_report,
+    }
+    out_path = os.path.join(data_dir, f"eval_report_{name}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=1)
+    print(f"[eval-only] saved {out_path}")
+
+    # --- per-sample 配列 npz (paired bootstrap/t 用・--dump-persample 時のみ) ---
+    if args.dump_persample and persample_dump:
+        import numpy as _np
+        npz_path = os.path.join(data_dir, f"eval_persample_{name}.npz")
+        save_kw = {}
+        for tag, ps in persample_dump.items():
+            save_kw[f"{tag}__f1"] = _np.asarray(ps["f1"], dtype=_np.float64)
+            save_kw[f"{tag}__jaccard"] = _np.asarray(ps["jaccard"], dtype=_np.float64)
+            save_kw[f"{tag}__precision"] = _np.asarray(ps["precision"], dtype=_np.float64)
+            save_kw[f"{tag}__recall"] = _np.asarray(ps["recall"], dtype=_np.float64)
+        # provenance を npz にも埋める (どの重み・seed の per-sample か追跡可能に)。
+        save_kw["_weights"] = _np.asarray(os.path.abspath(weights))
+        save_kw["_weights_sha256"] = _np.asarray(_file_sha256(weights) or "")
+        save_kw["_seed"] = _np.asarray(seed)
+        _np.savez_compressed(npz_path, **save_kw)
+        print(f"[eval-only] saved per-sample arrays -> {npz_path} "
+              f"(tags={list(persample_dump.keys())})")
+    return report
+
+
+# ==============================================================
 # safetensors 出力 (bitnet.hpp::Layer レイアウト 1:1)
 # ==============================================================
 def export_safetensors(model, path, dtype):
@@ -1664,6 +2049,23 @@ def main():
     ap.add_argument("--ext-soft-cache", default=None,
                     help="D6: 外部教師 soft npz パスの接頭辞 "
                          "(既定 data/bitnet/cache/d6_teacher_soft.{train,val}.npz)。")
+    # --- C: eval-only ハーネス (訓練せず採点のみ) ---
+    ap.add_argument("--eval-only", action="store_true",
+                    help="C: 訓練せず --weights の重みで legacy teacher-forcing recall + "
+                         "生成 set-metrics を採点し eval_report_<name>.json を出力 "
+                         "(独立サブモード・本番重み/golden は無改変)。")
+    ap.add_argument("--weights", default=None,
+                    help="C: --eval-only で採点する export_safetensors 命名重み "
+                         "(例 data/bitnet/bitnet_dense_fp32.safetensors)。")
+    ap.add_argument("--eval-name", default=None,
+                    help="C: eval_report_<name>.json の name (既定 = 重みファイル basename)。")
+    ap.add_argument("--set-ks", default="5,10,20",
+                    help="C: set-metrics recall@k の k (カンマ区切り・既定 5,10,20)。")
+    ap.add_argument("--dump-persample", action="store_true",
+                    help="C (施策C seed sweep): --eval-only で diverse_a/b の per-sample "
+                         "F1/Jaccard/precision/recall 配列を eval_persample_<name>.npz に保存 "
+                         "(rows と同順・NaN=skip/未定義)。paired bootstrap/t 用。"
+                         "既定 off で従来挙動 (golden/既存テスト非回帰)。")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
@@ -1672,6 +2074,9 @@ def main():
         return
     if args.dump_golden_identity:
         dump_golden_identity(args)
+        return
+    if args.eval_only:
+        eval_only(args)
         return
 
     import random

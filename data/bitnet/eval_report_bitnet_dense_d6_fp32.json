@@ -1,0 +1,146 @@
+{
+ "schema": "dollama/eval_report/C-1",
+ "provenance": {
+  "weights": "E:\\Projects\\dollama\\data\\bitnet\\bitnet_dense_d6_fp32.safetensors",
+  "weights_sha256": "b9140ec2583dd9f66ebfe4fd40d8b2486469f1e16fe99c85af77bf4484dc5a9a",
+  "val_file": "pairs.val.jsonl",
+  "val_sha256": "8548b250c6b65cf40cea45936a23705409cb939566395f46079d1fb1e7d2cb4c",
+  "vocab": "E:\\Projects\\dollama\\data\\bitnet\\vocab.json",
+  "seed": 20260620,
+  "device": "cpu",
+  "torch": "2.5.1+cu121",
+  "git_rev": "3625eb7",
+  "max_len": 64,
+  "topk": 10,
+  "set_ks": [
+   5,
+   10,
+   20
+  ]
+ },
+ "legacy_teacher_forcing": {
+  "val_loss": 2.421493437840744,
+  "top10_recall": 0.779016234552944,
+  "random_baseline": 0.002000400080016003,
+  "recall_vs_random_x": 389.4302156530167,
+  "n_target_tags": 8254,
+  "note": "eval_loss_and_recall (gold prefix teacher forcing)・#1 継続比較アンカー"
+ },
+ "generation_setmetrics": {
+  "pairs_val": {
+   "macro": {
+    "precision": 0.4859622655122657,
+    "recall": 0.46019890664890645,
+    "f1": 0.47032770310058536,
+    "jaccard": 0.3175453850164635,
+    "recall@5": 0.2762543484293484,
+    "recall@10": 0.3936889832389832,
+    "recall@20": 0.46019890664890645
+   },
+   "micro": {
+    "precision": 0.4827913279132791,
+    "recall": 0.45950477173071963,
+    "f1": 0.47086031452358923,
+    "jaccard": 0.3079249848759831,
+    "recall@5": 0.27443899922620585,
+    "recall@10": 0.3928295073510446,
+    "recall@20": 0.45950477173071963
+   },
+   "ks": [
+    5,
+    10,
+    20
+   ],
+   "n_cases": 500,
+   "n_skipped_prompt_overflow": 0,
+   "n_empty_gold": 0,
+   "sum_inter": 3563,
+   "sum_gen": 7380,
+   "sum_gold": 7754,
+   "sum_union": 11571
+  },
+  "eval_diverse_a": {
+   "macro": {
+    "precision": 0.3023897851689646,
+    "recall": 0.14296052281052282,
+    "f1": 0.18415046942181096,
+    "jaccard": 0.10700278688153048,
+    "recall@5": 0.12852157564657565,
+    "recall@10": 0.1412025252525253,
+    "recall@20": 0.14296052281052282
+   },
+   "micro": {
+    "precision": 0.3109801720912832,
+    "recall": 0.14293697876364886,
+    "f1": 0.1958532131707604,
+    "jaccard": 0.10855724966534983,
+    "recall@5": 0.12870776373484652,
+    "recall@10": 0.1412174361619809,
+    "recall@20": 0.14293697876364886
+   },
+   "ks": [
+    5,
+    10,
+    20
+   ],
+   "n_cases": 1500,
+   "n_skipped_prompt_overflow": 0,
+   "n_empty_gold": 0,
+   "sum_inter": 3325,
+   "sum_gen": 10692,
+   "sum_gold": 23262,
+   "sum_union": 30629,
+   "skipped": false,
+   "file": "pairs.eval_diverse_a.jsonl",
+   "sha256": "02c37d15fbe757d054d8d5e253ca2b5be52da66a381d4ca2ed199253d0bba828"
+  },
+  "eval_diverse_b": {
+   "macro": {
+    "precision": 0.3248749158249154,
+    "recall": 0.1540385364635365,
+    "f1": 0.197575139137646,
+    "jaccard": 0.11572588669324216,
+    "recall@5": 0.13713282365782367,
+    "recall@10": 0.15244165094165102,
+    "recall@20": 0.1540385364635365
+   },
+   "micro": {
+    "precision": 0.3316708229426434,
+    "recall": 0.15361909650924024,
+    "f1": 0.2099815805631085,
+    "jaccard": 0.11730693845550764,
+    "recall@5": 0.1374914442162902,
+    "recall@10": 0.15220739219712526,
+    "recall@20": 0.15361909650924024
+   },
+   "ks": [
+    5,
+    10,
+    20
+   ],
+   "n_cases": 1500,
+   "n_skipped_prompt_overflow": 0,
+   "n_empty_gold": 0,
+   "sum_inter": 3591,
+   "sum_gen": 10827,
+   "sum_gold": 23376,
+   "sum_union": 30612,
+   "skipped": false,
+   "file": "pairs.eval_diverse_b.jsonl",
+   "sha256": "f5514da802437545d9581f9402641a546b6cb30981d3393b37e4bbd9244927c8"
+  },
+  "note": "greedy 自己回帰生成タグ集合 vs gold タグ集合の set-overlap (実運用寄り)"
+ },
+ "generation_diversity": {
+  "corpus_unique_tags": 310,
+  "mean_per_seq_unique": 0.9466115897990898,
+  "norm_entropy": 0.8690259027806353,
+  "n_cases": 200,
+  "total_gen_tags": 3089
+ },
+ "identity_retention": {
+  "mean_retention": 0.6155886169386173,
+  "n_cases": 500,
+  "file": "pairs.identity.val.jsonl"
+ }
+}

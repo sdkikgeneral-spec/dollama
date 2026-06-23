@@ -505,3 +505,51 @@ py -3.12 scripts/dollma_make_identity_pairs.py --n 4500 --val 500 --seed 2026062
 
 B (アニメ品質スコアラ・§11 蒸留) の正解ラベルは **別仕様**とする (本 A1 では扱わない)。
 §11 の合格/不合格蓄積を teacher にする設計時に、本 §13 とは独立の dataset として起こす。
+
+## 14. diverse-val 評価データセット (施策 C・training-spec §13)
+
+施策 C (評価作り直し) 用の **評価専用**データセット。訓練には一切使わない。従来 val が
+テンプレ 3 種 (§3.3) に偏り「テンプレに合うか」しか測れなかったのを、**自然文側だけを多様化**
+した out-of-template の val で「実ユーザーの自由文への汎化」を測る。構築は
+`scripts/dollma_make_eval_diverse.py`。出力 `pairs.eval_diverse_a.jsonl` / `_b.jsonl` 各
+**1,500 行** (post×3 variant) は**凍結** = 再現性アンカー (既存は --force でのみ再生成)。
+
+### 14.1 不変条件 (厳守)
+
+- **tags-stay-real (絶対方針)**: gold タグ = post の**実 danbooru タグ**で固定。**生成散文から
+  タグを抽出/推測しない** (LLM にタグを作らせない — #1/D5/D6 と同じ「タグは実 danbooru」原則)。
+  多様化するのは**自然文 (入力) のみ**。
+- **既存 val バイト不変**: `pairs.val.jsonl` は読むだけ。新ファイルは**加算のみ**。
+- **gold⊆vocab**: 全 gold タグが vocab.json 内 (UNK 0)。Pool B は vocab 射影 + 正準順序
+  (§5) で整形 (`dollma_make_pairs` のタグ整形部のみ流用・二重実装禁止)。
+- **リーク 0**: Pool B の post_id は train (`pairs.train` ∪ `pairs.identity.train`) とも val とも
+  非交差 (段a/段c 双方で assert)。
+
+### 14.2 Pool 定義
+
+- **Pool A** = `pairs.val.jsonl` 由来 (in-distribution の gold)。gold タグはその val 行の `tags`
+  を**バイト一致コピー**。「既知 val と同じ gold・散文だけ多様化」した対照群。
+- **Pool B** = `cache/danbooru_posts.jsonl` から train∪val 非交差の未使用 post を抽出し正準順序
+  整形 (タグ 4 件未満は除外)。「val にすら無い新規 post」への汎化を測る本命群。
+
+### 14.3 構築 3 段 (人手散文を凍結に取り込む)
+
+散文は LLM/テンプレでなく **このセッションの main Claude が著述**する (多様で自然な日本語/英語)。
+
+1. **段a `--emit-prompts`**: gold タグ→「散文生成プロンプトのバッチ」(`eval_diverse_prompts.jsonl`)
+   を出力。**散文は一切生成せず** gold タグの列挙と lang_hint (post_id で決定的に ja/en) のみ。
+   ここでリーク検査・gold⊆vocab を assert。
+2. **段b (main Claude)**: 各 (post_id, subset, variant) に対し gold タグを表す自然文を著述し
+   `eval_diverse_texts.jsonl` へ。post_id を本文に漏らさない。
+3. **段c `--ingest`**: prompts (gold の唯一のソース) と texts を突合・検証 (text 非空 / post_id 非漏出
+   / lang∈{ja,en} / gold⊆vocab / リーク0) し `pairs.eval_diverse_{a,b}.jsonl` に**凍結**。
+   スキーマ `source:"eval_diverse"`・`meta.{post_id,subset,variant,gen:"claude",rating,n_tags}`。
+
+> 中間ファイル (`eval_diverse_prompts*.jsonl`・`eval_diverse_texts*.jsonl` / `_partNN`) は再生成可能。
+> 凍結アンカーは `pairs.eval_diverse_a.jsonl` / `_b.jsonl` の 2 本のみ。
+
+### 14.4 用途
+
+`train_bitnet.py --eval-only` が生成 set-metrics (training-spec §13.2) で採点する本命 val。
+施策 C 以降の B/A/D/F は**この diverse-val 上の生成 F1** を主要オフライン指標とする
+(テンプレ teacher-forcing recall は非回帰アンカーとして残すのみ)。

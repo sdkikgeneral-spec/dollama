@@ -49,6 +49,9 @@ data/bitnet/train_stats_identity_smoke.json
 data/bitnet/train_stats_d6_*.json
 # seed 頑健性 sweep の scratch dir (本番 pairs/vocab のコピー + 結果・再生成可)。
 data/bitnet/_seedsweep/
+# 施策 C (評価作り直し) の中間ファイル (再生成可・凍結アンカーは pairs.eval_diverse_a/b.jsonl のみ追跡)。
+data/bitnet/eval_diverse_prompts*.jsonl
+data/bitnet/eval_diverse_texts*.jsonl
 # 生成ログ (npz 生成等)。
 scripts/archives/*.log
 
