@@ -17,8 +17,12 @@
 // シンボルが解決できない。test_bitnet_gpu は infer/bitnet_gpu.cu を同時にリンクし、
 // cuda_dep (cudart/cublas) を依存に取る (meson.build 参照)。
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -271,6 +275,67 @@ static bool test_identity_match()
     return true;
 }
 
+// ── 速度計測 (env DOLLAMA_BENCH=1 のときのみ・pass/fail には影響しない) ──
+// CPU 版 BitNetDenseInfer と GPU 版 BitNetGpuInfer の forward レイテンシ中央値を
+// seq 8/32/63 で比較する。forward 内で cudaDeviceSynchronize 済みなので
+// wall-clock で GPU の実時間を計測できる。
+static double median_ms(std::vector<double>& v)
+{
+    std::sort(v.begin(), v.end());
+    const size_t n = v.size();
+    return n == 0 ? 0.0
+                  : (n % 2 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]));
+}
+
+static void run_bench()
+{
+    if (!file_exists(WEIGHTS_PATH))
+    {
+        std::cout << "[bench] SKIP (weights 不在)\n";
+        return;
+    }
+    using clk = std::chrono::steady_clock;
+
+    BitNetDenseInfer cpu(WEIGHTS_PATH);
+    BitNetGpuInfer   gpu(WEIGHTS_PATH);
+
+    const int seq_lens[3] = {8, 32, 63};
+    const int warmup = 3;
+    const int iters  = 30;
+
+    std::cout << "[bench] forward latency median (warmup=" << warmup
+              << " iters=" << iters << ")\n";
+    std::cout << "[bench]   seq |   CPU ms |   GPU ms | speedup\n";
+    for (int sl : seq_lens)
+    {
+        const std::vector<int> ids = make_tokens(sl);
+
+        for (int w = 0; w < warmup; ++w)
+        {
+            (void)cpu.forward(ids);
+            (void)gpu.forward(ids);
+        }
+
+        std::vector<double> tc, tg;
+        tc.reserve(iters);
+        tg.reserve(iters);
+        for (int it = 0; it < iters; ++it)
+        {
+            auto a0 = clk::now();
+            (void)cpu.forward(ids);
+            auto a1 = clk::now();
+            (void)gpu.forward(ids);
+            auto a2 = clk::now();
+            tc.push_back(std::chrono::duration<double, std::milli>(a1 - a0).count());
+            tg.push_back(std::chrono::duration<double, std::milli>(a2 - a1).count());
+        }
+        const double mc = median_ms(tc);
+        const double mg = median_ms(tg);
+        std::printf("[bench]  %4d | %8.2f | %8.2f | %6.2fx\n",
+                    sl, mc, mg, mc / mg);
+    }
+}
+
 } // namespace dollama
 
 int main()
@@ -281,6 +346,10 @@ int main()
         ok = dollama::test_forward_match() && ok;
         ok = dollama::test_generate_match() && ok;
         ok = dollama::test_identity_match() && ok;
+        if (std::getenv("DOLLAMA_BENCH"))
+        {
+            dollama::run_bench();
+        }
     }
     catch (const std::exception& e)
     {
