@@ -20,6 +20,12 @@
 // 純 cpp 宣言のみ (CUDA 非依存)。実体は CUDA 有効時 pipeline_generator_factory.cu、
 // 無効時 pipeline_generator_factory_stub.cpp が提供する。main.cpp に CUDA は漏れない。
 #include "server/pipeline_generator_factory.hpp"
+// 段1 (本 txt2img): Txt2ImgGenerator は OV 依存 (HAVE_OPENVINO ガード越し)。
+// 拡散ループ (CUDA) は純 cpp interface IDiffusionRunner 越しに呼ぶため main に CUDA は漏れない
+// (実体は CUDA 有効時 diffusion_runner.cu、無効時 diffusion_runner_stub.cpp が提供)。
+#ifdef HAVE_OPENVINO
+#include "server/txt2img_generator.hpp"
+#endif
 #endif
 
 #ifdef HAVE_OPENVINO
@@ -228,20 +234,92 @@ int main(int argc, char** argv)
         const std::string embeds =
             resolve_path("DOLLAMA_EMBEDS", "src/tests/data/unet_io.safetensors");
 
-        // ファクトリで PipelineGenerator を試みる。重み不在 / CUDA 無効なら nullptr。
-        //   本番なので deterministic=false (毎回異なる画像)。
-        std::unique_ptr<dollama::IImageGenerator> gen =
-            dollama::make_pipeline_generator(unet_w, vae_w, embeds, /*deterministic=*/false);
+        std::unique_ptr<dollama::IImageGenerator> gen;
 
-        if (gen)
+        // ----------------------------------------------------------------
+        // DI 3 段フォールバック:
+        //   段1) OV アセット (tokenizer/encoder L/G + tokenizers.dll) + unet/vae 重みが
+        //        揃う → Txt2ImgGenerator (prompt を反映する本 txt2img)。
+        //   段2) unet/vae 重みのみ (OV 無 / アセット欠) → PipelineGenerator (golden 埋め込み)。
+        //   段3) いずれも無 → StubGenerator。
+        // Txt2ImgGenerator は HAVE_OPENVINO かつ runner (CUDA) が必要。両ガードが揃わない
+        // ビルドでは段1 をコンパイル時に丸ごと無効化し、段2/3 へ落ちる。
+        // ----------------------------------------------------------------
+#if defined(HAVE_OPENVINO) && defined(HAVE_CUDA)
         {
-            std::cout << "dollama HTTP server (pipeline generator)\n";
-            std::cout << "  weights: unet='" << unet_w << "' vae='" << vae_w
-                      << "' embeds='" << embeds << "'\n";
+            // OV アセットパスを解決 (env 優先・既定は models/ ツリー)。
+            const std::string tok_l =
+                resolve_path("DOLLAMA_TOKENIZER_L",
+                             find_model_xml("sdxl-tokenizer-l/openvino_tokenizer.xml"));
+            const std::string tok_g =
+                resolve_path("DOLLAMA_TOKENIZER_G",
+                             find_model_xml("sdxl-tokenizer-g/openvino_tokenizer.xml"));
+            const std::string enc_l =
+                resolve_path("DOLLAMA_ENCODER_L",
+                             find_model_xml("sdxl-text-encoder-l/model_ov.xml"));
+            const std::string enc_g =
+                resolve_path("DOLLAMA_ENCODER_G",
+                             find_model_xml("sdxl-text-encoder-g/model_ov.xml"));
+            // openvino_tokenizers.dll は env のみ (空なら段1 をスキップ)。
+            const std::string tok_dll = resolve_path("DOLLAMA_OV_TOKENIZERS_DLL", "");
+
+            namespace fs = std::filesystem;
+            const bool ov_ready =
+                !tok_l.empty() && fs::exists(tok_l) &&
+                !tok_g.empty() && fs::exists(tok_g) &&
+                !enc_l.empty() && fs::exists(enc_l) &&
+                !enc_g.empty() && fs::exists(enc_g) &&
+                !tok_dll.empty() && fs::exists(tok_dll) &&
+                fs::exists(unet_w) && fs::exists(vae_w) && fs::exists(embeds);
+
+            if (ov_ready)
+            {
+                // NPU 第一・失敗時 CPU フォールバックで Txt2ImgGenerator を構築。
+                try
+                {
+                    gen = std::make_unique<dollama::Txt2ImgGenerator>(
+                        tok_l, tok_g, enc_l, enc_g, tok_dll,
+                        unet_w, vae_w, embeds, "NPU", "NPU");
+                    std::cout << "dollama HTTP server (txt2img generator — NPU)\n";
+                }
+                catch (const std::exception& e)
+                {
+                    std::cout << "[warn] NPU での Txt2ImgGenerator 構築に失敗 ("
+                              << e.what() << ") → CPU を試します。\n";
+                    try
+                    {
+                        gen = std::make_unique<dollama::Txt2ImgGenerator>(
+                            tok_l, tok_g, enc_l, enc_g, tok_dll,
+                            unet_w, vae_w, embeds, "CPU", "CPU");
+                        std::cout << "dollama HTTP server (txt2img generator — CPU)\n";
+                    }
+                    catch (const std::exception& e2)
+                    {
+                        std::cout << "[warn] CPU でも構築に失敗 (" << e2.what()
+                                  << ") → 段2/3 へフォールバックします。\n";
+                    }
+                }
+            }
         }
-        else
+#endif
+
+        // 段2) Txt2ImgGenerator が立たなければ PipelineGenerator を試みる。
+        //   ファクトリは重み不在 / CUDA 無効なら nullptr (→ 段3)。本番なので deterministic=false。
+        if (!gen)
         {
-            // フォールバック: 重みが無い / CUDA 無効でも HTTP は起動し続ける (回帰防止)。
+            gen = dollama::make_pipeline_generator(
+                unet_w, vae_w, embeds, /*deterministic=*/false);
+            if (gen)
+            {
+                std::cout << "dollama HTTP server (pipeline generator — golden 埋め込み)\n";
+                std::cout << "  weights: unet='" << unet_w << "' vae='" << vae_w
+                          << "' embeds='" << embeds << "'\n";
+            }
+        }
+
+        // 段3) いずれも立たなければ StubGenerator (HTTP は起動し続ける・回帰防止)。
+        if (!gen)
+        {
             gen = std::make_unique<dollama::StubGenerator>();
             std::cout << "dollama HTTP server (stub generator — 重み未解決のためフォールバック)\n";
         }

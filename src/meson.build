@@ -74,12 +74,14 @@ exe_cuda_sources = []
 if http_enabled
   exe_sources += 'server/api.cpp'
   if cuda_enabled
-    # CUDA 有効: 本 txt2img を DI 可能にする。factory.cu と全カーネルをリンク。
+    # CUDA 有効: 本 txt2img を DI 可能にする。factory.cu / diffusion_runner.cu と全カーネルをリンク。
     exe_cuda_sources += 'server/pipeline_generator_factory.cu'
+    exe_cuda_sources += 'server/diffusion_runner.cu'
     exe_cuda_sources += diffusion_cu_sources
   else
-    # CUDA 無効: ファクトリは nullptr を返す cpp スタブ。main は Stub にフォールバック。
+    # CUDA 無効: ファクトリ / runner は nullptr を返す cpp スタブ。main は Stub にフォールバック。
     exe_sources += 'server/pipeline_generator_factory_stub.cpp'
+    exe_sources += 'server/diffusion_runner_stub.cpp'
   endif
 endif
 
@@ -126,6 +128,41 @@ test_clip_exe = executable('test_clip',
   cpp_args            : cpp_args,
 )
 test('clip', test_clip_exe)
+
+# TextConditioner (SDXL prompt -> UNet 入力埋め込み) テスト (Phase 2-6b Stage D)
+# text_conditioner.hpp / clip_tokenizer.hpp / clip_encoder2.hpp は HAVE_OPENVINO ガード越し。
+# golden / モデル / openvino_tokenizers.dll のパスを -D 埋め込み (cwd 非依存)。
+# openvino_tokenizers.dll は python の openvino_tokenizers パッケージから自動検出する
+# (見つからなければ空文字 → test 側で [SKIP])。
+txt2img_golden    = meson.project_source_root() / 'src' / 'tests' / 'data' / 'txt2img_io.safetensors'
+sdxl_tok_l_xml    = meson.project_source_root() / 'models' / 'sdxl-tokenizer-l' / 'openvino_tokenizer.xml'
+sdxl_tok_g_xml    = meson.project_source_root() / 'models' / 'sdxl-tokenizer-g' / 'openvino_tokenizer.xml'
+sdxl_enc_l_xml    = meson.project_source_root() / 'models' / 'sdxl-text-encoder-l' / 'model_ov.xml'
+sdxl_enc_g_xml    = meson.project_source_root() / 'models' / 'sdxl-text-encoder-g' / 'model_ov.xml'
+
+ov_tok_dll = ''
+find_dll = run_command('python',
+  meson.project_source_root() / 'scripts' / 'dollma_find_ov_tokenizers_dll.py',
+  check : false)
+if find_dll.returncode() == 0
+  ov_tok_dll = find_dll.stdout().strip()
+endif
+
+test_text_conditioner_exe = executable('test_text_conditioner',
+  sources             : files('tests/test_text_conditioner.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DTXT2IMG_GOLDEN_PATH="' + txt2img_golden + '"',
+    '-DTOKENIZER_L_XML="' + sdxl_tok_l_xml + '"',
+    '-DTOKENIZER_G_XML="' + sdxl_tok_g_xml + '"',
+    '-DENCODER_L_XML="' + sdxl_enc_l_xml + '"',
+    '-DENCODER_G_XML="' + sdxl_enc_g_xml + '"',
+    '-DTOKENIZERS_DLL="' + ov_tok_dll + '"',
+  ],
+)
+# OV モデル 3 本ロード + NPU/CPU コンパイルで重い。既定 30s を超えうるため延伸。
+test('text_conditioner', test_text_conditioner_exe, timeout : 180)
 
 # WD14 CPU 推論テスト
 test_wd14_exe = executable('test_wd14',
@@ -529,6 +566,49 @@ if cuda_enabled
   )
   test('pipeline_generator', test_pipeline_generator_exe, timeout : 600, is_parallel : false)
 endif
+
+# ----------------------------------------------------------------
+# Txt2ImgGenerator (本物の text->image) エンドツーエンドテスト (Phase 2-6b Stage F)
+# ----------------------------------------------------------------
+# txt2img_generator.hpp は OV 依存 (HAVE_OPENVINO ガード越し) かつ拡散ループを
+# 純 cpp interface IDiffusionRunner 越しに呼ぶ。よって test 本体は .cpp (cl) でビルドし、
+# runner の実体だけ CUDA 有無で切り替えてリンクする:
+#   - CUDA 有効: diffusion_runner.cu + 全カーネル .cu を一緒にリンク (nvcc 経由)。
+#   - CUDA 無効: diffusion_runner_stub.cpp をリンク (test は HAVE_CUDA 未定義で [SKIP])。
+# アセット (OV tokenizer/encoder L/G + tokenizers.dll + unet/vae 重み + embeds) は
+# -D 埋め込み (cwd 非依存)。不在なら test 側で [SKIP] (CI ビルド緑維持)。
+# tokenizers.dll は test_text_conditioner と同じ dollma_find_ov_tokenizers_dll.py 検出を流用。
+txt2img_unet_w  = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_weights.safetensors'
+txt2img_vae_w   = meson.project_source_root() / 'src' / 'tests' / 'data' / 'vae_weights.safetensors'
+txt2img_embeds  = meson.project_source_root() / 'src' / 'tests' / 'data' / 'unet_io.safetensors'
+txt2img_defines = [
+  '-DTOKENIZER_L_XML="' + sdxl_tok_l_xml + '"',
+  '-DTOKENIZER_G_XML="' + sdxl_tok_g_xml + '"',
+  '-DENCODER_L_XML="' + sdxl_enc_l_xml + '"',
+  '-DENCODER_G_XML="' + sdxl_enc_g_xml + '"',
+  '-DTOKENIZERS_DLL="' + ov_tok_dll + '"',
+  '-DUNET_WEIGHTS_PATH="' + txt2img_unet_w + '"',
+  '-DVAE_WEIGHTS_PATH="' + txt2img_vae_w + '"',
+  '-DEMBEDS_PATH="' + txt2img_embeds + '"',
+]
+if cuda_enabled
+  test_txt2img_exe = executable('test_txt2img',
+    sources             : files(['tests/test_txt2img.cpp', 'server/diffusion_runner.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args + txt2img_defines,
+    cuda_args           : cuda_args,
+  )
+else
+  test_txt2img_exe = executable('test_txt2img',
+    sources             : files('tests/test_txt2img.cpp', 'server/diffusion_runner_stub.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args + txt2img_defines,
+  )
+endif
+# 20step 実走 (UNet 5.1GB 常駐 + OV ロード) を見込み大きめ timeout。test_diffusion と同等。
+test('txt2img', test_txt2img_exe, timeout : 600, is_parallel : false)
 
 # HTTP サーバー (OpenAI Images 互換) テスト — 純 C++・CUDA/OpenVINO 非依存・常時実行
 # StubGenerator を注入し httplib::Server を bind_to_any_port で起動して自己リクエスト。

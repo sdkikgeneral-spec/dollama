@@ -21,11 +21,15 @@ namespace dollama
 //   noise → latent → 画像 [1024×1024 RGB uint8] を生成する。
 // ----------------------------------------------------------------
 // 方針 (2-6a):
-//   - CFG なし (guidance_scale = 1.0 のみ。>1 は今回 TODO スタブ)。
+//   - CFG なし (guidance_scale = 1.0 のみ。>1 は generate では TODO スタブ)。
 //   - テキストエンコードは結線しない。golden 埋め込みをそのまま全 step 使い回す。
 //   - UNet 重み / VAE 重み / golden 埋め込みは 1 回だけロードして保持 (再ロード厳禁、5GB)。
 //   - 拡散ループ本体は host float (scheduler は host)。step ごとの latent
 //     D2H/H2D (~256KB) は無視可能なので素直に往復する。
+//
+// 方針 (2-6b Stage E):
+//   - generate_txt2img で CFG (classifier-free guidance) を実装。外部の cond/uncond
+//     埋め込みを受け、各 step で UNet を 2 回回して合成する。CFG なし経路とは独立。
 //
 // 拡散ループ (epsilon 予測, EulerDiscreteScheduler):
 //   sched.set_timesteps(steps)
@@ -65,7 +69,7 @@ public:
     // 拡散ループを実行し、1024×1024 RGB uint8 画像を生成する。
     //   steps          : 推論ステップ数 (例 20)
     //   seed           : 初期ノイズ randn のシード
-    //   guidance_scale : CFG スケール。今回は 1.0 のみ対応 (>1 は std::runtime_error)。
+    //   guidance_scale : CFG スケール。generate では 1.0 のみ対応 (>1 は std::runtime_error)。
     //   rgb_out        : [H*W*3] の uint8 RGB ([y,x,c] = row-major HWC) で返す。
     //   w, h           : 出力解像度 (常に 1024)。
     void generate(int                   steps,
@@ -81,6 +85,34 @@ public:
                   std::vector<uint8_t>& rgb_out,
                   int&                  w,
                   int&                  h);
+
+    // ----------------------------------------------------------------
+    // 2-6b Stage E: CFG (classifier-free guidance) 付き txt2img。
+    //   外部 (Stage D の TextConditioner) が構築した cond / uncond の埋め込みを
+    //   host float (FP32) で受け、内部で FP16 へ変換しデバイスへ常駐させる。
+    //   コンストラクタが常駐させた golden 埋め込み (d_encoder_hidden_states_ 等) は
+    //   一切使わない。CFG なし経路 (generate) とは独立。
+    //
+    //   各 step で UNet を cond / uncond の 2 回回し、
+    //     noise = uncond + guidance_scale * (cond - uncond)
+    //   を host で合成してから Euler step に渡す (noise_pred は 65536 要素と小さい)。
+    //
+    //   cond_ehs / uncond_ehs : encoder_hidden_states [77*2048] row-major (FP32)
+    //   cond_text_embeds / uncond_text_embeds : text_embeds [1280] (FP32)
+    //   time_ids : [6] (FP32, cond/uncond 共通)
+    //   guidance_scale : CFG スケール (例 7.5)
+    //   rgb_out / w / h : generate と同じ HWC uint8 出力。
+    void generate_txt2img(int                   steps,
+                          uint64_t              seed,
+                          float                 guidance_scale,
+                          const float*          cond_ehs,
+                          const float*          cond_text_embeds,
+                          const float*          uncond_ehs,
+                          const float*          uncond_text_embeds,
+                          const float*          time_ids,
+                          std::vector<uint8_t>& rgb_out,
+                          int&                  w,
+                          int&                  h);
 
 private:
     SafeTensors unet_weights_;
