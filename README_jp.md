@@ -304,6 +304,21 @@ src/
 > 自作 VAE decode / SDXL UNet / Euler スケジューラ・フル拡散パイプライン・OpenAI 互換 HTTP サーバ、と各テスト。
 > **golden 埋め込みからの end-to-end 画像生成は動きます** (20steps 84s)。任意テキストからの生成は 2-6b で結線予定。
 
+### 一括インストーラー (Windows・推奨)
+
+まっさらな Windows 機なら、必要なライブラリ一式 (VS Build Tools / CUDA / OpenVINO / Python 依存) を
+winget + pip で一括導入できます:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_windows.ps1
+```
+
+- NVIDIA dGPU 検出時のみ CUDA Toolkit を導入し torch=cu128。無ければ自動でスキップし torch=CPU・`-Dwith_cuda=false` を案内します。
+- `-DryRun` (実行せずコマンド表示) / `-CheckOnly` (存在チェックのみ) / `-SkipCuda` / `-SkipSdk` / `-PythonExe <path>` / `-Force` を指定可能。
+- 最後に環境に合わせた **推奨 `meson setup` コマンド**を出力します。
+
+手動で揃える場合は以下の前提・手順に従ってください。
+
 **前提**
 
 - [Meson](https://mesonbuild.com/) + Ninja、C++20 コンパイラ (Windows 11 + MSVC で検証)
@@ -343,6 +358,10 @@ meson test -C build            # 全単体テスト + カーネルのゴール�
 ---
 
 ## セットアップ (調査フェーズ / Python probe)
+
+Windows なら上記の `install_windows.ps1` が以下の pip 依存もまとめて導入します
+(`requirements.txt` 基準・torch は GPU 有無で index 自動分岐)。手動で入れる場合:
+
 
 ```bash
 pip install openvino openvino-genai openvino-tokenizers

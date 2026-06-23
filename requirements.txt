@@ -1,0 +1,36 @@
+# dollama Python 依存 (Windows / pip)
+# ------------------------------------------------------------------
+# 注意 (torch について):
+#   torch は GPU 有無で index が変わるため、ここには「書かない」。
+#   install_windows.ps1 が NVIDIA dGPU を検出したら
+#     pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   検出しなければ既定 index (CPU 版) で
+#     pip install torch
+#   を別途実行する。手動導入する場合も上記いずれかを使うこと。
+# ------------------------------------------------------------------
+
+# 数値・テンソル基盤
+numpy
+safetensors
+
+# 証明書 (huggingface 等の TLS 用)
+certifi
+
+# 画像 I/O
+pillow
+
+# OpenVINO (NPU / iGPU 推論グルー・probe)
+openvino
+openvino-tokenizers
+
+# モデル変換・取得 (probe / golden 生成)
+transformers
+diffusers
+accelerate
+optimum[openvino]
+onnxruntime
+huggingface_hub
+
+# ビルド (Meson + Ninja)
+meson
+ninja

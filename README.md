@@ -224,6 +224,23 @@ character-consistency design, and full roadmap, see **[README_jp.md](README_jp.m
 > loop), and the OpenAI-compatible HTTP server, all with tests. **End-to-end image generation from golden
 > embeddings works** (84 s / 20 steps); generation from arbitrary text is task 2-6b.
 
+### One-shot installer (Windows, recommended)
+
+On a fresh Windows box you can install everything the build/run needs (VS Build Tools / CUDA /
+OpenVINO / Python deps) in one go via winget + pip:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_windows.ps1
+```
+
+- Installs the CUDA Toolkit and torch=cu128 only when an NVIDIA dGPU is detected; otherwise it skips
+  CUDA, installs CPU torch, and recommends `-Dwith_cuda=false`.
+- Flags: `-DryRun` (print commands only), `-CheckOnly` (probe only), `-SkipCuda`, `-SkipSdk`,
+  `-PythonExe <path>`, `-Force`.
+- It prints a **recommended `meson setup` command** tailored to the detected environment at the end.
+
+Prefer to set things up by hand? Follow the prerequisites and steps below.
+
 **Prerequisites**
 
 - [Meson](https://mesonbuild.com/) + Ninja, and a C++20 compiler (tested with MSVC on Windows 11)
@@ -263,6 +280,10 @@ licenses** (SDXL, CLIP-L, WD14, Qwen2, etc.). You are responsible for complying 
 ---
 
 ## Setup (investigation phase / Python probes)
+
+On Windows, `install_windows.ps1` (above) also installs these pip dependencies for you
+(driven by `requirements.txt`; torch's index is auto-selected by GPU presence). To install by hand:
+
 
 ```bash
 pip install openvino openvino-genai openvino-tokenizers
