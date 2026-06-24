@@ -553,3 +553,57 @@ B (アニメ品質スコアラ・§11 蒸留) の正解ラベルは **別仕様*
 `train_bitnet.py --eval-only` が生成 set-metrics (training-spec §13.2) で採点する本命 val。
 施策 C 以降の B/A/D/F は**この diverse-val 上の生成 F1** を主要オフライン指標とする
 (テンプレ teacher-forcing recall は非回帰アンカーとして残すのみ)。
+
+## 15. diverse-train (Claude 著述 Replace パイロット・施策 B・training-spec §14)
+
+施策 B (入力多様化) 用の**訓練データ**。§14 diverse-val (評価専用) と**対の構成**で、
+評価で「自然文だけ多様化」した out-of-template を測れるようにしたのと同じ方針を**訓練側**に
+適用する。テンプレ 3 種 (§3.3) の偏りを実世界の自由文で置き換える。構築は
+`scripts/dollma_make_diverse_train.py`。出力 `data/bitnet/pairs.train.diverse_b.jsonl`
+(著述 500 + synthetic 4,000 = **総 4,500 件**) + `stats.diverse_b.json`。**本パイロットの
+訓練重みは別名 `bitnet_dense_diverse_b` で本番 (`bitnet_dense`) は無改変**。
+
+### 15.1 不変条件 (厳守)
+
+- **tags-stay-real (絶対方針)**: 各ペアの gold タグ = post の**実 danbooru タグ**で固定。
+  著述する自然文 (入力) からタグを抽出/推測しない (§14 diverse-val・#1/D5/D6 と同じ原則)。
+  多様化するのは**自然文 (入力) のみ**・tags は**バイト不変**。
+- **Replace (件数維持)**: 総件数 4,500 を維持 = 既存 train の 4,500 件のうち seed 決定的に
+  選んだ 500 件の**自然文だけを著述文へ置換**、残 4,000 件は synthetic テンプレのまま。
+  件数を増やさないので「件数増による改善」と「多様化による改善」を分離できる。
+- **既存 train バイト不変**: `pairs.train.jsonl` は読むだけ・新ファイルは加算のみ。
+- **gold⊆vocab**: 全 gold タグが vocab.json 内 (UNK 0)。
+
+### 15.2 構築 3 段 (人手散文を訓練に取り込む)
+
+散文は LLM/テンプレでなく **このセッションの main Claude が著述** (外部 API/Qwen2/ネット不使用)。
+
+1. **段a `--emit-prompts`**: 既存 train から seed 20260620 で**決定的に 500 件抽出** → 著述
+   プロンプトを出力。ここで **3 assert**: ① 抽出⊆train (選んだ post が train に存在)
+   ② **val 非交差** (`pairs.val` と post_id 重複なし) ③ **diverse-val 非交差**
+   (`pairs.eval_diverse_{a,b}` の post と重複なし = 評価リーク厳禁)。加えて gold⊆vocab を assert。
+2. **段b (main Claude)**: 各抽出 post の gold タグを表す自然文を著述。post_id を本文に漏らさない。
+3. **段c `--ingest`**: 著述 texts を抽出 prompts と突合・検証し凍結。**tags バイト不変**・
+   post_id 非漏出・**件数 4,500**・synthetic 残 4,000・**重複 0** を assert。
+
+### 15.3 スキーマ (後方互換)
+
+- 著述 500 行: `source:"llm_distill"` + `meta.gen:"claude"` + `meta.tmpl:-1` (テンプレ非由来の印)。
+  D2 (§12) の `source:"llm_distill"` スキーマを流用。`tags` は元 post のバイト一致コピー。
+- synthetic 4,000 行: 既存 `pairs.train` 由来のテンプレ生成行 (`source:"synthetic"`)。
+- 訓練の build_sequence では `llm_distill` 行も synthetic と同じ `1-<sep>` 経路を通る (D2 先例)。
+
+### 15.4 用途・統計
+
+`train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b.jsonl` で訓練し、§14 diverse-val
+上の生成 F1 で採点 (training-spec §14.3/§14.4)。統計は `stats.diverse_b.json` に記録
+(著述/synthetic 件数・重複 0・gold⊆vocab・リーク検査結果)。検証 `test_dollma_make_diverse_train.py`
+6/6 緑 (段a 抽出決定性・3 assert・段c tags バイト不変・件数)。
+
+### 15.5 再現手順
+
+```sh
+py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 500 --seed 20260620
+#   (段b: main Claude が data/bitnet の著述 texts を埋める)
+py -3.12 scripts/dollma_make_diverse_train.py --ingest
+```

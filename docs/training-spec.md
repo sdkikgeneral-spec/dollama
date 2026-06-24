@@ -751,3 +751,134 @@ py -3.12 scripts/dollma_c_seedsweep.py
 py -3.12 scripts/dollma_c_seedsweep_analyze.py
 ```
 
+## 14. 施策 B — 入力多様化 (Claude 著述 Replace パイロット)
+
+施策 C (§13) が据えた**新物差し = diverse-val 上の生成 set-F1** の上で、施策 B
+(roadmap タグ生成 LM 学習強化プログラム) の最初のパイロットを実施する。B の狙いは
+**タグ集合を実 danbooru のまま固定 (tags-stay-real) し、入力の自然文だけを多様化**して
+テンプレ 3 種 (§3 / dataset-spec §3.3) の偏りを解消し、実ユーザーの自由文への汎化を上げること。
+C で物差しを作り直していなければ、D2 と同じく「テンプレ val 上では悪化に見える」罠に
+落ちる (roadmap 依存連鎖: B は C をゲートに持つ)。`scripts/dollma_make_diverse_train.py`
++ `scripts/train_bitnet.py --train-file` + `scripts/dollma_b_seedsweep{,_analyze}.py`。
+**本番重み/golden/既存 val は無改変・別名出力のみ**。
+
+### 14.1 B-0 — 既存 D2 蒸留重み (`bitnet_dense_distill`) を diverse-val で再採点
+
+施策 C の物差しは過去の重みにも遡及できる。**D2** (Qwen2-1.5B 蒸留 hard CE 混合・旧 recall
+で「過学習悪化」として §10 で不採用) を eval-only で diverse-val 採点した:
+
+| 指標 | D2 (`bitnet_dense_distill`) | #1 (本線) |
+|---|---|---|
+| legacy TF recall@10 (テンプレ val 500) | 0.7402 | 0.7767 |
+| pairs.val 生成 macro F1 (in-dist) | 0.4387 | 0.4715 |
+| diverse_a 生成 macro F1 | **0.2701** | 0.1800 |
+| diverse_b 生成 macro F1 | **0.3134** | 0.1921 |
+
+- **旧 recall が D2 の実力を隠していた**: D2 は legacy recall (0.7402 < 0.7767) でも in-dist
+  F1 (0.4387 < 0.4715) でも #1 に劣るが、**テンプレ外 diverse 生成 F1 では #1 を大幅に上回る**
+  (a +0.090・b +0.121)。施策 C の中核仮説 (§13.4・roadmap「proxy 由来の見かけ」) を
+  D2 の遡及採点で再確認 — D2 の「過学習悪化」は proxy 由来だった。
+- **著者分布交絡の否定 (B-0 が偶然の対照群)**: D2 入力は **Qwen2 著述**・B-pilot 入力 (§14.2) は
+  **Claude 著述**。両者が同等の diverse 改善を示す以上、「Claude train が Claude test (diverse-val
+  も Claude 著述) に似て上がっただけ」という著者分布交絡では説明できない。多様化そのものの効果。
+- 出力: `data/bitnet/eval_report_distill.json` (本番無改変・読むだけ)。
+
+### 14.2 B-1 構成 (Claude 著述 Replace 500 パイロット)
+
+- **生成器** = このセッションの **main Claude が会話内で散文著述** (外部 API / Qwen2 / ネット
+  不使用)。**混合方式 = Replace** (総件数 4,500 を維持: 4,500 中 500 を著述文へ置換・残 4,000 は
+  synthetic テンプレ)。**タグは実 danbooru のまま不変** (tags-stay-real)。**規模 500 件パイロット**。
+- **データ生成** (`scripts/dollma_make_diverse_train.py`, dataset-spec §15): 段a `--emit-prompts`
+  で seed 20260620 決定的に 500 件抽出 → 著述プロンプト出力 (3 assert: 抽出⊆train / val 非交差 /
+  **diverse-val 非交差** / gold⊆vocab)。段c `--ingest` で著述 texts と突合 (tags バイト不変・
+  post_id 非漏出・件数 4,500・synthetic 残 4,000・重複 0)。出力
+  `data/bitnet/pairs.train.diverse_b.jsonl` (著述 500 = `source:"llm_distill"` + `meta.gen:"claude"`
+  + `tmpl:-1` / synthetic 4,000) + `stats.diverse_b.json`。`test_dollma_make_diverse_train.py` 6/6 緑。
+- **訓練**: `train_bitnet.py` に **`--train-file` オプションを追加** (既定 `pairs.train.jsonl` で
+  bitwise 非回帰確認済 = 既存 #1 経路を一切変えない)。`bitnet_dense_diverse_b{,_fp32}.safetensors`
+  / `train_stats_diverse_b.json` を**別名出力**。`llm_distill` 行は build_sequence で synthetic
+  と同じ `1-<sep>` 経路 (D2 先例)。
+
+### 14.3 B-1-c 採点 (seed 20260620・6ep・diverse-val 生成 macro)
+
+| 指標 | #1 | B-pilot (Replace 500) | 差 |
+|---|---|---|---|
+| diverse_a F1 | 0.1800 | **0.2675** | +0.0875 |
+| diverse_a precision | 0.2515 | 0.2819 | +0.030 |
+| diverse_b F1 | 0.1921 | **0.3039** | +0.1118 |
+| diverse_b precision | 0.2644 | 0.3160 | +0.052 |
+| pairs.val (in-dist) F1 | 0.4715 | 0.4625 | −0.009 (退行なし) |
+| legacy recall@10 | 0.7767 | 0.774 | ≈同値 (タグ集合同一) |
+
+- train_loss 1.439 / val_loss 2.432 (3.28→2.41 単調収束・#1 と同オーダー)。訓練 47.8s・
+  seed 20260620・FP32・GTX1080Ti。
+- in-dist (pairs.val) は −0.009 で**退行なし**・legacy recall は≈同値 (タグ集合が同一のため)。
+  改善は**テンプレ外の自由文でのみ**開く — §13.4 の D5 と同じ構図だが、edge が桁違いに大きい。
+
+### 14.4 B-1-d seed 頑健性 sweep (4 seed・6ep paired・diverse)
+
+`scripts/dollma_b_seedsweep{,_analyze}.py` で §13.3 (C-4) と同手続き。4 seed
+(20260620 / 20260621 / 42 / 7)・各 arm 6ep FP32 訓練 → diverse で per-sample paired 採点
+(n≈1500/seed・scratch `data/bitnet/_seedsweep_b/`・本番非汚染確認済)。
+
+per-seed F1 (base #1 / B-pilot):
+
+| seed | diverse_a (#1 / B) | diverse_b (#1 / B) |
+|---|---|---|
+| 20260620 | 0.1800 / 0.2675 | 0.1921 / 0.3039 |
+| 20260621 | 0.1814 / 0.2698 | 0.1908 / 0.3101 |
+| 42 | 0.1390 / 0.2622 | 0.1494 / 0.3075 (seed42 は #1 が落ちる外れ値) |
+| 7 | 0.1870 / 0.2707 | 0.1980 / 0.3140 |
+
+across-seed delta (B − #1) と判定軸:
+
+| set / metric | delta 平均±sd | (a) 符号一貫 | (b) > #1 分散帯 sd | (c) 各 seed CI 0 除外 |
+|---|---|---|---|---|
+| diverse_a / F1 | **+0.0957 ± 0.0184** | 4/4 正 | **True** (band sd 0.0221・約 4–6x) | **4/4** |
+| diverse_a / Jaccard | **+0.0647 ± 0.0102** | 4/4 正 | **True** (0.0124) | **4/4** |
+| diverse_b / F1 | **+0.1263 ± 0.0214** | 4/4 正 | **True** (0.0223) | **4/4** |
+| diverse_b / Jaccard | **+0.0877 ± 0.0125** | 4/4 正 | **True** (0.0125) | **4/4** |
+
+paired t は全 16 セルで p < 8e-142。precision も全 seed で改善。
+
+### 14.5 判定 — B-pilot の edge は大幅かつ全判定軸で頑健 (= 本物)
+
+- **D5/D6 との決定的対比**: 施策 C の sweep で D5 (§13.4) は (a)+(c) 成立だが (b) 不成立
+  (delta +0.009〜+0.012 = #1 seed 分散帯以下)、D6 (§12.5) は符号反転 seed ノイズだった。
+  **B-pilot は判定 (a)(b)(c) すべて成立** (delta +0.06〜+0.13・分散帯の 4–6 倍) =
+  **小幅でなく桁違いに大きく、かつ頑健な実効果**。D5 で消化しきれなかった「多様化の本命」を
+  入力多様化が実現した。
+- **C の物差しなしには見えなかった**: 旧 proxy なら D2 同様「テンプレ val 上は悪化〜同値」に
+  しか見えず却下されたはず。**施策 C (§13) で作った diverse-val + 生成 set-metrics 物差しの上で
+  測ったからこそ B の効果が可視化された** (roadmap 依存連鎖 C→B の実証)。
+- **未決・本線昇格は別途決裁**: 本番重みは **#1 据え置き・無改変** (B-pilot 重みは別名
+  `bitnet_dense_diverse_b`)。本線昇格は project-leader / ユーザー決裁 (D5 と束ねた再評価方針)。
+  絶対値はなお diverse F1 ~0.26–0.31 と低帯域 → **B 著述件数拡大 (500→数千) / A 実ペア増 /
+  D 容量増と束ねて再評価**が妥当 (roadmap)。
+
+### 14.6 検証・非回帰 (ルール#4・Python のため C++ meson test 対象外)
+
+- `scripts/test_dollma_make_diverse_train.py` 6/6 緑: 段a 抽出決定性・3 assert (抽出⊆train /
+  val 非交差 / diverse-val 非交差) / gold⊆vocab・段c tags バイト不変・post_id 非漏出・件数
+  4,500・synthetic 残 4,000・重複 0。
+- `--train-file` 既定値 (`pairs.train.jsonl`) で **#1 経路と bitwise 非回帰**を確認。本番重み/
+  golden/既存 val・既存数値はすべて無改変 (sweep は scratch `_seedsweep_b/`・本番非汚染
+  スナップショット diff で担保)。
+- C++ meson test 対象外 (§13.5 と同じく訓練側 Python のため・`py -3.12` で担保)。
+
+### 14.7 再現手順
+
+```sh
+# B-0: 既存 D2 蒸留重みを diverse-val で再採点 (本番無改変・読むだけ)
+py -3.12 scripts/train_bitnet.py --eval-only --weights data/bitnet/bitnet_dense_distill_fp32.safetensors
+# B-1 段a: seed 20260620 で 500 件抽出 → 著述プロンプト出力 (3 assert)
+py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 500 --seed 20260620
+#   (段b: main Claude が著述 texts を埋める)
+# B-1 段c: 著述 texts を突合・凍結 (tags バイト不変・件数 4500)
+py -3.12 scripts/dollma_make_diverse_train.py --ingest
+# B-1-c 訓練 (別名重み出力・seed 20260620・6ep)
+py -3.12 scripts/train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b.jsonl --seed 20260620
+# B-1-d seed 頑健性 sweep (4 seed・本番非破壊) → 集計・判定
+py -3.12 scripts/dollma_b_seedsweep.py
+py -3.12 scripts/dollma_b_seedsweep_analyze.py
+```

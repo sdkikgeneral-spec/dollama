@@ -2066,6 +2066,11 @@ def main():
                          "F1/Jaccard/precision/recall 配列を eval_persample_<name>.npz に保存 "
                          "(rows と同順・NaN=skip/未定義)。paired bootstrap/t 用。"
                          "既定 off で従来挙動 (golden/既存テスト非回帰)。")
+    ap.add_argument("--train-file", default=None,
+                    help="B (施策B 入力多様化): plain #1 訓練の train ファイルを差し替える "
+                         "(既定 None = data_dir/pairs.train.jsonl で従来挙動 完全不変)。"
+                         "指定時は出力を別名 (basename 由来サフィックス) にして "
+                         "本番 bitnet_dense*/golden を無改変に保つ。val は pairs.val.jsonl 不変。")
     args = ap.parse_args()
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
@@ -2099,8 +2104,13 @@ def main():
     print(f"[tok] vocab_size={tok.vocab_size()} tags={len(tok.tags)}")
 
     # --- データ読み込み (A2: --identity で #1 + identity_cond を混合) ---
-    syn_train = load_pairs(os.path.join(data_dir, "pairs.train.jsonl"))
+    #   B: --train-file 指定時は plain #1 train を差し替える (val は不変)。
+    #   未指定なら従来通り pairs.train.jsonl (既定挙動 完全不変)。
+    train_file = args.train_file or os.path.join(data_dir, "pairs.train.jsonl")
+    syn_train = load_pairs(train_file)
     syn_val = load_pairs(os.path.join(data_dir, "pairs.val.jsonl"))
+    if args.train_file:
+        print(f"[data] train-file 差し替え: {train_file} ({len(syn_train)} 件)")
     if args.identity:
         id_train = load_pairs(os.path.join(data_dir, "pairs.identity.train.jsonl"))
         id_val = load_pairs(os.path.join(data_dir, "pairs.identity.val.jsonl"))
@@ -2357,6 +2367,18 @@ def main():
     elif args.identity:
         base = "bitnet_dense_identity"
         stats_base = "train_stats_identity"
+    elif args.train_file:
+        # B: plain #1 と同設定で train だけ差し替えた版。本番 bitnet_dense*/golden は
+        #   無改変に保つため、train-file basename 由来サフィックスで別名出力する。
+        #   例 pairs.train.diverse_b.jsonl -> bitnet_dense_diverse_b{,_fp32}.safetensors /
+        #      train_stats_diverse_b.json。
+        bn = os.path.basename(args.train_file)
+        # "pairs.train.<suffix>.jsonl" から <suffix> を取り出す (無ければ basename 全体を流用)。
+        m = re.match(r"^pairs\.train\.(.+)\.jsonl$", bn)
+        suffix = m.group(1) if m else os.path.splitext(bn)[0]
+        base = "bitnet_dense_" + suffix
+        stats_base = "train_stats_" + suffix
+        print(f"[B] train-file 別名出力: base={base} stats_base={stats_base}")
     else:
         base = "bitnet_dense"
         stats_base = "train_stats"

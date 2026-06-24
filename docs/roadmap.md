@@ -228,7 +228,7 @@ proxy 数値でなく**実用品質**。
 | 施策 | 機構 | 依存 / ゲート |
 |---|---|---|
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
-| **B** 入力多様化 | タグ集合固定で自然文を LLM/豊富な文法で多様生成。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12) 流用 | C (新 val で評価) |
+| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **パイロット完了** (Claude 著述 Replace 500・**大幅かつ全判定軸で頑健な diverse F1 改善**・著者交絡は D2 で否定・**本線昇格は未決** / training-spec §14 / dataset-spec §15) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
@@ -250,6 +250,21 @@ proxy 数値でなく**実用品質**。
 > set-F1 を新オフライン主指標**に据える。**未決**: D5 を本線昇格させるかは新物差しの下で別途判断
 > (絶対値はなお ~0.18–0.22 と低く edge は小さい → A 実ペア増 / D 容量増と束ねて再評価が妥当)。
 > 本番重みは #1 据え置き・無改変。詳細 training-spec §13。
+
+> **B パイロット完了 (2026-06-23) — 入力多様化が新物差しで大幅かつ頑健な改善を出した**:
+> C で据えた diverse-val + 生成 set-F1 物差しの上で、施策 B の最初のパイロット (タグ固定 =
+> tags-stay-real・自然文だけ多様化・**Claude 著述 Replace 500**・総件数 4,500 維持) を実施。
+> **diverse 生成 macro F1 が #1 を大幅に上回る** (diverse_a 0.1800→0.2675 / diverse_b
+> 0.1921→0.3039・in-dist pairs.val は −0.009 で退行なし・legacy recall ≈同値)。seed 頑健性
+> sweep (4 seed・6ep paired) で delta (B−#1) は **全 4 seed 正・分散帯の 4–6 倍・各 seed の
+> paired CI が 0 を除外** = 判定 (a)(b)(c) すべて成立 (D5 は (b) 不成立の小幅・D6 は符号反転
+> seed ノイズだったのと**桁違いに大きく頑健**)。**著者分布交絡は否定**: 旧 D2 (Qwen2 著述) を
+> diverse-val 再採点 (B-0) しても同等に改善 (diverse_a 0.2701 / b 0.3134) → 「Claude train が
+> Claude test に似て上がった」では説明できない = 多様化そのものの効果。**旧 proxy では D2 同様
+> 却下されたはずで、C の物差しなしには可視化されなかった** (依存連鎖 C→B の実証)。**未決**:
+> 本番重みは #1 据え置き・別名 `bitnet_dense_diverse_b` 出力。絶対値はなお diverse F1 ~0.26–0.31
+> と低帯域 → B 著述件数拡大 (500→数千) / A 実ペア増 / D 容量増と束ねて本線昇格を再評価が妥当。
+> 詳細 training-spec §14 / dataset-spec §15。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 
