@@ -239,6 +239,19 @@ proxy 数値でなく**実用品質**。
 ② C 完了後 B を新 val で評価 (D2「悪化」の決着) → ③ 法務 GO 後 A+D 一括 → ④ F。
 **評価**: ◎ 本命だが、実装は CLAUDE.md ルール (プランモード設計→承認→PL 振り分け) に従う。
 
+> **ラベル化 (生成画像→WD14 タグ) の C++化は F でブロック解除** (2026-06-24・PL 判断):
+> 研究機での SDXL生成→ラベル化 end-to-end 実走は **Python offline ツール
+> `scripts/dollma_label_image.py` (d83fd66) を当面の正規経路**として確定。本番のメモリ上
+> 結線 (生成器の生ピクセル → WD14 → タグ列 → LM FB) は **唯一の消費者が F** のため、
+> F 着手まで C++化は保留 (消費者不在の先行配管は死にコード化リスク・PNG デコーダ連鎖も招く。
+> `src/server/png.hpp` はエンコード専用)。**F 着手時の C++化スコープ (最小)**:
+> ① 純関数 `dollma_resize_to_wd14` (raw RGBA/RGB → 448 BGR float, 白合成→正方形パディング→
+> リサイズ, ヘッダオンリー + test)。前処理正準は SmilingWolf (RGBA→白合成→正方形パディング→
+> 448→BGR→float32 0-255 **正規化なし**)・`scripts/dollma_label_image.py` 準拠。
+> ② `src/infer/wd14.hpp Wd14Tagger` に `selected_tags.csv` 名前マッピングを追加 (実装パターンは
+> `src/infer/quality_gate.hpp` の CSV 名前→index 解決を流用)。
+> ③ `src/pipeline.hpp` のダミー乱数画像入力 (L258) と `tag<idx>` ダミー解決 (L314) を ①② で置換。
+
 > **C 完了 (2026-06-23) — 物差し変更が D5 判定の符号を反転させた**: diverse-val (テンプレ外
 > 自然文・tags-stay-real) + 生成 set-metrics + eval-only ハーネス + seed sweep を実装 (C-1〜C-4)。
 > **旧 proxy (テンプレ teacher-forcing recall@10) では D5 (soft-label KL) が最下位 (0.667)
