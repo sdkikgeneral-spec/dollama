@@ -630,7 +630,13 @@ py -3.12 scripts/dollma_make_diverse_train.py --ingest
 - **結果** (training-spec §14.8): 件数 500→2,000 で diverse 生成 macro F1 が単調に伸び
   (diverse_a 0.2675→**0.3212** / diverse_b 0.3039→**0.3670**)・in-dist は誤差内据え置き
   (汎化方向)・sweep 4 seed で delta が ~1.4–1.5x 拡大しつつ seed sd は縮小 (全判定軸成立)。
-  **入力多様化のスケール則**を確認。本番重み #1 据え置き・本線昇格は未決。
+  **入力多様化のスケール則**を確認。
+- **決裁 (2026-06-24・ユーザー)**: **レシピ既定化を確定** — 今後の訓練 (A/D/F) は多様化入力
+  (tags-stay-real) を既定レシピとする。**正典重み `bitnet_dense{,_fp32}.safetensors` と C++ 推論
+  golden の差し替えは A 実ペアと束ねる次の出荷リトレインで1回** (golden チャーンを集約)・当面 #1
+  重みは据え置き。`data/bitnet/pairs.train.diverse_b2000.jsonl` は実験出力に留まらず、**A 出荷
+  リトレインの既定 train ソース**として位置づける (A の新規実ペアも同じ tags-stay-real 機構で
+  diverse train へ合流)。遅延条項の詳細は roadmap `[B-merge-at-A]` / training-spec §14.8.3。
 
 ### 15.7 再現手順 (件数 2,000 版)
 

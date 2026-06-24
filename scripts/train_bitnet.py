@@ -2066,6 +2066,13 @@ def main():
                          "F1/Jaccard/precision/recall 配列を eval_persample_<name>.npz に保存 "
                          "(rows と同順・NaN=skip/未定義)。paired bootstrap/t 用。"
                          "既定 off で従来挙動 (golden/既存テスト非回帰)。")
+    # 決裁 (2026-06-24 ユーザー): 施策B (入力多様化) のレシピ既定化を確定した。
+    #   ただし本引数の default=None (= #1 凍結経路) は、A (同一性条件付き) の実ペア増と
+    #   束ねる「次の出荷リトレイン」まで意図的に据え置く。ここで default を diverse ファイルに
+    #   変えると指定時の別名出力分岐 (basename 由来サフィックス) に落ち、bitwise 非回帰アンカー
+    #   および本番 bitnet_dense*/golden 据え置きという決裁の遅延条項を破ることになるため。
+    #   A 時に diverse train ファイル (pairs.train.diverse_b2000.jsonl 等) を既定指定し、
+    #   正典重みと C++ 推論 golden を 1 回で再生成する。詳細は docs/training-spec.md §14.8。
     ap.add_argument("--train-file", default=None,
                     help="B (施策B 入力多様化): plain #1 訓練の train ファイルを差し替える "
                          "(既定 None = data_dir/pairs.train.jsonl で従来挙動 完全不変)。"

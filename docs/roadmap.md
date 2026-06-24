@@ -228,8 +228,8 @@ proxy 数値でなく**実用品質**。
 | 施策 | 機構 | 依存 / ゲート |
 |---|---|---|
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
-| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000**・diverse F1 が件数増で単調拡大=**スケール則**・全判定軸頑健・著者交絡は D2 で否定・**本線昇格は未決** / training-spec §14 / dataset-spec §15) |
-| **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) |
+| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000**・diverse F1 が件数増で単調拡大=**スケール則**・全判定軸頑健・著者交絡は D2 で否定・**本線昇格=レシピ既定化を確定 (今後の訓練 A/D/F は多様化入力=tags-stay-real を既定)・アーティファクト本体 (`bitnet_dense{,_fp32}.safetensors`) と C++ 推論 golden (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインまで遅延** (2026-06-24 ユーザー決裁) / training-spec §14 / dataset-spec §15) |
+| **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) ＋ **`[B-merge-at-A]` 遅延タスク**(下記注記) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
 
@@ -285,10 +285,26 @@ proxy 数値でなく**実用品質**。
 > 単調に拡大** (diverse_a 0.2675→0.3212 / diverse_b 0.3039→0.3670)・in-dist は誤差内据え置き
 > (out-of-template だけ伸びる=汎化方向)。seed sweep (4 seed) で delta (B-2−#1) は diverse_a
 > **+0.1472±0.0102** / diverse_b **+0.1788±0.0029** = 500版 (+0.096/+0.126) の ~1.4–1.5x に拡大
-> しつつ seed sd は縮小 (効果が強まり頑健性も増加・全判定軸成立)。**頭打ちは見えない**。**未決**:
-> 本番重みは #1 据え置き・別名 `bitnet_dense_diverse_b2000` 出力。絶対値はなお diverse F1 ~0.32–0.37
-> と低帯域 → A 実ペア増 / D 容量増と束ねて本線昇格を再評価の既定方針を維持。詳細 training-spec §14.8
-> / dataset-spec §15.6。
+> しつつ seed sd は縮小 (効果が強まり頑健性も増加・全判定軸成立)。**頭打ちは見えない**。**決裁済 (2026-06-24・ユーザー)**:
+> **レシピ既定化を確定** — 今後の訓練 (A 実ペア増 / D 容量増 / F 品質ループ) は多様化入力 (tags-stay-real) を
+> **既定レシピ**とする。B は A/D と直交 (依存連鎖 C→{B,A}→D→F の並列枝) ゆえ、劣るレシピ (#1 系) の上に A/D が積まれる
+> 事故を防ぐためレシピ確定を先に行う。**正典重み `bitnet_dense{,_fp32}.safetensors` と C++ 推論 golden
+> (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインで1回** (golden チャーンを 2〜3 回払うのを回避)。
+> 当面 #1 重みは `bitnet_dense.safetensors` のまま据え置き・別名 `bitnet_dense_diverse_b2000` は実験出力のまま。
+> **保留が解けた根拠**: ① Pareto 改善 (主指標 diverse-val 生成 F1 で strictly 改善・in-dist pairs.val / legacy recall は退行なし)
+> ② seed sweep 全 3 軸成立 ③ スケール則 (件数増で単調・頭打ちなし)。当初の保留理由 (edge が seed 分散帯以下・絶対値が低い)
+> は B-2000 で消滅 — delta は分散帯の数倍に拡大し、絶対値が低いのは #1 がさらに低いだけで #1 を選ぶ理由にならない。
+> **残る論点 (絶対品質 diverse F1 ~0.32–0.37)** は A 実ペア増 / D 容量増で取りに行く (本線の良し悪しの話とは別軸)。
+> 詳細 training-spec §14.8 / dataset-spec §15.6。
+
+> **`[B-merge-at-A]` (A 出荷リトレイン時のチェックリスト・2026-06-24 決裁の遅延条項)**: 施策 B の正典化は
+> A 実ペア増と束ねる次の出荷リトレインで1回にまとめる (golden チャーンを集約)。その回で必ず行うこと:
+> ① train ソースを多様化版に切り替える (`pairs.train.diverse_b2000.jsonl` を `--train-file` で既定指定・
+> A の新規実ペアは同じ tags-stay-real 機構で diverse train へ合流させる)。それまで `scripts/train_bitnet.py` の
+> `--train-file` default=None (=#1 経路) は**意図的に据え置く** (今書き換えると別名出力分岐に落ち、bitwise 非回帰
+> アンカー・golden 据え置きという遅延条項を破るため)。② 正典 `data/bitnet/bitnet_dense{,_fp32}.safetensors` を
+> **この1回で**差し替える。③ C++ 推論 golden (test_bitnet_infer / test_bitnet_gpu・corr 1.0 突合) を**同時に**再生成する。
+> ④ legacy 非回帰アンカー (pairs.val recall ~0.777) の役割を「#1 アンカー」→「新本線アンカー」へ変更する。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 
