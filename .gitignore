@@ -93,5 +93,7 @@ data/scorer/scorer_wd14.jsonl
 data/scorer/scorer.train.jsonl
 data/scorer/scorer.val.jsonl
 data/scorer/scorer_stats.json
+# B-3b ScorerNet 訓練 stats (per-epoch history・再生成可)。train_scorer.py が出力。
+data/scorer/scorer_train_stats.json
 data/scorer/*.safetensors
 data/scorer/img/
