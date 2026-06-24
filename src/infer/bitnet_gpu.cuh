@@ -38,21 +38,27 @@
 #include <string>
 #include <vector>
 
+// アーキ次元の単一情報源。純粋な constexpr / 整数マクロのみで構成されており、
+// nvcc (.cu・/std:c++14) でも cl (.cpp) でも安全に引ける (heavy include 非依存)。
+#include "models/bitnet_config.hpp"
+
 namespace dollama
 {
 
 // ── アーキ定数 (CPU 版 BitNetDenseInfer / models/bitnet.hpp と一致) ──
+//   値は bitnet_config.hpp (単一情報源) を引く。DOLLAMA_BITNET_ARCH で
+//   default (33M) / d80m (80M) を切替・3 ファイル同値を保証する。
 namespace bitnet_gpu_cfg
 {
-constexpr int    VOCAB_SIZE  = 4999;
-constexpr int    D_MODEL     = 512;
-constexpr int    N_LAYERS    = 8;
-constexpr int    N_HEADS     = 8;
-constexpr int    HEAD_DIM    = D_MODEL / N_HEADS;  // 64
-constexpr int    FFN_DIM     = 1792;
-constexpr int    MAX_SEQ_LEN = 64;
-constexpr double ROPE_BASE   = 10000.0;
-constexpr double RMS_EPS     = 1e-5;
+constexpr int    VOCAB_SIZE  = bitnet_arch::VOCAB_SIZE;
+constexpr int    D_MODEL     = bitnet_arch::D_MODEL;
+constexpr int    N_LAYERS    = bitnet_arch::N_LAYERS;
+constexpr int    N_HEADS     = bitnet_arch::N_HEADS;
+constexpr int    HEAD_DIM    = bitnet_arch::HEAD_DIM;  // 64
+constexpr int    FFN_DIM     = bitnet_arch::FFN_DIM;
+constexpr int    MAX_SEQ_LEN = bitnet_arch::MAX_SEQ_LEN;
+constexpr double ROPE_BASE   = bitnet_arch::ROPE_BASE;
+constexpr double RMS_EPS     = bitnet_arch::RMS_EPS;
 } // namespace bitnet_gpu_cfg
 
 // ── device 常駐重み (FP32・[out,in] row-major) ──────────────────────

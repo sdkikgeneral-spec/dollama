@@ -38,6 +38,7 @@
 
 #include "io/safetensors.hpp"
 #include "io/tokenizer.hpp"
+#include "models/bitnet_config.hpp"  // アーキ次元の単一情報源
 #include "models/bitnet.hpp"  // rms_norm / アーキ定数の参照元
 
 namespace dollama
@@ -47,16 +48,17 @@ namespace dollama
 class BitNetDenseInfer
 {
 public:
-    // ── アーキ定数 (models/bitnet.hpp BitNet と一致) ───────────────
-    static constexpr int VOCAB_SIZE  = 4999;
-    static constexpr int D_MODEL     = 512;
-    static constexpr int N_LAYERS    = 8;
-    static constexpr int N_HEADS     = 8;
-    static constexpr int HEAD_DIM    = D_MODEL / N_HEADS;  // 64
-    static constexpr int FFN_DIM     = 1792;
-    static constexpr int MAX_SEQ_LEN = 64;
-    static constexpr double ROPE_BASE = 10000.0;
-    static constexpr double RMS_EPS   = 1e-5;
+    // ── アーキ定数 (models/bitnet.hpp BitNet と一致・単一情報源 bitnet_config.hpp) ──
+    //   DOLLAMA_BITNET_ARCH で default (33M) / d80m (80M) を切替。3 ファイル同値。
+    static constexpr int VOCAB_SIZE  = bitnet_arch::VOCAB_SIZE;
+    static constexpr int D_MODEL     = bitnet_arch::D_MODEL;
+    static constexpr int N_LAYERS    = bitnet_arch::N_LAYERS;
+    static constexpr int N_HEADS     = bitnet_arch::N_HEADS;
+    static constexpr int HEAD_DIM    = bitnet_arch::HEAD_DIM;  // 64
+    static constexpr int FFN_DIM     = bitnet_arch::FFN_DIM;
+    static constexpr int MAX_SEQ_LEN = bitnet_arch::MAX_SEQ_LEN;
+    static constexpr double ROPE_BASE = bitnet_arch::ROPE_BASE;
+    static constexpr double RMS_EPS   = bitnet_arch::RMS_EPS;
 
     // 1 層分の重み (host float, dense)。
     struct Layer

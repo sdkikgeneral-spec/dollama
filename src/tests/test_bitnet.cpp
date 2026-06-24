@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "models/bitnet.hpp"
+#include "models/bitnet_config.hpp"
 
 namespace dollama
 {
@@ -56,6 +57,46 @@ static bool test_param_count()
         std::cerr << "[test_param_count] params が 100M 超過: " << p << "\n";
         return false;
     }
+    // -- strict regression anchors (close the range-check hole) --
+    //   1 binary, both configs: use free function param_count_for(...).
+    //   spec: default = 32,976,896 / d80m = 79,908,864
+    constexpr size_t kDefaultParams =
+        bitnet_arch::param_count_for(4999, 512, 8, 8, 1792);
+    constexpr size_t kD80mParams =
+        bitnet_arch::param_count_for(4999, 512, 16, 8, 2464);
+    static_assert(kDefaultParams == 32976896ull,
+                  "default param_count must be 32,976,896");
+    static_assert(kD80mParams == 79908864ull,
+                  "d80m param_count must be 79,908,864");
+
+    std::cout << "[test_param_count] default(free) = " << kDefaultParams
+              << " / d80m(free) = " << kD80mParams << "\n";
+    if (kDefaultParams != 32976896ull)
+    {
+        std::cerr << "[test_param_count] default != 32,976,896: "
+                  << kDefaultParams << "\n";
+        return false;
+    }
+    if (kD80mParams != 79908864ull)
+    {
+        std::cerr << "[test_param_count] d80m != 79,908,864: "
+                  << kD80mParams << "\n";
+        return false;
+    }
+
+    // default build: class BitNet::param_count() == 32,976,896.
+    // (d80m build verifies 79,908,864 in test_bitnet_d80m.)
+    if (bitnet_arch::N_LAYERS == 8 && bitnet_arch::FFN_DIM == 1792)
+    {
+        if (p != 32976896ull)
+        {
+            std::cerr << "[test_param_count] default build "
+                         "BitNet::param_count() != 32,976,896: "
+                      << p << "\n";
+            return false;
+        }
+    }
+
     std::cout << "[test_param_count] PASSED\n";
     return true;
 }

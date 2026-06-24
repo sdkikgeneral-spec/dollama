@@ -32,6 +32,12 @@ import torch.nn.functional as F
 # ==============================================================
 # アーキ定数 (bitnet.hpp と厳密一致)
 # ==============================================================
+# 既定 (base = 現行 #1 本線) は src/models/bitnet.hpp::BitNet の constexpr と完全一致。
+# 施策 D (容量増) のため n_layers / ffn のみ伸ばした d80m config を選べるが、
+# **既定 (引数なし) は base のまま** = 現行と bitwise 非回帰。
+# モジュールレベル定数は下の apply_arch() が config に応じて再束縛する
+# (モデル定義・golden dump・export・sanity が全て call 時にこの globals を読むため、
+#  apply_arch を model 構築前に呼ぶだけで全経路が config 連動になる)。
 VOCAB_SIZE = 4999
 D_MODEL = 512
 N_LAYERS = 8
@@ -41,6 +47,87 @@ FFN_DIM = 1792
 MAX_SEQ_LEN = 64
 ROPE_BASE = 10000.0
 RMS_EPS = 1e-5
+
+# --------------------------------------------------------------
+# アーキ config テーブル (権威スペック・C++ bitnet.hpp と完全一致させること)
+# --------------------------------------------------------------
+#   base : 現行 #1 本線。param 合計 = 32,976,896 (bitnet.hpp::param_count() 実績値)。
+#   d80m : 施策 D 容量増。numel 合計 = 79,908,864 (同式・同値・実装後 assert で担保)。
+# vocab / max_seq / d_model / n_heads は据え置き (tokenizer / 全 golden / カーネル前提の
+# 連鎖崩壊を避ける)。伸ばすのは n_layers と ffn のみ。
+ARCH_CONFIGS = {
+    "base": {"d_model": 512, "n_layers": 8, "ffn": 1792},
+    "d80m": {"d_model": 512, "n_layers": 16, "ffn": 2464},
+}
+
+
+def compute_param_count(vocab=None, d_model=None, n_layers=None,
+                        n_heads=None, ffn=None):
+    """C++ bitnet.hpp::param_count() と同式で numel 合計を求める (embed tied)。
+
+      embed (tied)           : vocab * d_model
+      per layer attn q/k/v/o : 4 * d_model * d_model
+      per layer ffn g/u/d    : 3 * ffn * d_model
+      per layer rmsnorm x2   : 2 * d_model
+      final rmsnorm          : d_model
+    embed tied のため lm_head は別カウントしない (embed を 1 回だけ数える)。
+    引数省略時は現在のモジュール定数を使う。
+    """
+    vocab = VOCAB_SIZE if vocab is None else vocab
+    d_model = D_MODEL if d_model is None else d_model
+    n_layers = N_LAYERS if n_layers is None else n_layers
+    ffn = FFN_DIM if ffn is None else ffn
+    embed = vocab * d_model
+    per_attn = 4 * d_model * d_model
+    per_ffn = 3 * ffn * d_model
+    per_norm = 2 * d_model
+    per_layer = per_attn + per_ffn + per_norm
+    final_norm = d_model
+    return embed + per_layer * n_layers + final_norm
+
+
+def apply_arch(arch=None, d_model=None, n_layers=None, ffn=None):
+    """アーキ次元をモジュール定数へ再束縛する (model 構築前に 1 回呼ぶ)。
+
+    優先順位: arch config を土台に、個別上書き (d_model/n_layers/ffn) があれば被せる。
+    arch も個別上書きも None なら **既定 base を維持** (= 現行と完全一致・非回帰)。
+    HEAD_DIM は d_model/n_heads から再計算する (現状 n_heads 据え置きなので 64 のまま)。
+    vocab / max_seq / n_heads / rope_base / rms_eps は据え置き (config に含めない)。
+
+    返り値: 適用後の dict (ログ用)。
+    """
+    global D_MODEL, N_LAYERS, FFN_DIM, HEAD_DIM
+    # 1) base または指定 config を土台に取る。
+    if arch is not None:
+        if arch not in ARCH_CONFIGS:
+            raise ValueError(
+                f"unknown arch '{arch}' (choices: {sorted(ARCH_CONFIGS)})")
+        cfg = dict(ARCH_CONFIGS[arch])
+    else:
+        # arch 未指定: 現行モジュール定数を土台 (= base 既定)。
+        cfg = {"d_model": D_MODEL, "n_layers": N_LAYERS, "ffn": FFN_DIM}
+    # 2) 個別上書き (指定があれば被せる)。
+    if d_model is not None:
+        cfg["d_model"] = d_model
+    if n_layers is not None:
+        cfg["n_layers"] = n_layers
+    if ffn is not None:
+        cfg["ffn"] = ffn
+    # 3) 制約チェック (n_heads 据え置きなので d_model は n_heads で割り切れること)。
+    if cfg["d_model"] % N_HEADS != 0:
+        raise ValueError(
+            f"d_model={cfg['d_model']} が n_heads={N_HEADS} で割り切れない")
+    # 4) モジュール定数へ反映。
+    D_MODEL = cfg["d_model"]
+    N_LAYERS = cfg["n_layers"]
+    FFN_DIM = cfg["ffn"]
+    HEAD_DIM = D_MODEL // N_HEADS
+    return {
+        "vocab": VOCAB_SIZE, "d_model": D_MODEL, "n_layers": N_LAYERS,
+        "n_heads": N_HEADS, "head_dim": HEAD_DIM, "ffn": FFN_DIM,
+        "max_seq": MAX_SEQ_LEN, "param_count": compute_param_count(),
+    }
+
 
 # specials id (tokenizer.hpp TokenId と一致)
 TOK_PAD = 0
@@ -2073,12 +2160,35 @@ def main():
     #   および本番 bitnet_dense*/golden 据え置きという決裁の遅延条項を破ることになるため。
     #   A 時に diverse train ファイル (pairs.train.diverse_b2000.jsonl 等) を既定指定し、
     #   正典重みと C++ 推論 golden を 1 回で再生成する。詳細は docs/training-spec.md §14.8。
+    # 施策 D (容量増のコード化): アーキ次元を CLI でパラメタ化する。
+    #   --arch base (既定・現行と完全一致・非回帰) / d80m (n_layers/ffn 拡張 ~80M)。
+    #   個別上書き --d-model/--n-layers/--ffn は arch を土台に被せる (直交)。
+    #   default はいずれも None で、引数なし = 現行 base アーキ。
+    ap.add_argument("--arch", default=None, choices=sorted(ARCH_CONFIGS),
+                    help="アーキ config (base=現行32.98M / d80m=容量増79.9M)。"
+                         "未指定は base (現行と非回帰)。")
+    ap.add_argument("--d-model", type=int, default=None,
+                    help="d_model 個別上書き (n_heads で割り切れること)。通常は据え置き。")
+    ap.add_argument("--n-layers", type=int, default=None,
+                    help="n_layers 個別上書き (施策 D の容量ノブ)。")
+    ap.add_argument("--ffn", type=int, default=None,
+                    help="ffn 次元個別上書き (施策 D の容量ノブ)。")
     ap.add_argument("--train-file", default=None,
                     help="B (施策B 入力多様化): plain #1 訓練の train ファイルを差し替える "
                          "(既定 None = data_dir/pairs.train.jsonl で従来挙動 完全不変)。"
                          "指定時は出力を別名 (basename 由来サフィックス) にして "
                          "本番 bitnet_dense*/golden を無改変に保つ。val は pairs.val.jsonl 不変。")
     args = ap.parse_args()
+
+    # --- 施策 D: アーキ次元を config 駆動で確定 (全サブモードより前・1 回だけ) ---
+    #   引数なしなら base 維持 (= 現行と bitwise 非回帰)。golden/eval/train 全経路が
+    #   この再束縛後のモジュール定数を読むため、ここで 1 回呼べば全員が config 連動になる。
+    arch_info = apply_arch(arch=args.arch, d_model=args.d_model,
+                           n_layers=args.n_layers, ffn=args.ffn)
+    print(f"[arch] {arch_info['vocab']}v d_model={arch_info['d_model']} "
+          f"n_layers={arch_info['n_layers']} n_heads={arch_info['n_heads']} "
+          f"ffn={arch_info['ffn']} max_seq={arch_info['max_seq']} "
+          f"-> param_count={arch_info['param_count']:,}")
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
     if args.dump_golden:
@@ -2209,7 +2319,11 @@ def main():
         print(f"[model] dropout={args.dropout} (訓練時のみ・eval で恒等=golden 非回帰)")
     n_params = sum(p.numel() for p in model.parameters())
     # embed tied: lm_head は別パラメータでないので二重カウントなし。
-    print(f"[model] params={n_params:,} (bitnet.hpp param_count=32,976,896)")
+    #   期待値は config 連動の compute_param_count() (C++ param_count() 同式)。
+    expect_pc = compute_param_count()
+    print(f"[model] params={n_params:,} (bitnet.hpp param_count={expect_pc:,})")
+    assert n_params == expect_pc, (
+        f"param 数不一致: model={n_params} != compute_param_count={expect_pc}")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
                             weight_decay=args.weight_decay, betas=(0.9, 0.95))
@@ -2526,7 +2640,8 @@ def main():
         },
         "model": {
             "params": n_params,
-            "bitnet_hpp_param_count": 32976896,
+            "arch": (args.arch or "base"),
+            "bitnet_hpp_param_count": compute_param_count(),
             "fp16_mb": round(fp16_mb, 3),
             "fp32_mb": round(fp32_mb, 3),
         },

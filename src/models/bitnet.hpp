@@ -46,6 +46,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "models/bitnet_config.hpp"  // アーキ次元の単一情報源 (default / d80m 切替)
+
 namespace dollama
 {
 
@@ -254,15 +256,17 @@ class BitNet
 {
 public:
     // ── アーキテクチャ定数 ─────────────────────────────────────
-    static constexpr int VOCAB_SIZE  = 4999;  // specials 5 + tags 4994
-    static constexpr int D_MODEL     = 512;
-    static constexpr int N_LAYERS    = 8;
-    static constexpr int N_HEADS     = 8;
-    static constexpr int HEAD_DIM    = D_MODEL / N_HEADS;  // 64
-    static constexpr int FFN_DIM     = 1792;
-    static constexpr int MAX_SEQ_LEN = 64;
-    static constexpr double ROPE_BASE = 10000.0;
-    static constexpr double RMS_EPS   = 1e-5;
+    //   値は bitnet_config.hpp (単一情報源) を引く。DOLLAMA_BITNET_ARCH で
+    //   default (33M) / d80m (80M) を切替。参照名 (VOCAB_SIZE 等) は従来どおり。
+    static constexpr int VOCAB_SIZE  = bitnet_arch::VOCAB_SIZE;  // 4999 (据え置き)
+    static constexpr int D_MODEL     = bitnet_arch::D_MODEL;     // 512  (据え置き)
+    static constexpr int N_LAYERS    = bitnet_arch::N_LAYERS;    // 8 / 16
+    static constexpr int N_HEADS     = bitnet_arch::N_HEADS;     // 8    (据え置き)
+    static constexpr int HEAD_DIM    = bitnet_arch::HEAD_DIM;    // 64   (据え置き)
+    static constexpr int FFN_DIM     = bitnet_arch::FFN_DIM;     // 1792 / 2464
+    static constexpr int MAX_SEQ_LEN = bitnet_arch::MAX_SEQ_LEN; // 64   (据え置き)
+    static constexpr double ROPE_BASE = bitnet_arch::ROPE_BASE;
+    static constexpr double RMS_EPS   = bitnet_arch::RMS_EPS;
 
     // 1 層分の重み (host float)。BitLinear の重みも float で保持し、
     // forward 時にオンザフライで ternary 量子化 → 復元する (参照実装)。
@@ -299,15 +303,11 @@ public:
     }
 
     // 全重み要素数の合計 (パラメータ数)。embed tied のため embed は 1 回だけ数える。
+    //   計算式は bitnet_config.hpp の param_count_for に一本化 (3 ファイル共有)。
     static size_t param_count()
     {
-        const size_t embed = static_cast<size_t>(VOCAB_SIZE) * D_MODEL;
-        const size_t per_attn = 4ull * D_MODEL * D_MODEL;
-        const size_t per_ffn  = 3ull * static_cast<size_t>(FFN_DIM) * D_MODEL;
-        const size_t per_norm = 2ull * D_MODEL;
-        const size_t per_layer = per_attn + per_ffn + per_norm;
-        const size_t final_norm = D_MODEL;
-        return embed + per_layer * N_LAYERS + final_norm;
+        return bitnet_arch::param_count_for(VOCAB_SIZE, D_MODEL, N_LAYERS,
+                                            N_HEADS, FFN_DIM);
     }
 
     // 固定 seed で全重みを擬似乱数初期化する (決定的)。

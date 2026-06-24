@@ -331,6 +331,24 @@ test_bitnet_exe = executable('test_bitnet',
 # ベンチ (5 回 forward x ~19s) を含めると ~2 分かかる。既定 30s を大きく超えるため延伸。
 test('bitnet', test_bitnet_exe, timeout : 600)
 
+# BitNet d80m config (容量増・施策 D) 疎通テスト (純 C++・CUDA 不要)
+# -DDOLLAMA_BITNET_ARCH=1 でアーキを d80m (N_LAYERS=16 / FFN_DIM=2464) に切替えてビルドし、
+# default ビルド (test_bitnet) を一切壊さず、d80m 構成の param_count 厳密検証 +
+# host forward 疎通 + safetensors 往復を検証する。
+# 一時 safetensors の書き出し先はビルドディレクトリ配下 (-DD80M_TMP_PATH)。
+d80m_tmp_path = meson.current_build_dir() / 'test_bitnet_d80m_tmp.safetensors'
+test_bitnet_d80m_exe = executable('test_bitnet_d80m',
+  sources             : files('tests/test_bitnet_d80m.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DDOLLAMA_BITNET_ARCH=1',
+    '-DD80M_TMP_PATH="' + d80m_tmp_path + '"',
+  ],
+)
+# d80m (16 層) の ternary 参照 forward は default の 2 倍重い。既定 30s を超えうるため延伸。
+test('bitnet_d80m', test_bitnet_d80m_exe, timeout : 600)
+
 # タグトークナイザテスト (純 C++・CUDA/OpenVINO 非依存、Phase 4 dense #3)
 # vocab.json は data/bitnet/ にリポジトリ追跡済 (必須・不在なら fail)。
 # pairs.*.jsonl は実回帰用 (不在時は test 側で [SKIP])。パスは -D 埋め込み (cwd 非依存)。
