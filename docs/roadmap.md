@@ -228,7 +228,7 @@ proxy 数値でなく**実用品質**。
 | 施策 | 機構 | 依存 / ゲート |
 |---|---|---|
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
-| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **パイロット完了** (Claude 著述 Replace 500・**大幅かつ全判定軸で頑健な diverse F1 改善**・著者交絡は D2 で否定・**本線昇格は未決** / training-spec §14 / dataset-spec §15) |
+| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000**・diverse F1 が件数増で単調拡大=**スケール則**・全判定軸頑健・著者交絡は D2 で否定・**本線昇格は未決** / training-spec §14 / dataset-spec §15) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
@@ -265,6 +265,17 @@ proxy 数値でなく**実用品質**。
 > 本番重みは #1 据え置き・別名 `bitnet_dense_diverse_b` 出力。絶対値はなお diverse F1 ~0.26–0.31
 > と低帯域 → B 著述件数拡大 (500→数千) / A 実ペア増 / D 容量増と束ねて本線昇格を再評価が妥当。
 > 詳細 training-spec §14 / dataset-spec §15。
+
+> **B 件数拡大完了 (2026-06-24) — 入力多様化のスケール則を確認**: パイロット (Replace 500) と
+> 同方式・同物差し (diverse-val 生成 set-F1)・同 sweep で**著述件数だけを 2,000 に拡大** (Replace で
+> 総件数 4,500 維持・著述 2,000 + synthetic 2,500・tags-stay-real)。**diverse 生成 macro F1 が件数増で
+> 単調に拡大** (diverse_a 0.2675→0.3212 / diverse_b 0.3039→0.3670)・in-dist は誤差内据え置き
+> (out-of-template だけ伸びる=汎化方向)。seed sweep (4 seed) で delta (B-2−#1) は diverse_a
+> **+0.1472±0.0102** / diverse_b **+0.1788±0.0029** = 500版 (+0.096/+0.126) の ~1.4–1.5x に拡大
+> しつつ seed sd は縮小 (効果が強まり頑健性も増加・全判定軸成立)。**頭打ちは見えない**。**未決**:
+> 本番重みは #1 据え置き・別名 `bitnet_dense_diverse_b2000` 出力。絶対値はなお diverse F1 ~0.32–0.37
+> と低帯域 → A 実ペア増 / D 容量増と束ねて本線昇格を再評価の既定方針を維持。詳細 training-spec §14.8
+> / dataset-spec §15.6。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 

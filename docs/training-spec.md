@@ -882,3 +882,78 @@ py -3.12 scripts/train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b.
 py -3.12 scripts/dollma_b_seedsweep.py
 py -3.12 scripts/dollma_b_seedsweep_analyze.py
 ```
+
+### 14.8 B-2 件数拡大 (Claude 著述 Replace 500 → 2,000)
+
+§14.5 で据えた「絶対値は低帯域 → 著述件数拡大 (500→数千) と束ねて再評価」を回収する。
+**§14.1〜14.7 のパイロット (Replace 500) は記録として残し**、本節は同方式・同物差し
+(diverse-val 生成 set-F1)・同 sweep 手続きで**著述件数だけを 2,000 に増やした**結果を追記する。
+構成は **Replace のまま総件数 4,500 を維持** (著述 2,000 + synthetic 2,500)・**tags-stay-real**・
+本番重み/golden/凍結 val は無改変。著述は既存 500 (part01–05) に新規 1,500 (part06–20) を
+積み増した。出力 `data/bitnet/pairs.train.diverse_b2000.jsonl` + `stats.diverse_b2000.json`
+(dataset-spec §15.6)・別名重み `bitnet_dense_diverse_b2000{,_fp32}.safetensors`。
+
+#### 14.8.1 採点 (seed 20260620・6ep・diverse-val 生成 macro)
+
+500版・#1 と並べて 500→2,000 の伸びを示す:
+
+| 指標 | #1 | B-pilot (500) | **B-2 (2,000)** |
+|---|---|---|---|
+| diverse_a F1 | 0.1800 | 0.2675 | **0.3212** |
+| diverse_a precision | 0.2515 | 0.2819 | **0.3362** |
+| diverse_b F1 | 0.1921 | 0.3039 | **0.3670** |
+| diverse_b precision | 0.2644 | 0.3160 | **0.3772** |
+| pairs.val (in-dist) F1 | 0.4715 | 0.4625 | 0.4539 (−0.009 vs 500・退行なし) |
+| legacy recall@10 | 0.7767 | 0.774 | 0.7702 (#1 0.777 と同帯) |
+
+- params 32,976,896 一致・val_loss 単調収束 (ep4 底 2.456)・訓練 116.7s
+  (seed 20260620・FP32・GTX1080Ti)。
+- **out-of-template だけが伸びる**: in-dist (pairs.val) は 500版比 −0.009 で誤差内据え置き・
+  legacy recall も同帯。**改善はテンプレ外の自由文でのみ開き、件数増でさらに拡大**した
+  (diverse_a +0.054 / diverse_b +0.063 over 500版)。
+
+#### 14.8.2 seed 頑健性 sweep (4 seed・6ep paired・diverse)
+
+`scripts/dollma_b_seedsweep{,_analyze}.py` で §14.4 と同手続き。4 seed
+(20260620 / 20260621 / 42 / 7)・各 arm 6ep FP32 → per-sample paired 採点 (n≈1,500/seed・
+scratch `data/bitnet/_seedsweep_b2000/`・本番非汚染確認済)。
+
+across-seed delta (B-2 − #1) と判定軸:
+
+| set / metric | delta 平均±sd | (a) 符号一貫 | (b) > #1 分散帯 sd | (c) 各 seed CI 0 除外 |
+|---|---|---|---|---|
+| diverse_a / F1 | **+0.1472 ± 0.0102** | 4/4 正 | **True** (約 6.7–8x) | **4/4** |
+| diverse_a / Jaccard | **+0.1047 ± 0.0044** | 4/4 正 | **True** | **4/4** |
+| diverse_b / F1 | **+0.1788 ± 0.0029** | 4/4 正 | **True** | **4/4** |
+| diverse_b / Jaccard | **+0.1314 ± 0.0034** | 4/4 正 | **True** | **4/4** |
+
+paired t ≈ 35–47・全セルで p < 1e-269。
+
+- **500版 sweep との対比** (§14.4: diverse_a +0.0957±0.0184 / diverse_b +0.1263±0.0214):
+  件数 500→2,000 で **delta が ~1.4–1.5x 拡大**・かつ **seed sd は逆に縮小**
+  (diverse_b F1 sd 0.0214 → 0.0029)。**効果が強まりつつ頑健性も増加**した。
+
+#### 14.8.3 判定 — 入力多様化はスケール則 (件数増で単調に強まり頭打ちなし)
+
+- **スケール則**: 入力多様化の効果は著述件数増で**単調に強まり頭打ちが見えない** —
+  in-dist は誤差内据え置きで out-of-template (汎化方向) だけが伸びる。D5 (§13.4・小幅で
+  (b) 不成立) / D6 (§12.5・符号反転 seed ノイズ) と桁違いに対照的。
+- **絶対値はなお低帯域**: diverse_a ~0.32 / diverse_b ~0.37。500版 (§14.5) からの定石どおり
+  **本線昇格は引き続き未決** (project-leader / ユーザー決裁) — **A 実ペア増 / D 容量増と
+  束ねて再評価**の既定方針を維持。
+- 本番重みは **#1 据え置き・無改変**・別名 `bitnet_dense_diverse_b2000` 出力・凍結アンカー無改変。
+
+#### 14.8.4 再現手順 (件数 2,000 版)
+
+```sh
+# 段a: seed 20260620 で 2,000 件抽出 → 著述プロンプト出力 (3 assert)
+py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 2000 --seed 20260620
+#   (段b: main Claude が著述 texts part06–20 を埋める)
+# 段c: 著述 texts を突合・凍結 (tags バイト不変・件数 4500・著述 2000 / synthetic 2500)
+py -3.12 scripts/dollma_make_diverse_train.py --ingest
+# 訓練 (別名重み出力・seed 20260620・6ep)
+py -3.12 scripts/train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b2000.jsonl --seed 20260620
+# seed 頑健性 sweep (4 seed・本番非破壊) → 集計・判定
+py -3.12 scripts/dollma_b_seedsweep.py
+py -3.12 scripts/dollma_b_seedsweep_analyze.py
+```

@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""dollama 入力多様化パイロット (施策 B / B-1-a) — diverse-train 構築スクリプト
+"""dollama 入力多様化パイロット (施策 B / B-1) — diverse-train 構築スクリプト
 
 施策 B のゴール: タグ集合を実 danbooru のまま固定し (tags-stay-real)、入力自然文
 だけを人手 (Claude) 著述で多様化して、新 proxy (diverse-val 生成 set-F1) で
-train 側の汎化効果を測る。混合方式は **Replace** (件数 4500 を維持)。今回は
-**500 件パイロット** (4500 中 500 を著述 Replace・残 4000 は synthetic 据え置き)。
+train 側の汎化効果を測る。混合方式は **Replace** (件数 4500 を維持)。著述件数 n は
+CLI フラグで一般化済み (B-1-a パイロットは n=500、件数拡大は n=2000 等)。
 
 施策 C (diverse-val 構築・scripts/dollma_make_eval_diverse.py) と同じ
 「tags-stay-real・人手著述」機構を **train 向け** に流用する。Tokenizer / vocab /
 正準順序ロジックは eval_diverse / make_pairs から import 流用し、二重実装しない。
 
+**スーパーセット性 (件数拡大の要)**:
+  _select_500 は post_id 安定ソート → random.Random(seed).shuffle → 先頭 n。
+  seed を固定すれば n=2000 の先頭 500 件は n=500 の抽出と完全一致する
+  (= 既存著述 part01-05 がそのまま再利用でき、追加著述は差分のみ)。
+  --emit-prompts は --anchor で既存 prompts を渡すと、その post_id 列が今回の
+  抽出の先頭に完全一致するか assert する (再利用可能性の機械保証)。
+
 本スクリプトは 2 モードを持つ:
 
-  --emit-prompts : pairs.train.jsonl から seed 決定的に 500 件抽出し、
+  --emit-prompts : pairs.train.jsonl から seed 決定的に n 件抽出し、
                    gold タグ列 + lang_hint のみのプロンプトバッチを出力 (段a)。
                    **散文は一切生成しない。** 散文 (段b) は main Claude が著述する。
+                   --todo を渡すと、--anchor がカバーしない post_id (追加著述が
+                   必要な分) だけを切り出した todo リストも出力する。
   --ingest       : 段a の prompts (gold 源) + main Claude が書いた texts を突合・
-                   検証し、Replace 合成した train (著述500 + synthetic4000=4500) を
+                   検証し、Replace 合成した train (著述n + synthetic(4500-n)=4500) を
                    凍結出力する (段c)。
 
 不変条件 (厳守):
@@ -26,10 +35,18 @@ train 側の汎化効果を測る。混合方式は **Replace** (件数 4500 を
   - tags-stay-real: gold = pairs.train.jsonl 行の実 danbooru タグをバイト一致コピー。
                     著述文からタグを抽出しない。
   - 凍結: 出力 jsonl は再現性アンカー。既存があればスキップ (--force でのみ再生成)。
+    凍結アンカー (n=500 パイロットの diverse_train_prompts.jsonl /
+    pairs.train.diverse_b.jsonl / stats.diverse_b.json / part01-05) は無改変。
+    件数拡大版は別サフィックス (例 b2000) で出力する。
 
 使い方:
-  # 段a (500 件パイロット・決定的)
+  # 段a (n=500 パイロット・決定的)
   py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 500 --seed 20260620
+  # 段a (n=2000 件数拡大・既存500をアンカーにスーパーセット検証 + todo 切り出し)
+  py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 2000 --seed 20260620 \
+      --prompts data/bitnet/diverse_train_prompts_b2000.jsonl \
+      --anchor data/bitnet/diverse_train_prompts.jsonl \
+      --todo data/bitnet/diverse_train_todo_b2000.jsonl
   # 段c (main Claude が diverse_train_texts.jsonl を書いた後)
   py -3.12 scripts/dollma_make_diverse_train.py --ingest
 """
@@ -68,7 +85,7 @@ DEF_TEXTS = os.path.join(DEF_DATA_DIR, "diverse_train_texts.jsonl")
 DEF_OUT_TRAIN = os.path.join(DEF_DATA_DIR, "pairs.train.diverse_b.jsonl")
 DEF_STATS = os.path.join(DEF_DATA_DIR, "stats.diverse_b.json")
 
-DEF_N = 500           # パイロット著述件数 (Replace なので train 件数は不変 4500)
+DEF_N = 500           # 既定の著述件数 (Replace なので train 件数は不変 4500)
 DEF_TRAIN_TOTAL = 4500  # Replace 合成後の総件数 (件数アサート用)
 
 
@@ -100,10 +117,13 @@ def diverse_val_post_ids():
 
 
 def _select_500(train_rows, n, seed):
-    """seed 決定的に train_rows から n 件抽出する。
+    """seed 決定的に train_rows から n 件抽出する (関数名は履歴互換で据え置き)。
 
     再現性: post_id で安定ソートしてから random.Random(seed) でシャッフルし先頭 n。
     (jsonl の物理行順に依存しないよう、まず post_id でソートしてから振る)。
+
+    スーパーセット性: シャッフル順は seed のみで決まり n に非依存。よって同一 seed なら
+    n を増やしても先頭から積み増すだけ ⇒ n=2000 の先頭 500 = n=500 の抽出 (完全一致)。
     """
     eligible = [r for r in train_rows if _post_id(r) is not None]
     eligible.sort(key=lambda r: _post_id(r))  # 安定: 物理行順非依存
@@ -149,11 +169,29 @@ def emit_prompts(args):
                 raise AssertionError(
                     f"抽出 post {_post_id(r)} に vocab 外 gold '{t}'")
 
+    # --- スーパーセット assert (件数拡大の要) ---
+    # --anchor (既存の小さい prompts) を渡したら、その post_id 列が今回の抽出の
+    # 先頭に完全一致 (順序込み) するか assert する。これが成立すれば、anchor の
+    # 著述 (part01-05 等) はバイトのまま再利用でき、追加著述は差分だけで済む。
+    anchor_pids = []
+    if getattr(args, "anchor", None):
+        if not os.path.exists(args.anchor):
+            raise AssertionError(f"--anchor が存在しない: {args.anchor}")
+        anchor_rows = _read_jsonl(args.anchor)
+        anchor_pids = [a["post_id"] for a in anchor_rows]
+        sel_pid_seq = [_post_id(r) for r in sel]
+        head = sel_pid_seq[:len(anchor_pids)]
+        assert head == anchor_pids, (
+            "スーパーセット違反: 抽出先頭 post_id 列が anchor と不一致 "
+            "(seed/n 変更時は anchor 再生成が必要)。"
+            f" 先頭不一致例 anchor[0]={anchor_pids[0] if anchor_pids else None} "
+            f"sel_head[0]={head[0] if head else None}")
+        print(f"[diverse-train] スーパーセット assert OK: "
+              f"抽出先頭 {len(anchor_pids)} 件が anchor ({os.path.basename(args.anchor)}) "
+              f"と完全一致 → 既存著述は再利用可", file=sys.stderr)
+
     out_path = args.prompts
-    if os.path.exists(out_path) and not args.force:
-        print(f"[diverse-train] {out_path} 既存 → スキップ (--force で再生成)",
-              file=sys.stderr)
-        return 0
+    skip_main = os.path.exists(out_path) and not args.force
 
     lines = []
     for r in sel:
@@ -167,21 +205,42 @@ def emit_prompts(args):
             "rating": r.get("meta", {}).get("rating", "g"),
         })
 
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        for ln in lines:
-            f.write(json.dumps(ln, ensure_ascii=False) + "\n")
+    if skip_main:
+        print(f"[diverse-train] {out_path} 既存 → スキップ (--force で再生成)",
+              file=sys.stderr)
+    else:
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            for ln in lines:
+                f.write(json.dumps(ln, ensure_ascii=False) + "\n")
 
     lang_c = {"ja": 0, "en": 0}
     for ln in lines:
         lang_c[ln["lang_hint"]] = lang_c.get(ln["lang_hint"], 0) + 1
-    print(f"[diverse-train] prompts 出力: {out_path} ({len(lines)} 件)",
-          file=sys.stderr)
+    if not skip_main:
+        print(f"[diverse-train] prompts 出力: {out_path} ({len(lines)} 件)",
+              file=sys.stderr)
     print(f"[diverse-train]   lang_hint: ja={lang_c['ja']} en={lang_c['en']}",
           file=sys.stderr)
     print(f"[diverse-train]   3 assert OK "
           f"(抽出⊆train / 抽出∩val=0 / 抽出∩diverse-val=0), gold⊆vocab OK",
           file=sys.stderr)
+
+    # --- 段b 向け todo リスト切り出し (追加著述が必要な分のみ) ---
+    if getattr(args, "todo", None):
+        anchor_pid_set = set(anchor_pids)
+        todo = [ln for ln in lines if ln["post_id"] not in anchor_pid_set]
+        os.makedirs(os.path.dirname(args.todo) or ".", exist_ok=True)
+        with open(args.todo, "w", encoding="utf-8") as f:
+            for ln in todo:
+                f.write(json.dumps(ln, ensure_ascii=False) + "\n")
+        tlang = {"ja": 0, "en": 0}
+        for ln in todo:
+            tlang[ln["lang_hint"]] = tlang.get(ln["lang_hint"], 0) + 1
+        print(f"[diverse-train]   todo (追加著述要): {args.todo} "
+              f"({len(todo)} 件 = 抽出{len(lines)} − anchor{len(anchor_pids)}・"
+              f"ja={tlang['ja']} en={tlang['en']})", file=sys.stderr)
+
     return 0
 
 
@@ -299,8 +358,8 @@ def ingest(args):
             print("   ", e, file=sys.stderr)
         return 2
 
-    # --- Replace 合成: 著述500 + synthetic4000 = 4500 ---
-    # synthetic 4000 = pairs.train.jsonl から段a抽出の 500 を除いた残り (バイトコピー)。
+    # --- Replace 合成: 著述n + synthetic(4500-n) = 4500 ---
+    # synthetic = pairs.train.jsonl から段a抽出の n 件を除いた残り (バイトコピー)。
     synthetic = [r for r in train_rows if _post_id(r) not in sel_pids]
     authored = [written[pr["post_id"]] for pr in prompts]  # prompts 順で安定
 
@@ -336,7 +395,7 @@ def ingest(args):
     uniq_text = len({r["text"] for r in authored})
     stats = {
         "version": 1,
-        "policy": "施策B B-1-a / Replace / 500件パイロット",
+        "policy": f"施策B B-1 / Replace / {len(authored)}件著述",
         "seed": args.seed,
         "n_authored": len(authored),
         "n_synthetic": len(synthetic),
@@ -372,7 +431,7 @@ def ingest(args):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="dollama 施策B B-1-a diverse-train 構築 (入力多様化パイロット)")
+        description="dollama 施策B B-1 diverse-train 構築 (入力多様化)")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--emit-prompts", action="store_true",
                       help="段a: train から抽出 → gold タグ+lang_hint のプロンプト出力 "
@@ -381,12 +440,18 @@ def main():
                       help="段c: texts を取り込み検証・Replace 合成・凍結")
     ap.add_argument("--seed", type=int, default=20260620)
     ap.add_argument("--n", type=int, default=DEF_N,
-                    help="著述パイロット件数 (Replace なので train 総数は 4500 不変)")
+                    help="著述件数 (Replace なので train 総数は 4500 不変)")
     ap.add_argument("--vocab", default=DEF_VOCAB)
     ap.add_argument("--prompts", default=DEF_PROMPTS)
     ap.add_argument("--texts", default=DEF_TEXTS)
     ap.add_argument("--out-train", default=DEF_OUT_TRAIN)
     ap.add_argument("--stats", default=DEF_STATS)
+    ap.add_argument("--anchor", default=None,
+                    help="段a: 既存の小さい prompts。抽出先頭 post_id 列がこれと"
+                         "完全一致するか assert (スーパーセット性の機械保証)")
+    ap.add_argument("--todo", default=None,
+                    help="段a: --anchor がカバーしない post_id だけを切り出した "
+                         "追加著述 todo リストの出力先")
     ap.add_argument("--force", action="store_true",
                     help="既存の凍結出力を上書き再生成")
     args = ap.parse_args()

@@ -607,3 +607,35 @@ py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 500 --seed 2026
 #   (段b: main Claude が data/bitnet の著述 texts を埋める)
 py -3.12 scripts/dollma_make_diverse_train.py --ingest
 ```
+
+### 15.6 B-2 件数拡大 (Replace 500 → 2,000・training-spec §14.8)
+
+§15.1〜15.5 のパイロット (Replace 500) は記録として残し、本節は**著述件数を 2,000 に拡大**した
+データセットを追記する。**不変条件 (§15.1) はそのまま**: tags-stay-real・Replace で総件数 4,500
+維持 (著述 **2,000** + synthetic **2,500**)・既存 train バイト不変・gold⊆vocab。著述は既存 500
+(`diverse_train_texts_part01-05.jsonl`) に**新規 1,500** (`part06-20.jsonl`) を積み増し。
+
+- **構築**: §15.2 と同 3 段。段a は `--emit-prompts --n 2000 --seed 20260620` で決定的に 2,000 件
+  抽出 (3 assert: 抽出⊆train / val 非交差 / **diverse-val 非交差** / gold⊆vocab)。段b で main Claude
+  が新規 1,500 を著述 (既存 500 は流用)。段c `--ingest` で突合・凍結 (tags バイト不変・post_id
+  非漏出・件数 4,500・synthetic 残 2,500・重複 0)。
+- **出力** (本番無改変・別名のみ・gitignore・再生成可):
+  - `data/bitnet/pairs.train.diverse_b2000.jsonl` (著述 2,000 = `source:"llm_distill"` +
+    `meta.gen:"claude"` + `meta.tmpl:-1` / synthetic 2,500)
+  - `data/bitnet/stats.diverse_b2000.json` (著述/synthetic 件数・重複 0・gold⊆vocab・リーク検査)
+  - 中間: `diverse_train_prompts_b2000.jsonl` / `diverse_train_todo_b2000.jsonl` /
+    `diverse_train_texts_part06-20.jsonl`
+  - 訓練重み (別名) `bitnet_dense_diverse_b2000{,_fp32}.safetensors` / `train_stats_diverse_b2000.json`
+  - 採点レポート `eval_report_diverse_b2000.json`・sweep scratch `data/bitnet/_seedsweep_b2000/`
+- **結果** (training-spec §14.8): 件数 500→2,000 で diverse 生成 macro F1 が単調に伸び
+  (diverse_a 0.2675→**0.3212** / diverse_b 0.3039→**0.3670**)・in-dist は誤差内据え置き
+  (汎化方向)・sweep 4 seed で delta が ~1.4–1.5x 拡大しつつ seed sd は縮小 (全判定軸成立)。
+  **入力多様化のスケール則**を確認。本番重み #1 据え置き・本線昇格は未決。
+
+### 15.7 再現手順 (件数 2,000 版)
+
+```sh
+py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 2000 --seed 20260620
+#   (段b: main Claude が data/bitnet の著述 texts part06–20 を埋める)
+py -3.12 scripts/dollma_make_diverse_train.py --ingest
+```
