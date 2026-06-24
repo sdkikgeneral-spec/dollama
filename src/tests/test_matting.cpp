@@ -1,6 +1,7 @@
 // Matter (ISNet-anime マッティング) 単体テスト + 推論レイテンシ計測
-// HAVE_OPENVINO 未定義時は [SKIP] を出力して終了する。
-// モデルファイル / golden が存在しない場合も [SKIP] で終了する。
+// HAVE_OPENVINO 未定義時は実 Matter 推論を [SKIP] するが、OV 非依存テスト
+// (compose_rgba → PNG / encode_png_maybe_transparent の matter 有無分岐) は常に実行する。
+// モデルファイル / golden が存在しない場合も実 Matter 推論は [SKIP]。
 // 全テスト通過時は "[test_matting] ALL PASSED" を出力して return 0。
 // 失敗時は std::cerr に出力して return 1。
 //
@@ -24,6 +25,8 @@
 
 #include "infer/matting.hpp" // compose_rgba は OV 非依存 (常に使える)
 #include "io/safetensors.hpp"
+#include "server/matter_runner.hpp"       // IMatter (純 cpp interface)
+#include "server/matting_postprocess.hpp" // encode_png_maybe_transparent
 #include "server/png.hpp"
 
 #ifndef MATTING_MODEL_XML
@@ -37,6 +40,76 @@ namespace fs = std::filesystem;
 
 namespace dollama
 {
+
+// ----------------------------------------------------------------
+// テスト用の偽 Matter (OV 非依存)。固定パターンの soft α マスクを返す。
+//   mode = Match    : mask.size() == w*h の正常マスク (透過 PNG 経路の検証用)。
+//   mode = Mismatch : mask.size() != w*h の不正マスク (フォールバック検証用)。
+// マスク値は画素 index に応じて 0..1 に変化させ、α が soft (二値でない) ことを担保する。
+// ----------------------------------------------------------------
+class FakeMatter : public IMatter
+{
+public:
+    enum class Mode
+    {
+        Match,
+        Mismatch
+    };
+
+    explicit FakeMatter(Mode mode) : mode_(mode) {}
+
+    std::vector<float> matte(const std::vector<uint8_t>& rgb, int w, int h) override
+    {
+        (void)rgb;
+        const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h);
+
+        if (mode_ == Mode::Mismatch)
+        {
+            // わざと w*h と異なるサイズを返す (フォールバック条件を発火させる)。
+            return std::vector<float>(npix + 1, 0.5f);
+        }
+
+        // 正常: index に応じた soft α (0..1)。
+        std::vector<float> mask(npix);
+        for (size_t i = 0; i < npix; ++i)
+        {
+            mask[i] = (npix <= 1)
+                          ? 0.5f
+                          : static_cast<float>(i) / static_cast<float>(npix - 1);
+        }
+        return mask;
+    }
+
+    // 期待 α を再現する (テストの照合用。matte と同一規則)。
+    static std::vector<float> expected_mask(int w, int h)
+    {
+        const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h);
+        std::vector<float> mask(npix);
+        for (size_t i = 0; i < npix; ++i)
+        {
+            mask[i] = (npix <= 1)
+                          ? 0.5f
+                          : static_cast<float>(i) / static_cast<float>(npix - 1);
+        }
+        return mask;
+    }
+
+private:
+    Mode mode_;
+};
+
+// 小さな RGB8 テスト画像を作る (index 依存パターン)。
+static std::vector<uint8_t> make_rgb(int w, int h)
+{
+    std::vector<uint8_t> rgb(static_cast<size_t>(w) * h * 3);
+    for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i)
+    {
+        rgb[i * 3 + 0] = static_cast<uint8_t>(i * 7 % 256);
+        rgb[i * 3 + 1] = static_cast<uint8_t>(i * 13 % 256);
+        rgb[i * 3 + 2] = static_cast<uint8_t>(i * 23 % 256);
+    }
+    return rgb;
+}
 
 // ----------------------------------------------------------------
 // OV 非依存テスト: compose_rgba → encode_png_rgba8 が color_type=6 PNG を吐く
@@ -112,6 +185,130 @@ static bool test_rgba_encode()
 
     std::cout << "[test_rgba_encode] PASSED  (color_type=6, " << pw << "x" << ph
               << ", PNG " << png.size() << " bytes)\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
+// M-6 サブテスト①: matter!=null → 透過 PNG (color_type=6) + α が mask を反映
+//   encode_png_maybe_transparent に FakeMatter(Match) を渡し、戻り PNG が
+//   RGBA (color_type=6) であること・特定画素の α が compose_rgba(期待 mask) と
+//   一致することを検証する (PNG デコーダ無しのため compose_rgba 期待値と突合)。
+// ----------------------------------------------------------------
+static bool test_postproc_transparent()
+{
+    const int w = 8;
+    const int h = 5;
+    std::vector<uint8_t> rgb = make_rgb(w, h);
+
+    FakeMatter matter(FakeMatter::Mode::Match);
+    std::vector<uint8_t> png = encode_png_maybe_transparent(&matter, rgb, w, h);
+
+    // color_type=6 (透過) を確認
+    if (png.size() < 26 || png[25] != 6)
+    {
+        std::cerr << "[test_postproc_transparent] color_type が 6 でない: "
+                  << (png.size() >= 26 ? static_cast<int>(png[25]) : -1) << "\n";
+        return false;
+    }
+    int pw = 0, ph = 0;
+    if (!read_png_size(png, pw, ph) || pw != w || ph != h)
+    {
+        std::cerr << "[test_postproc_transparent] PNG サイズ不正: " << pw << "x" << ph << "\n";
+        return false;
+    }
+
+    // α が mask を反映: 期待 RGBA を compose_rgba で別途構築し、PNG の IDAT 内
+    //   スキャンラインを直接読み出して照合する。PNG は filter なし (各行頭 0x00) の
+    //   zlib stored ブロックなので、行先頭 byte を飛ばせば生 RGBA が並ぶ。
+    //   ここでは「期待 RGBA を再エンコードした PNG とバイト一致するか」で検証する
+    //   (compose_rgba → encode_png_rgba8 は本番経路と同一なので決定的に一致するはず)。
+    std::vector<float>   exp_mask = FakeMatter::expected_mask(w, h);
+    std::vector<uint8_t> exp_rgba = compose_rgba(rgb, exp_mask, w, h);
+    std::vector<uint8_t> exp_png  = encode_png_rgba8(exp_rgba, w, h);
+
+    if (png != exp_png)
+    {
+        std::cerr << "[test_postproc_transparent] 透過 PNG が期待 (compose_rgba 再現) と不一致\n";
+        return false;
+    }
+
+    // α が soft (二値でない) ことも併せて確認 (exp_rgba の α を直接見る)。
+    bool has_mid = false;
+    for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i)
+    {
+        uint8_t a = exp_rgba[i * 4 + 3];
+        if (a != 0 && a != 255)
+        {
+            has_mid = true;
+        }
+    }
+    if (!has_mid)
+    {
+        std::cerr << "[test_postproc_transparent] α が二値 (soft でない)\n";
+        return false;
+    }
+
+    std::cout << "[test_postproc_transparent] PASSED  (color_type=6, α=soft, "
+              << pw << "x" << ph << ")\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
+// M-6 サブテスト②: matter==null → 不透明 PNG (color_type=2)
+// ----------------------------------------------------------------
+static bool test_postproc_opaque()
+{
+    const int w = 8;
+    const int h = 5;
+    std::vector<uint8_t> rgb = make_rgb(w, h);
+
+    std::vector<uint8_t> png = encode_png_maybe_transparent(nullptr, rgb, w, h);
+
+    if (png.size() < 26 || png[25] != 2)
+    {
+        std::cerr << "[test_postproc_opaque] color_type が 2 でない: "
+                  << (png.size() >= 26 ? static_cast<int>(png[25]) : -1) << "\n";
+        return false;
+    }
+    // RGB 経路 (encode_png_rgb8) とバイト一致するはず。
+    std::vector<uint8_t> exp_png = encode_png_rgb8(rgb, w, h);
+    if (png != exp_png)
+    {
+        std::cerr << "[test_postproc_opaque] 不透明 PNG が encode_png_rgb8 と不一致\n";
+        return false;
+    }
+
+    std::cout << "[test_postproc_opaque] PASSED  (color_type=2)\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
+// M-6 サブテスト③: matter が w*h と異なるサイズの mask を返す → 不透明へフォールバック
+//   (matter!=null でもサイズ不一致なら encode_png_rgb8 と一致する不透明 PNG を返す)
+// ----------------------------------------------------------------
+static bool test_postproc_mismatch_fallback()
+{
+    const int w = 8;
+    const int h = 5;
+    std::vector<uint8_t> rgb = make_rgb(w, h);
+
+    FakeMatter matter(FakeMatter::Mode::Mismatch);
+    std::vector<uint8_t> png = encode_png_maybe_transparent(&matter, rgb, w, h);
+
+    if (png.size() < 26 || png[25] != 2)
+    {
+        std::cerr << "[test_postproc_mismatch_fallback] color_type が 2 (不透明) でない: "
+                  << (png.size() >= 26 ? static_cast<int>(png[25]) : -1) << "\n";
+        return false;
+    }
+    std::vector<uint8_t> exp_png = encode_png_rgb8(rgb, w, h);
+    if (png != exp_png)
+    {
+        std::cerr << "[test_postproc_mismatch_fallback] フォールバック PNG が encode_png_rgb8 と不一致\n";
+        return false;
+    }
+
+    std::cout << "[test_postproc_mismatch_fallback] PASSED  (mask サイズ不一致 → 不透明)\n";
     return true;
 }
 
@@ -345,13 +542,16 @@ static bool bench_infer(Matter& matter, const std::vector<float>& gin)
 
 int main()
 {
-    // OV 非依存テスト (compose_rgba → PNG) は常に実行する。
+    // OV 非依存テスト (compose_rgba → PNG / 後処理 matter 有無分岐) は常に実行する。
     bool ok = true;
-    ok = dollama::test_rgba_encode() && ok;
+    ok = dollama::test_rgba_encode()                && ok;
+    ok = dollama::test_postproc_transparent()       && ok; // M-6 ①
+    ok = dollama::test_postproc_opaque()            && ok; // M-6 ②
+    ok = dollama::test_postproc_mismatch_fallback() && ok; // M-6 ③
 
 #ifndef HAVE_OPENVINO
     std::cout << "[SKIP] HAVE_OPENVINO が未定義です。"
-                 "OpenVINO なしでビルドされているため推論テストをスキップします。\n";
+                 "OpenVINO なしでビルドされているため実 Matter 推論テストをスキップします。\n";
     if (!ok)
     {
         std::cerr << "[test_matting] FAILED\n";

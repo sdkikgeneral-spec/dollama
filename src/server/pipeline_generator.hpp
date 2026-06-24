@@ -18,6 +18,9 @@
 //     diffusion.cuh にあり、その実体は diffusion.cu (テスト exe にリンク) にある。
 //     PipelineGenerator 自身はメンバ関数が薄い (generate のグルーのみ) ため、ヘッダ
 //     インラインで十分。include は .cu 限定なので ODR / CUDA 漏れの心配はない。
+//   - M-6: マッティング (α 抽出) は純 cpp interface IMatter 越し (set_matter で注入)。
+//     matting_postprocess.hpp / matter_runner.hpp は純 cpp (CUDA/OV 非依存) なので
+//     CUDA TU から安全に include でき、factory シグネチャは不変。
 // ----------------------------------------------------------------
 #pragma once
 
@@ -25,12 +28,15 @@
 
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "infer/diffusion.cuh"
 #include "server/generator.hpp"
+#include "server/matter_runner.hpp"
+#include "server/matting_postprocess.hpp"
 #include "server/png.hpp"
 
 namespace dollama
@@ -56,6 +62,12 @@ public:
 
     PipelineGenerator(const PipelineGenerator&)            = delete;
     PipelineGenerator& operator=(const PipelineGenerator&) = delete;
+
+    // M-6: マッティング器を後付け注入する (build_image_generator が DI 後に 1 回呼ぶ)。
+    void set_matter(std::unique_ptr<IMatter> m) override
+    {
+        matter_ = std::move(m);
+    }
 
     // 1 リクエスト分を拡散ループで生成し PNG バイト列を返す。
     GenResult generate(const GenRequest& req) override
@@ -94,9 +106,10 @@ public:
         int w = 0, h = 0;
         pipe_.generate(steps, seed, rgb, w, h);
 
-        // HWC uint8 RGB → PNG。
+        // HWC uint8 RGB → PNG (M-6: matting ON なら透過 PNG・OFF/無なら不透明)。
         GenResult out;
-        out.png_bytes = encode_png_rgb8(rgb, w, h);
+        out.png_bytes = encode_png_maybe_transparent(
+            req.matting ? matter_.get() : nullptr, rgb, w, h);
         return out;
     }
 
@@ -110,6 +123,7 @@ private:
     DiffusionPipeline pipe_;
     bool              deterministic_seed_;
     uint64_t          fixed_seed_;
+    std::unique_ptr<IMatter> matter_; // M-6: set_matter で注入 (既定 nullptr = 不透明)
 };
 
 } // namespace dollama

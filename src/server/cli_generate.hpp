@@ -14,6 +14,10 @@
 //     段2) unet/vae 重みのみ → PipelineGenerator (golden 埋め込み)。
 //     段3) いずれも無 → StubGenerator。
 //
+//   M-6: 3 段で gen が確定した後、マッティング器 (IMatter) を 1 回だけ後付け注入する。
+//        所有権が 3 段 DI を跨ぐため、set_matter() (既定 no-op) で gen 確定後に注入する。
+//        make_matter は OV 無効ビルドで stub が nullptr を返すためガード不要。
+//
 //   この宣言ヘッダ自体は CUDA を一切 include しない (PipelineGenerator の構築は
 //   make_pipeline_generator ファクトリ越し)。Txt2ImgGenerator のみ OV 依存のため
 //   HAVE_OPENVINO && HAVE_CUDA ガード内で参照する。
@@ -25,6 +29,7 @@
 #include <memory>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef HAVE_OPENVINO
@@ -32,6 +37,7 @@
 #endif
 
 #include "server/generator.hpp"
+#include "server/matter_runner.hpp"
 #include "server/pipeline_generator_factory.hpp"
 #include "server/stub_generator.hpp"
 
@@ -188,6 +194,35 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
     {
         gen = std::make_unique<dollama::StubGenerator>();
         log << "dollama HTTP server (stub generator — 重み未解決のためフォールバック)\n";
+    }
+
+    // ----------------------------------------------------------------
+    // M-6: マッティング器 (IMatter) を後付け注入する (gen 確定後に 1 回のみ)。
+    //   - モデル xml: env DOLLAMA_MATTING_WEIGHTS 優先。既定は HAVE_OPENVINO 時のみ
+    //     models/ ツリーを find_model_xml で探索 (OV 無時は空文字 → stub nullptr)。
+    //   - device: env DOLLAMA_MATTING_DEVICE 優先。既定は "GPU.0" (Intel Xe iGPU・M-5 最速)。
+    //   make_matter は OV 無効ビルドで stub が常に nullptr を返すためガード不要。
+    //   null なら従来通り不透明 PNG・非 null なら set_matter で透過 PNG 有効化。
+    {
+#ifdef HAVE_OPENVINO
+        const std::string matting_xml =
+            resolve_path("DOLLAMA_MATTING_WEIGHTS",
+                         find_model_xml("isnet-anime/model_ov_fp32.xml"));
+#else
+        const std::string matting_xml = resolve_path("DOLLAMA_MATTING_WEIGHTS", "");
+#endif
+        const std::string matting_dev = resolve_path("DOLLAMA_MATTING_DEVICE", "GPU.0");
+
+        std::unique_ptr<IMatter> m = make_matter(matting_xml, matting_dev);
+        if (m)
+        {
+            gen->set_matter(std::move(m));
+            log << "  matting: " << matting_dev << " (model='" << matting_xml << "')\n";
+        }
+        else
+        {
+            log << "  matting: 無効 (モデル/OV 無 — 不透明 PNG)\n";
+        }
     }
 
     return gen;

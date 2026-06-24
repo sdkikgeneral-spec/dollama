@@ -118,6 +118,7 @@ int run_device_check()
 //   --prompt <str> [--out <path>]  : HTTP を起動せず CLI で 1 枚生成し PNG 保存。
 //                                    重み/golden が揃えば本 txt2img、無ければ
 //                                    Pipeline→Stub フォールバックで必ず PNG が出る。
+//                                    既定でマッティング ON (透過 PNG)。--no-matting で OFF。
 int main(int argc, char** argv)
 {
 #ifdef HAVE_HTTP
@@ -126,6 +127,7 @@ int main(int argc, char** argv)
     int steps = 20;
     int width = 1024;
     int height = 1024;
+    bool no_matting = false;       // M-6: --no-matting でマッティングを切る (既定 ON)
     std::string prompt;            // 指定かつ --http 無し → CLI 生成モード
     std::string negative;          // 既定 ""
     std::string out_path = "out.png";
@@ -188,6 +190,10 @@ int main(int argc, char** argv)
         {
             out_path = next_str(out_path);
         }
+        else if (a == "--no-matting")
+        {
+            no_matting = true;
+        }
     }
 
     // モード分岐: --http 最優先 → 次に --prompt あれば CLI 生成 → どちらも無ければ device check。
@@ -212,6 +218,8 @@ int main(int argc, char** argv)
             dollama::build_image_generator(std::cout);
 
         dollama::GenRequest req{prompt, negative, 1, steps, width, height};
+        // 集成初期化に matting を足すと並びがずれるため代入で設定する。
+        req.matting = !no_matting; // M-6: 既定 ON・--no-matting で OFF
         try
         {
             dollama::GenResult r = gen->generate(req);

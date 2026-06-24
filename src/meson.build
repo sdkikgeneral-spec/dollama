@@ -83,6 +83,13 @@ if http_enabled
     exe_sources += 'server/pipeline_generator_factory_stub.cpp'
     exe_sources += 'server/diffusion_runner_stub.cpp'
   endif
+  # M-6: マッティング (IMatter) の make_matter 実体。cli_generate.hpp が呼ぶ。
+  #   OV 有効 → OV 実体 (matter_runner.cpp)、OV 無効 → nullptr 返しの stub。
+  if openvino_dep.found()
+    exe_sources += 'server/matter_runner.cpp'
+  else
+    exe_sources += 'server/matter_runner_stub.cpp'
+  endif
 endif
 
 exe = executable('dollama',
@@ -191,8 +198,17 @@ test('quality_gate', test_quality_gate_exe)
 # パスは meson の cpp_args で -D 埋め込み (cwd 非依存)。OV/モデル/golden 不在は test 側で [SKIP]。
 matting_model_xml   = meson.project_source_root() / 'models' / 'isnet-anime' / 'model_ov_fp32.xml'
 matting_golden_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'matting' / 'golden_isnet.safetensors'
+# M-6: test_matting は encode_png_maybe_transparent (matting_postprocess.hpp) を
+#   検証するため make_matter の実体が要る。OV 有無で matter_runner(_stub) を切り替える
+#   (exe と同じ DI 設計・開発機 OV 無では stub をリンク → make_matter は nullptr)。
+matting_sources = ['tests/test_matting.cpp']
+if openvino_dep.found()
+  matting_sources += 'server/matter_runner.cpp'
+else
+  matting_sources += 'server/matter_runner_stub.cpp'
+endif
 test_matting_exe = executable('test_matting',
-  sources             : files('tests/test_matting.cpp'),
+  sources             : files(matting_sources),
   include_directories : src_inc,
   dependencies        : deps,
   cpp_args            : cpp_args + [
@@ -678,11 +694,15 @@ endif
 #   - CUDA 無効: pipeline_generator_factory_stub.cpp + diffusion_runner_stub.cpp をリンク。
 # 重み/OV アセットは存在しない (= 解決されない) 想定で、build_image_generator は実行時に
 # 必ず StubGenerator にフォールバックする (NPU/CUDA/OV に依存せず CI 緑)。
+# M-6: cli_generate.hpp (build_image_generator) が make_matter を呼ぶため、matter 実体を
+#   リンクする。OV 有無で matter_runner(_stub) を切り替える (exe と同じ DI 設計)。
+cli_matter_src = openvino_dep.found() ? 'server/matter_runner.cpp' : 'server/matter_runner_stub.cpp'
 if cuda_enabled
   test_cli_generate_exe = executable('test_cli_generate',
     sources             : files(['tests/test_cli_generate.cpp',
                                  'server/pipeline_generator_factory.cu',
-                                 'server/diffusion_runner.cu'] + diffusion_cu_sources),
+                                 'server/diffusion_runner.cu',
+                                 cli_matter_src] + diffusion_cu_sources),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
@@ -692,7 +712,8 @@ else
   test_cli_generate_exe = executable('test_cli_generate',
     sources             : files('tests/test_cli_generate.cpp',
                                 'server/pipeline_generator_factory_stub.cpp',
-                                'server/diffusion_runner_stub.cpp'),
+                                'server/diffusion_runner_stub.cpp',
+                                cli_matter_src),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,

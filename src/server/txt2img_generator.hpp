@@ -16,6 +16,9 @@
 //     本ヘッダに CUDA 型は一切露出しない。よって CUDA ヘッダ非依存の OV 翻訳単位
 //     (例: server/api.cpp を OV ビルドで) からも include できる。
 //   - runner の実体 (CUDA) は make_diffusion_runner (.cu / _stub.cpp) に隔離される。
+//   - M-6: マッティング (α 抽出) は純 cpp interface IMatter 越し (set_matter で注入)。
+//     最終 PNG エンコードを encode_png_maybe_transparent に委譲し、matter が有れば
+//     透過 PNG、無ければ不透明 PNG を返す。
 //
 //   従って本ヘッダを include してよいのは HAVE_OPENVINO 定義済みの cpp TU
 //   (= MSVC でコンパイルされる .cpp、CUDA 非露出)。
@@ -34,6 +37,8 @@
 #include "infer/text_conditioner.hpp"
 #include "server/diffusion_runner.hpp"
 #include "server/generator.hpp"
+#include "server/matter_runner.hpp"
+#include "server/matting_postprocess.hpp"
 #include "server/png.hpp"
 
 namespace dollama
@@ -84,6 +89,12 @@ public:
     Txt2ImgGenerator(const Txt2ImgGenerator&)            = delete;
     Txt2ImgGenerator& operator=(const Txt2ImgGenerator&) = delete;
 
+    // M-6: マッティング器を後付け注入する (build_image_generator が DI 後に 1 回呼ぶ)。
+    void set_matter(std::unique_ptr<IMatter> m) override
+    {
+        matter_ = std::move(m);
+    }
+
     // 1 リクエスト分を本 txt2img で生成し PNG バイト列を返す。
     GenResult generate(const GenRequest& req) override
     {
@@ -118,9 +129,10 @@ public:
             tc.time_ids.data(),
             rgb, w, h);
 
-        // --- HWC uint8 RGB → PNG ---
+        // --- HWC uint8 RGB → PNG (M-6: matting ON なら透過 PNG・OFF/無なら不透明) ---
         GenResult out;
-        out.png_bytes = encode_png_rgb8(rgb, w, h);
+        out.png_bytes = encode_png_maybe_transparent(
+            req.matting ? matter_.get() : nullptr, rgb, w, h);
         return out;
     }
 
@@ -133,6 +145,7 @@ public:
 private:
     TextConditioner                  tc_;
     std::unique_ptr<IDiffusionRunner> runner_;
+    std::unique_ptr<IMatter>          matter_; // M-6: set_matter で注入 (既定 nullptr = 不透明)
 };
 
 } // namespace dollama
