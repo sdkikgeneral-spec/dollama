@@ -965,3 +965,46 @@ py -3.12 scripts/train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b2
 py -3.12 scripts/dollma_b_seedsweep.py
 py -3.12 scripts/dollma_b_seedsweep_analyze.py
 ```
+
+## 15. INT8 dense 推論 (量子化圧縮実験)
+
+ternary (b1.58) は目的ではなく**圧縮の研究軸**という CLAUDE.md 方針に沿い、まず素直な
+dense INT8 で 33M dense LM の量子化耐性を測った。ternary GEMM (#5) や GPU/INT4 への
+拡張ではなく、CPU 純ホストで「重みのみ INT8 にしたら品質がどれだけ落ちるか」を切り分ける。
+
+### 15.1 機構
+
+- **重みのみ per-output-row 対称 INT8** (absmax/127)・**ロード時量子化**。FP32 重み
+  (`bitnet_dense_fp32.safetensors`) を読み込んだ直後に射影 Linear **8 本のみ**量子化する
+  (`src/models/bitnet.hpp` の `quantize_weight_int8_perrow()` / `Int8RowQuant`)。
+- **embed / lm_head (tied) / RMSNorm / RoPE / attention / softmax は FP32 据え置き** —
+  精度に効く層・自己回帰の数値安定に関わる層は量子化しない。
+- 活性は既存の `quantize_activation_int8` を流用し、int8×int8 内積を **int64 蓄積** →
+  `w_scale[o] · x_scale · acc` で復元。`src/infer/bitnet_int8.hpp` の `BitNetInt8Infer` が
+  推論経路を持つ。dense FP32 経路 (`src/infer/bitnet.hpp` `BitNetDenseInfer`) は**無改変**。
+
+### 15.2 実測 (GTX1080Ti/i7-10700 CPU 純ホスト・実重み + golden 流用・実走)
+
+- **INT8 logits vs FP32 golden**: seq8 max_abs_err 0.0493 / corr **0.999964**、
+  seq32 0.2126 / 0.999944、seq63 0.4608 / **0.999873**。ハードゲート corr≥0.99 を**3桁上回る**。
+- **greedy 生成 vs gen_golden**: 全 5 ケース完全一致 (16/16・8/8・14/14・9/9・8/8) =
+  トークン一致率 **1.0 (55/55)・EXACT 5/5** (語彙外日本語含む)。
+- **フットプリント**: 射影 8 本 FP32 121,634,816 B → INT8 量子化重み + per-row scale
+  30,605,312 B = **削減 91,029,504 B (74.84%減・残存比 0.2516 ≈ 1/4)**。
+- **seq8 forward レイテンシ**: INT8 **~152.9ms** / FP32 ~393.3ms = **0.389x** (INT8 が速い)。
+  int8 内積の int64 蓄積が FP32 dense の double 蓄積 dot より軽いため。lm_head は両者 FP32 同条件。
+- test_bitnet_int8 全サブテスト緑・全 22 テスト緑・Skipped 0・dense #6/A3 golden 非回帰確認済。
+
+### 15.3 知見
+
+- **33M dense は per-row 重み INT8 で greedy 完全一致 = 量子化耐性が高い**。corr が
+  ハードゲート 0.99 を 3 桁上回り、生成トークンは 1 ビットもずれない。
+- **74.84% 圧縮 (射影層 1/4) かつ CPU で 2.6x 高速化を損失ほぼ無しで両取り**できた
+  (品質劣化が見えない範囲での圧縮 + 速度向上)。
+- 圧縮の研究軸としての位置づけは変わらず — 本線の品質基準は dense FP32 (#6/A3) のまま。
+
+### 15.4 スコープ外
+
+- **GPU INT8** (device 上の int8 GEMM) は別タスク。
+- **ternary GEMM (#5・`src/kernels/ternary_gemm.cu`)** は乗算削減の別実験軸。
+- **INT4** (4bit 重み) も別タスク。本節は CPU・重みのみ INT8 dense に限定する。

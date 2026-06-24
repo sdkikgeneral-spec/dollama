@@ -379,6 +379,22 @@ test_bitnet_infer_exe = executable('test_bitnet_infer',
 )
 test('bitnet_infer', test_bitnet_infer_exe, timeout : 600)
 
+# BitNet dense INT8 推論テスト (Phase 4 圧縮実験・重みのみ INT8)
+# bitnet_dense_fp32 の FP32 射影 8 本を per-row INT8 量子化し、FP32 golden と
+# 突合して劣化 (logits corr / 生成一致率) を数値化する。重み/golden は dense #6 と
+# 同一ファイルを流用 (-D は bn_weights_path / bn_logits_path / bn_gen_path 再利用)。
+test_bitnet_int8_exe = executable('test_bitnet_int8',
+  sources             : files('tests/test_bitnet_int8.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DWEIGHTS_PATH="' + bn_weights_path + '"',
+    '-DLOGITS_GOLDEN_PATH="' + bn_logits_path + '"',
+    '-DGEN_GOLDEN_PATH="' + bn_gen_path + '"',
+  ],
+)
+test('bitnet_int8', test_bitnet_int8_exe, timeout : 600)
+
 # CUDA 疎通テスト + vector_add ベンチ (Phase 2 マイルストーン 2-0 / 2-1)
 # .cu を含むため CUDA 言語が有効なときのみビルドする。
 if cuda_enabled

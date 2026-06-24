@@ -162,6 +162,68 @@ inline Int8Quant quantize_activation_int8(const float* x, size_t n)
     return out;
 }
 
+// per-output-row 対称 INT8 重み量子化の結果。
+//   scale: 各出力行ごとの absmax(W[o,:]) / 127  (要素数 = out_dim)
+//   q    : clamp(round(W[o,i]/scale[o]), -127, 127)  (要素数 = out_dim*in_dim, row-major)
+// dense Linear の重み W[out_dim, in_dim] を行 (出力チャネル) ごとに量子化する。
+// per-row にすることで行間のスケール差を吸収し、層全体 1 スケールより誤差が小さい。
+struct Int8RowQuant
+{
+    std::vector<float>   scale;  // [out_dim] 行ごとの absmax/127
+    std::vector<int8_t>  q;      // [out_dim*in_dim] 量子化重み [-127,127]
+};
+
+// 重み W[out_dim, in_dim] (row-major) を per-output-row 対称 absmax INT8 量子化する。
+//   行 o ごとに scale[o] = absmax(W[o,:]) / 127、
+//   q[o*in+i] = clamp(round(W[o,i]/scale[o]), -127, 127)。
+//   行が全 0 (absmax=0 → scale[o]=0) のときはその行の量子化値を全 0 とする
+//   (ゼロ除算回避。quantize_weight_ternary / quantize_activation_int8 と同じ流儀)。
+inline Int8RowQuant quantize_weight_int8_perrow(const float* w,
+                                                size_t out_dim, size_t in_dim)
+{
+    Int8RowQuant out;
+    out.scale.assign(out_dim, 0.0f);
+    out.q.assign(out_dim * in_dim, 0);
+    for (size_t o = 0; o < out_dim; ++o)
+    {
+        const float* wrow = w + o * in_dim;
+        // 1) 行の absmax を求める。
+        double amax = 0.0;
+        for (size_t i = 0; i < in_dim; ++i)
+        {
+            const double a = std::fabs(static_cast<double>(wrow[i]));
+            if (a > amax)
+            {
+                amax = a;
+            }
+        }
+        const double scale = amax / 127.0;
+        out.scale[o] = static_cast<float>(scale);
+        if (scale == 0.0)
+        {
+            // 全 0 行: scale 0・量子化値 0 のまま (すでに 0 埋め済み)。
+            continue;
+        }
+        // 2) round → クランプ。
+        const double inv = 1.0 / scale;
+        int8_t* qrow = out.q.data() + o * in_dim;
+        for (size_t i = 0; i < in_dim; ++i)
+        {
+            double r = std::round(static_cast<double>(wrow[i]) * inv);
+            if (r > 127.0)
+            {
+                r = 127.0;
+            }
+            else if (r < -127.0)
+            {
+                r = -127.0;
+            }
+            qrow[i] = static_cast<int8_t>(r);
+        }
+    }
+    return out;
+}
+
 // ================================================================
 // RMSNorm (pre-norm)
 // ================================================================
