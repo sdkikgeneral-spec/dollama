@@ -352,8 +352,27 @@ meson test -C build            # 全単体テスト + カーネルのゴール�
 - 暫定 LLM の **Qwen2-1.5B (INT4)**。
 - 拡散段の **SDXL** (自作 CUDA カーネルで画像生成可能。任意テキストからの本結線は 2-6b)。
 
-本リポジトリの **コードは Apache-2.0** だが、各モデルの **重みは配布元それぞれのライセンスに従う**
-(SDXL / CLIP-L / WD14 / Qwen2 等)。利用者がその条件の遵守に責任を負う。
+本リポジトリの **コードは Apache-2.0** だが、各モデルの **重みは配布元それぞれのライセンスに従う**。
+利用者がその条件の遵守に責任を負う。
+
+### 第三者モデルのライセンス表記
+
+| モデル | 役割 | 配布元ライセンス |
+|---|---|---|
+| SDXL | 拡散 (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (checkpoint による) |
+| CLIP-L / CLIP-bigG | テキストエンコーダ (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
+| WD14 SwinV2 tagger v3 | タグ抽出 (CPU) | Apache-2.0 |
+| Qwen2-1.5B | 暫定 LLM プロンプト段 | Apache-2.0 |
+| ISNet-anime (anime-segmentation) | マッティング / 透過 PNG (iGPU) | Apache-2.0 |
+| TIPO-200M (KBlueLeaf) | 蒸留教師の実験 (4-D6・本番不採用) | Apache-2.0 |
+| **Eugeoter/waifu-scorer-v4-beta** | **Model B 品質スコアラ — 美的教師 (既定・ラベル生成のみ)** | **Apache-2.0** |
+| deepghs/anime_aesthetic | Model B 品質スコアラ — 代替の美的教師 (切替可) | OpenRAIL |
+
+> **Model B 美的教師について:** 既定教師 (waifu-scorer-v4-beta) は Apache-2.0。切替可能な代替
+> (deepghs/anime_aesthetic) は OpenRAIL で、商用利用・再配布・改変を許可し、制限は付属書の行動ベース
+> 禁止条項のみ (違法 / 差別 / 加害的用途の禁止)。いずれの場合も dollama はモデルを **教師として soft
+> ラベルを生成する用途のみ**に使い、その出力を自作 ScorerNet へ一から蒸留する。教師モデルの重み自体は
+> 本プロジェクトでは **再配布しない**。
 
 ---
 

@@ -1,0 +1,2 @@
+{"image": "data/scorer/img/000000.png", "quality": 0.82, "axis": [0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.11], "meta": {"prompt": "1girl, solo, long hair, simple background, upper body", "rating": "g", "n_tags_in": 10861}}
+{"image": "data/scorer/img/000001.png", "quality": 0.41, "axis": [0.63, 0.48, 0.0, 0.0, 0.0, 0.0, 0.22, 0.71], "meta": {"prompt": "2girls, complex pose, dynamic angle, intertwined arms", "rating": "g", "n_tags_in": 10861}}

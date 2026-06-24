@@ -86,3 +86,12 @@ ui/bin/
 ui/obj/
 # UI のユーザーデータ (名前付きプリセット)。個人データなので追跡しない。
 ui/data/
+
+# Model B / B-3a 品質スコアラ教師データ (研究機実走で生成・再生成可)。
+# 配管スキーマ例 (*.example.*) は追跡する。実 WD14 スコアベクタ・分割・重みは無視。
+data/scorer/scorer_wd14.jsonl
+data/scorer/scorer.train.jsonl
+data/scorer/scorer.val.jsonl
+data/scorer/scorer_stats.json
+data/scorer/*.safetensors
+data/scorer/img/

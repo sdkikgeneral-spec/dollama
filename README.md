@@ -275,7 +275,27 @@ SDXL stages you must obtain and convert the models yourself:
 - **SDXL** for the diffusion stage (the custom CUDA kernels now generate images; the text front-end is task 2-6b).
 
 The project **code** is Apache-2.0 (below), but each model's **weights are governed by their own upstream
-licenses** (SDXL, CLIP-L, WD14, Qwen2, etc.). You are responsible for complying with those terms.
+licenses**. You are responsible for complying with those terms.
+
+### Third-party model attribution
+
+| Model | Role | Upstream license |
+|---|---|---|
+| SDXL | Diffusion (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (per checkpoint) |
+| CLIP-L / CLIP-bigG | Text encoder (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
+| WD14 SwinV2 tagger v3 | Tagging (CPU) | Apache-2.0 |
+| Qwen2-1.5B | Interim LLM prompt stage | Apache-2.0 |
+| ISNet-anime (anime-segmentation) | Matting / transparent PNG (iGPU) | Apache-2.0 |
+| TIPO-200M (KBlueLeaf) | Distillation teacher experiments (4-D6, not in production) | Apache-2.0 |
+| **Eugeoter/waifu-scorer-v4-beta** | **Model B quality scorer — aesthetic teacher (default; label generation only)** | **Apache-2.0** |
+| deepghs/anime_aesthetic | Model B quality scorer — alternative aesthetic teacher (switchable) | OpenRAIL |
+
+> **On the Model B aesthetic teacher:** the default teacher (waifu-scorer-v4-beta) is Apache-2.0.
+> A switchable alternative (deepghs/anime_aesthetic) is OpenRAIL, which permits commercial use,
+> redistribution and modification — its only restrictions are the behavioral use-based prohibitions in
+> the license appendix (no illegal / discriminatory / harmful uses). In either case dollama uses the model
+> **only as a teacher to generate soft labels** that are distilled into our own from-scratch ScorerNet;
+> the teacher weights themselves are **not redistributed** by this project.
 
 ---
 

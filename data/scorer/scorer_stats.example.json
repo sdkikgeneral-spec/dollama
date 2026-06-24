@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-06-24T00:00:00Z",
+  "seed": 20260620,
+  "val_ratio": 0.1,
+  "counts": {"input": 500, "train": 450, "val": 50},
+  "axis_order": ["Hands", "Limbs", "Head", "Eyes", "Ears", "Mouth", "Digits", "GlobalAnatomy"],
+  "teachers": {
+    "anatomy": {
+      "name": "wd14+quality_gate.catalog (max-sigmoid 軸集約)",
+      "source": "WD14 SwinV2 v3 selected_tags.csv (研究機推論・本ファイルは非実行)",
+      "catalog_entries": 18,
+      "note": "閾値なし連続 soft target (QualityGate の閾値 hit と異なる)"
+    },
+    "quality": {
+      "provider": "anatomy_proxy",
+      "version": "1",
+      "note": "外部美的モデル未確定 (ユーザー確認中)。実走時にライセンス確認後の実体を差す。"
+    }
+  },
+  "inputs": {
+    "wd14_scores": "scorer_wd14.jsonl",
+    "selected_tags_csv": "selected_tags.csv"
+  },
+  "status": "EXAMPLE: 配管スキーマ例 (実数値は研究機実走後・dataset-spec §16)",
+  "axis_dist_train": {
+    "Hands": {"mean": 0.041, "max": 0.71, "nonzero": 38},
+    "GlobalAnatomy": {"mean": 0.062, "max": 0.83, "nonzero": 51}
+  },
+  "quality_filled": {"with_quality": 500, "missing": 0}
+}

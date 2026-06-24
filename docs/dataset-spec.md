@@ -639,3 +639,179 @@ py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 2000 --seed 202
 #   (段b: main Claude が data/bitnet の著述 texts part06–20 を埋める)
 py -3.12 scripts/dollma_make_diverse_train.py --ingest
 ```
+## 16. 品質スコアラ教師データ (Phase 4 Model B・B-3a)
+
+Model B (アニメ品質スコアラ・§13.9 で「別仕様」と予告) の **ScorerNet 蒸留教師データ**。
+#1〜§15 の「user text → タグ列」ペアとは**全く別のデータセット**で、`pairs.*.jsonl` も
+vocab も**一切共有しない**。ScorerNet (純 conv backbone・入力 `[1,3,512,512]`・出力 `[1,1+8]`)
+を蒸留訓練するための **(画像参照, 品質スカラ, 8 軸 soft target)** を持つ。
+
+**重要 (本節の現況)**: 本節は **配管のみ確定・実走の数値は研究機待ち (未実走)**。SDXL 生成と
+WD14 実推論は研究機 (RTX5080+OV) 前提で、非研究機ではスクリプトを乾式検証したのみ。
+
+### 16.1 教師は 2 系統 (plan 確定)
+
+- **(A) 解剖 8 軸 soft target** — `src/infer/quality_gate.hpp::catalog()` / `enum AnomalyAxis`
+  を流用。WD14 sigmoid スコアベクタ `[N_TAGS]` を **「軸ごとに該当タグ sigmoid の最大値」**
+  (max-sigmoid 集約) で連続値化する。**QualityGate (C++ Stage1) は閾値 hit だが、蒸留教師は
+  閾値なしの連続 soft 値**にする (ここが Stage1 との差)。軸順 = `AnomalyAxis` に 1:1:
+  `0 Hands / 1 Limbs / 2 Head / 3 Eyes / 4 Ears / 5 Mouth / 6 Digits / 7 GlobalAnatomy`。
+  catalog 18 エントリは実 WD14 `selected_tags.csv` で **18/18 解決**を確認。
+- **(B) 品質スカラ** — 外部美的モデルで採点 (§16.9 選定)。`QualityProvider` でプラガブル:
+  - `passthrough` — 入力レコードに `quality` があれば通す・無ければ `None` (後埋め境界)。
+  - `waifu_scorer_v4` — Eugeoter/waifu-scorer-v4-beta (**apache-2.0**)・CLIP ViT-L/14 image
+    embed[768]→MLP→生スコア 0..10→/10 で [0,1] (§16.9 候補)。
+  - `anime_aesthetic_deepghs` — deepghs/anime_aesthetic (**openrail**)・ONNX swinv2pv3 448→
+    7 段順序クラス確率→**期待順序スコア** [0,1] (§16.9 候補・写像は §16.9)。
+  - `anatomy_proxy` — 縮退案 (`1 - max(8 軸)`)。**ユーザー方針 = 縮退保留** につき既定で使わず、
+    許諾的アニメ美的モデルが使えない場合は quality=`null` で止める (provenance に proxy 印)。
+  - **本機では美的モデルの重み DL・推論はしない** (純計算の正規化/期待値写像のみ確定)。重みは
+    研究機で配置・採点 (matting ISNet=Apache と同立ち位置)。
+
+### 16.2 ファイル構成
+
+```
+data/scorer/
+  scorer_wd14.jsonl              — WD14 スコアベクタ入力 (研究機で生成・gitignore)
+  scorer.train.jsonl            — 訓練サンプル (gitignore・再生成可)
+  scorer.val.jsonl              — 検証サンプル (gitignore)
+  scorer_stats.json             — provenance + 軸分布 (gitignore)
+  scorer.train.example.jsonl    — スキーマ例 (追跡・配管確認用)
+  scorer_stats.example.json     — provenance スキーマ例 (追跡)
+scripts/dollma_make_scorer_labels.py    — WD14 スコア → 8 軸 soft + 品質スカラ (OV/SDXL 非依存)
+scripts/dollma_gen_scorer_corpus.py     — SDXL 生成 + WD14 タグ付け driver (研究機専用・既定 dry-run)
+scripts/tests/test_dollma_make_scorer_labels.py — 乾式テスト (torch/OV 不要・5/5 緑)
+```
+
+### 16.3 スキーマ (1 サンプル)
+
+```json
+{
+  "image": "data/scorer/img/000001.png",
+  "quality": 0.41,
+  "axis": [0.63, 0.48, 0.0, 0.0, 0.0, 0.0, 0.22, 0.71],
+  "meta": {"prompt": "2girls, complex pose, ...", "rating": "g", "n_tags_in": 10861}
+}
+```
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `image`   | string | 画像参照パス (ピクセルは別保持・jsonl にピクセルを埋めない)。 |
+| `quality` | float\|null | 品質スカラ (B 系統)。外部美的モデル未確定の間は provider 由来 or `null`。 |
+| `axis`    | float[8] | 8 軸 soft target (A 系統・`AnomalyAxis` 順・各 [0,1])。 |
+| `meta`    | object | `prompt` (生成プロンプト)・`rating`・`n_tags_in` (WD14 出力長)。 |
+
+ScorerNet 出力 `[1,1+8]` の `index0=quality` / `index1..8=axis[0..7]` に 1:1 対応。
+
+### 16.4 WD14 スコア入力境界 (研究機と非研究機の分業)
+
+`dollma_make_scorer_labels.py` は **WD14 実推論を呼ばない**。入力は研究機で WD14 を回した
+結果の `scorer_wd14.jsonl` (1 行 = `{image, wd14_scores:[N_TAGS], prompt?, rating?, quality?}`)。
+生成・推論は研究機 (`dollma_gen_scorer_corpus.py --run`)、ラベル化は非研究機でも可、の分業。
+
+### 16.5 分割・provenance・再現性 (§8 踏襲)
+
+- **seed 固定** (既定 20260620)・`random.Random(seed)` でシャッフル後に train/val 分割
+  (既定 val_ratio 0.1)。同 seed でバイト一致を乾式テストで確認。
+- **image リーク防止**: 同一 `image` が train/val に跨らないことを assert。
+- `scorer_stats.json` に provenance を残す: seed・教師モデル名/版 (anatomy=wd14+catalog /
+  quality=provider)・出典・catalog 解決数・軸分布・`status` (未実走印)。
+
+### 16.6 乾式検証結果 (このセッション・非研究機)
+
+- catalog/AnomalyAxis 写しが `quality_gate.hpp` と件数一致 (18 エントリ・8 軸)。
+  実 WD14 `selected_tags.csv` で **18/18 解決**。
+- max-sigmoid 軸集約が合成スコアで正しい (軸ごと最大・範囲外 index 安全 skip)。
+- schema 往復 (jsonl 書き→読み等価)・seed 決定性 (同 seed バイト一致)・image リーク 0・
+  provider プラガブル (passthrough/anatomy_proxy)。`test_dollma_make_scorer_labels.py` 5/5 緑。
+- driver は既定 dry-run で生成計画のみ出力。`--run` は非研究機で `NotImplementedError`
+  (実生成・実推論しない安全ガード)。
+
+### 16.7 研究機で実走するために残る手順
+
+1. `dollma_gen_scorer_corpus.py --run` の `run_on_research_machine` を結線
+   (SDXL 生成 = `Txt2ImgGenerator`/`dollama --prompt`・WD14 タグ付け = OV `[1,448,448,3]` f32)。
+   良/悪を散らすジョブ設計 (品質ネガ ON/OFF) は実装済。まず数百枚 (配管優先・後段で拡大)。
+2. 外部美的モデルを **ライセンス確認後**に `QualityProvider` 実装として差す
+   (不可なら `anatomy_proxy` で縮退・PL 判断)。
+3. `scorer_wd14.jsonl` → `dollma_make_scorer_labels.py` で `scorer.{train,val}.jsonl` 生成。
+4. B-3b (`scripts/train_scorer.py`・model-trainer) が本データを消費して ScorerNet を蒸留訓練。
+
+### 16.8 引き渡し
+
+- **model-trainer** (B-3b): `data/scorer/scorer.{train,val}.jsonl` を読む。`axis`=8 軸 BCE/MSE
+  target・`quality`=スカラ MSE/Huber target (null の間は B head を縮退 or 凍結)。seed 固定。
+- **cpp-implementer** (B-3d): `QualityScorer` の `axis_scores[8]` は `AnomalyAxis` に 1:1
+  対応させ、`QualityGate` と同じ軸語彙で B-5 FB ループに渡す (本節の軸順と厳密一致)。
+
+### 16.9 美的モデル選定 (品質スカラ B 系統)
+
+品質スカラ (B) の教師となるアニメ美的モデルを **一次情報 (HF API metadata + README/meta.json)**
+で調査・比較した。採否基準は matting ISNet=Apache と同じ「許諾的ライセンス + アニメ特化」。
+
+#### 候補比較 (一次情報)
+
+| モデル | ライセンス | 形態 | アニメ特化 | 入力前処理 | 出力レンジ | 重み入手元 |
+|---|---|---|---|---|---|---|
+| **deepghs/anime_aesthetic** | **openrail** | ONNX (swinv2pv3 448 / caformer_s36) | ○ | img 0-255 NHWC 448²・正規化なし (WD14 系) | 7 段順序クラス確率 `[masterpiece..worst]` | HF `deepghs/anime_aesthetic/<bb>/model.onnx` |
+| Eugeoter/waifu-scorer-v4-beta | **apache-2.0** | torch CLIP+MLP (768→…→1) | ○ | CLIP ViT-L/14 image 前処理 | 生スカラ 0〜10 | HF `…/model.safetensors` |
+| Eugeoter/waifu-scorer-v3 | **表記矛盾** (metadata `openrail` / README `Apache 2.0`) | torch CLIP+MLP | ○ | CLIP ViT-L/14 | 0〜10 | HF |
+| cafeai/cafe_aesthetic | agpl-3.0 (コピーレフト強) | torch (ViT 分類) | △ | ViT 前処理 | クラス確率 | HF |
+| shadowlilac/aesthetic-shadow | unknown (明記なし) | torch (ViT) | ○ | ViT | クラス確率 | HF |
+| skytnt/anime-aesthetic | **ライセンス記載なし** | ONNX | ○ | — | スカラ | HF |
+| LAION improved-aesthetic | apache (汎用) | CLIP+MLP | ✕ (汎用・実写寄り) | CLIP | 0〜10 | GitHub |
+
+#### 選定状況 (要ユーザー確認)
+
+- **実装済みで利用可能な provider は 2 つ**: `waifu_scorer_v4` (apache-2.0・明確に許諾的) と
+  `anime_aesthetic_deepghs` (openrail)。両方を `QualityProvider` として実装し、純計算部
+  (正規化 / 期待値写像) を乾式テストで検証済 (test 9/9 緑)。
+- **ライセンス判断の論点**: openrail は Apache/MIT のような無条件許諾とは別系統で、
+  付属の **使用行動制限条項** (Use Restrictions) を伴う。本用途
+  (教師でラベル生成 → 自作 ScorerNet に蒸留・教師自体は再配布しない) は再配布を伴わず
+  抵触しにくいと解釈できるが、**openrail の採否は最終的にユーザー確認事項**。
+- **本データ構築エージェントの一次調査結論は apache-2.0 の `waifu_scorer_v4`**
+  (ライセンスが metadata/README とも一致しクリーン・「許諾的を優先」の基準に最も合致)。
+  既定 provider は当面 `waifu_scorer_v4` のままとし、`anime_aesthetic_deepghs` は
+  ユーザーが openrail を承認した場合に既定へ昇格する (どちらも実装済・切替は CLI 一語)。
+  ※ skytnt はライセンス記載なし・waifu-scorer-v3 は表記矛盾のため見送り。cafe_aesthetic は
+    AGPL でコピーレフトが強く回避。LAION は Apache だが汎用 (アニメ非特化) で見送り。
+
+#### deepghs 期待順序スコア写像 (`anime_aesthetic_deepghs`)
+
+7 段順序クラス `[masterpiece(0), best(1), great(2), good(3), normal(4), low(5), worst(6)]`
+(meta.json labels) を連続 quality [0,1] に写像する:
+
+```
+各クラス index k に均等値  v_k = (6 - k) / 6   (masterpiece=1.0 … worst=0.0・線形等間隔)
+quality = Σ_k p_k · v_k     (softmax 確率との期待値・p が確率分布なら結果は必ず [0,1])
+```
+
+`AnimeAestheticDeepghsProvider.expected_score` が純計算で実装 (本機実走可)。one-hot
+masterpiece→1.0 / worst→0.0 / uniform→0.5 を乾式テストで検証。確率が非正規化でも内部で
+正規化し [0,1] にクランプ。7 クラス確率は研究機 ONNX 推論で採り `aesthetic_probs` として
+入力行に積む (推論本体は `dollma_gen_scorer_corpus.py --run` の研究機実走部)。
+
+#### waifu_scorer_v4 写像 (`waifu_scorer_v4`)
+
+CLIP ViT-L/14 image embed `[768]` → MLP `768→2048→512→256→128→32→1` (BatchNorm 入り・
+safetensors header で確認) → 生スコア 0〜10 → `normalize_score` で `/10` クランプ [0,1]。
+CLIP image embedding (`clip_image_embed`[768]) と MLP 重みは研究機で配置・採点。
+
+#### 入力境界 (研究機との分業・WD14 と同方針)
+
+ラベル化スクリプト (`dollma_make_scorer_labels.py`) は **美的モデル推論を呼ばない**。研究機で
+推論した結果を入力行に積む境界:
+- `anime_aesthetic_deepghs` → `aesthetic_probs`:[7] (softmax 済み 7 クラス確率)。
+- `waifu_scorer_v4` → `clip_image_embed`:[768] (+ `--quality-weights` に MLP safetensors)。
+これらが無い本機では quality=`null` のまま (縮退に落とさない=ユーザー保留方針)。
+
+#### 乾式検証 (このセッション・追加分)
+
+- 候補ライセンス/形態を HF API + meta.json + safetensors header で一次確認。
+- `waifu_scorer_v4`: `normalize_score` 0/10/7.5→0/1/0.75・範囲外クランプ・重み/embed 未配置で
+  `None`・既定 provider・provenance (apache-2.0/repo) を検証。
+- `anime_aesthetic_deepghs`: `class_values` (1.0…0.0)・`expected_score` (one-hot/uniform/
+  非正規化/全ゼロ→None/長さ不一致→ValueError)・確率未配置で `None`・provenance
+  (openrail/labels/期待値写像) を検証。
+- `test_dollma_make_scorer_labels.py` **9/9 緑** (torch/OV/SDXL 不要)。
