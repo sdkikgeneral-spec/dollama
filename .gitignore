@@ -53,6 +53,12 @@ data/bitnet/_seedsweep*/
 # 施策 C (評価作り直し) の中間ファイル (再生成可・凍結アンカーは pairs.eval_diverse_a/b.jsonl のみ追跡)。
 data/bitnet/eval_diverse_prompts*.jsonl
 data/bitnet/eval_diverse_texts*.jsonl
+# 施策 A (実ペア増) の件数拡大変種 (再生成可・別名出力・大容量)。
+# 凍結除外集合 eval_frozen_post_ids.json (恒久アンカー) は追跡する。
+data/bitnet/pairs.identity.*.a12k.jsonl
+data/bitnet/pairs.identity.*.a25k.jsonl
+data/bitnet/stats.identity.a12k.json
+data/bitnet/stats.identity.a25k.json
 # 生成ログ (npz 生成等)。
 scripts/archives/*.log
 

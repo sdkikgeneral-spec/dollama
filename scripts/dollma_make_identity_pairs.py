@@ -22,9 +22,24 @@ dataset-spec.md §13 (同一性条件付きペア) を確定実装する。既�
     "source":"identity_cond" + "meta":{"identity_tags":[...],"scene_tags":[...],...}
   を追加する。text/tags フィールドの意味は #1 と同じ (tags = target)。
 
-使い方:
+Phase 4-A (実ペア増) で追加した引数 (既定挙動は無改変):
+  --exclude-post-ids <path>  凍結 eval 等の post_id 集合を A train から恒久除外する。
+                             生成ループで pid ∈ excluded を skip し、末尾で
+                             assert not (train_pid & excluded) を強制する。
+                             引数なし時は従来 #1/A1 経路と bitwise 非回帰。
+  --out-tag <tag>            出力ファイル名にサフィックスを付与する (別名出力)。
+                             例 --out-tag a12k → pairs.identity.{train,val}.a12k.jsonl
+                                                  stats.identity.a12k.json
+                             引数なし時は従来名 (pairs.identity.{train,val}.jsonl)。
+
+使い方 (従来・A1 5,000):
     py -3.12 scripts/dollma_make_identity_pairs.py --n 4500 --val 500 \
         --seed 20260620 --vocab data/bitnet/vocab.json --out-dir data/bitnet
+
+使い方 (Phase 4-A 12k・凍結 eval 除外・別名):
+    py -3.12 scripts/dollma_make_identity_pairs.py --n 10800 --val 1200 \
+        --seed 20260620 --out-tag a12k \
+        --exclude-post-ids data/bitnet/eval_frozen_post_ids.json
 """
 import argparse
 import json
@@ -387,6 +402,55 @@ def roundtrip_check(pairs, vocab_path):
 
 
 # ============================================================
+# Phase 4-A: 凍結 eval 除外集合 + 別名出力ヘルパ
+# ============================================================
+def load_exclude_post_ids(path):
+    """凍結除外集合 (eval_frozen_post_ids.json) を読み post_id の set を返す。
+
+    形式は {"frozen_post_ids":[...]} か、素の [..] リストの両方を許す。
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        obj = json.load(f)
+    if isinstance(obj, dict):
+        ids = obj.get("frozen_post_ids", [])
+    else:
+        ids = obj
+    return {int(x) for x in ids}
+
+
+def read_eval_post_ids_direct(eval_paths):
+    """凍結 eval の pairs.jsonl を **直接** 読み post_id 集合を返す。
+
+    make_eval_diverse の抽出ロジックを介さない独立再検証用。除外漏れがあれば
+    この set との交差で落ちる。
+    """
+    pids = set()
+    for path in eval_paths:
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                pids.add(int(json.loads(line)["meta"]["post_id"]))
+    return pids
+
+
+def _tagged(base, tag, ext):
+    """別名出力のファイル名を作る。tag が空なら従来名のまま (非回帰)。
+
+    base="pairs.identity.train", tag="a12k", ext="jsonl"
+      → "pairs.identity.train.a12k.jsonl"
+    base="pairs.identity.train", tag="", ext="jsonl"
+      → "pairs.identity.train.jsonl"
+    """
+    if tag:
+        return f"{base}.{tag}.{ext}"
+    return f"{base}.{ext}"
+
+
+# ============================================================
 # main
 # ============================================================
 def main():
@@ -400,6 +464,11 @@ def main():
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--fetch-factor", type=float, default=1.8,
                     help="目標件数に対する取得倍率 (identity 核なし post で歩留り低下)")
+    # Phase 4-A 追加 (既定 None/"" で従来挙動・bitwise 非回帰)
+    ap.add_argument("--exclude-post-ids", default=None,
+                    help="凍結 eval 等の post_id 集合 JSON。A train から恒久除外する")
+    ap.add_argument("--out-tag", default="",
+                    help="出力ファイル名サフィックス (例 a12k)。空で従来名")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -408,6 +477,13 @@ def main():
         vocab = json.load(f)
     vocab_set = {t["tag"] for t in vocab["tags"]}
     freq = {t["tag"]: t["freq"] for t in vocab["tags"]}
+
+    # 凍結除外集合 (引数なしなら空集合 = 従来挙動)
+    excluded = set()
+    if args.exclude_post_ids:
+        excluded = load_exclude_post_ids(args.exclude_post_ids)
+        print(f"[id-pairs] 凍結除外集合 {len(excluded)} post_id を読込 "
+              f"({args.exclude_post_ids})", file=sys.stderr)
 
     ratings = [r.strip() for r in args.ratings.split(",") if r.strip()]
     total_needed = args.n + args.val
@@ -422,8 +498,13 @@ def main():
     rng.shuffle(posts)
     pairs = []
     seen_pid, seen_text, seen_pairkey = set(), set(), set()
+    n_excluded_skipped = 0
     for idx, post in enumerate(posts):
         if post["post_id"] in seen_pid:
+            continue
+        # Phase 4-A: 凍結 eval 等の除外集合は生成対象から外す (既定は空集合)
+        if post["post_id"] in excluded:
+            n_excluded_skipped += 1
             continue
         lang = "ja" if (idx % 2 == 0) else "en"
         pair = make_identity_pair(post, vocab_set, freq, lang)
@@ -438,6 +519,10 @@ def main():
         pairs.append(pair)
         if len(pairs) >= total_needed:
             break
+
+    if excluded:
+        print(f"[id-pairs] 凍結除外でスキップした post: {n_excluded_skipped}",
+              file=sys.stderr)
 
     if len(pairs) < total_needed:
         print(f"[id-pairs] 警告: 歩留り不足 {len(pairs)}/{total_needed}。"
@@ -473,6 +558,24 @@ def main():
     val_txt = {p["text"] for p in val}
     assert not (train_txt & val_txt), "text リーク検出"
 
+    # Phase 4-A: 凍結除外集合と train/val の post_id 非交差を強制
+    #   (生成ループで skip 済みだが、保証は 2 重に。除外漏れがあればここで落ちる)
+    all_pid = train_pid | val_pid
+    assert not (train_pid & excluded), "凍結 eval post_id が A train に混入"
+    assert not (all_pid & excluded), "凍結 eval post_id が A train/val に混入"
+
+    # Phase 4-A: 凍結 eval の pairs.jsonl を直接読んで独立再検証
+    #   (make_eval_diverse の抽出ロジックを介さない・除外漏れ検出)
+    eval_a_path = os.path.join(args.out_dir, "pairs.eval_diverse_a.jsonl")
+    eval_b_path = os.path.join(args.out_dir, "pairs.eval_diverse_b.jsonl")
+    frozen_eval_pids_direct = read_eval_post_ids_direct([eval_a_path, eval_b_path])
+    leak_train_eval = train_pid & frozen_eval_pids_direct
+    leak_all_eval = all_pid & frozen_eval_pids_direct
+    assert not leak_train_eval, (
+        f"凍結 eval (直接読込) post_id が A train に混入: {sorted(leak_train_eval)[:10]}")
+    assert not leak_all_eval, (
+        f"凍結 eval (直接読込) post_id が A train/val に混入: {sorted(leak_all_eval)[:10]}")
+
     # identity 集合の train/val 重複率 (同一性汎化を測る)
     def ikey(p):
         return tuple(p["meta"]["identity_tags"])
@@ -482,8 +585,10 @@ def main():
     id_overlap_rate = round(len(overlap) / max(len(val_ikeys), 1), 4)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    train_path = os.path.join(args.out_dir, "pairs.identity.train.jsonl")
-    val_path = os.path.join(args.out_dir, "pairs.identity.val.jsonl")
+    train_path = os.path.join(
+        args.out_dir, _tagged("pairs.identity.train", args.out_tag, "jsonl"))
+    val_path = os.path.join(
+        args.out_dir, _tagged("pairs.identity.val", args.out_tag, "jsonl"))
     with open(train_path, "w", encoding="utf-8") as f:
         for p in train:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
@@ -499,6 +604,10 @@ def main():
     id_tag_freq, scene_tag_freq = {}, {}
     n_ident, n_scene, n_tags = [], [], []
     texts = []
+    # OOV drop 後の vocab 射影保持率: target タグはすべて vocab 内なので
+    # 保持率は「proj 後に残ったタグが全部 vocab に在る」= 1.0 を確認する量。
+    n_proj_tags = 0
+    n_in_vocab = 0
     for p in allp:
         lang_c[p["lang"]] += 1
         rating_c[p["meta"]["rating"]] = rating_c.get(p["meta"]["rating"], 0) + 1
@@ -507,15 +616,31 @@ def main():
         n_ident.append(len(p["meta"]["identity_tags"]))
         n_scene.append(len(p["meta"]["scene_tags"]))
         n_tags.append(len(p["tags"]))
+        for t in p["tags"]:
+            n_proj_tags += 1
+            if t in vocab_set:
+                n_in_vocab += 1
         for t in p["meta"]["identity_tags"]:
             id_tag_freq[t] = id_tag_freq.get(t, 0) + 1
         for t in p["meta"]["scene_tags"]:
             scene_tag_freq[t] = scene_tag_freq.get(t, 0) + 1
 
+    # identity retention 教師: 全 identity_tags が target に含まれる割合 (= 100% 設計)
+    n_retained = 0
+    n_ident_total = 0
+    for p in allp:
+        tagset = set(p["tags"])
+        for t in p["meta"]["identity_tags"]:
+            n_ident_total += 1
+            if t in tagset:
+                n_retained += 1
+    teacher_retention = round(n_retained / max(n_ident_total, 1), 6)
+
     uniq_id = len({tuple(p["meta"]["identity_tags"]) for p in allp})
     stats = {
         "version": 1,
         "kind": "identity_cond",
+        "out_tag": args.out_tag or None,
         "seed": args.seed,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "counts": {"total": n, "train": len(train), "val": len(val)},
@@ -526,9 +651,28 @@ def main():
                         "val": round(len(val) / n, 4)},
         "unique_text_ratio": round(len(set(texts)) / n, 4),
         "template_dist": {str(k): v for k, v in sorted(tmpl_c.items())},
+        # Phase 4-A: 凍結除外・リーク 0 の証跡
+        "phase4a_exclusion": {
+            "exclude_post_ids_file": args.exclude_post_ids,
+            "excluded_count_loaded": len(excluded),
+            "excluded_skipped_in_gen": n_excluded_skipped,
+            "frozen_eval_pids_read_direct": len(frozen_eval_pids_direct),
+            "leak_train_x_frozen_eval": len(leak_train_eval),
+            "leak_all_x_frozen_eval": len(leak_all_eval),
+            "leak_train_x_excluded": len(train_pid & excluded),
+            "leak_all_x_excluded": len(all_pid & excluded),
+            "post_id_train_val_disjoint": True,
+            "text_train_val_disjoint": True,
+        },
+        "vocab_projection": {
+            "target_tags_total": n_proj_tags,
+            "target_tags_in_vocab": n_in_vocab,
+            "retention_rate": round(n_in_vocab / max(n_proj_tags, 1), 6),
+        },
         "identity": {
             "unique_identity_sets": uniq_id,
             "unique_identity_ratio": round(uniq_id / n, 4),
+            "teacher_retention": teacher_retention,
             "train_val_identity_overlap_count": len(overlap),
             "train_val_identity_overlap_rate": id_overlap_rate,
             "identity_tags_per_pair": {
@@ -561,7 +705,8 @@ def main():
             "danbooru_api": "danbooru.donmai.us/posts.json (tags-only, no pixels)",
         },
     }
-    stats_path = os.path.join(args.out_dir, "stats.identity.json")
+    stats_path = os.path.join(
+        args.out_dir, _tagged("stats.identity", args.out_tag, "json"))
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
 
@@ -574,6 +719,10 @@ def main():
           file=sys.stderr)
     print(f"[id-pairs] identity 重複率(val基準)={id_overlap_rate} "
           f"uniq_identity={uniq_id}/{n}", file=sys.stderr)
+    print(f"[id-pairs] リーク 0 証跡: train∩frozen_eval(直読)="
+          f"{len(leak_train_eval)} all∩frozen_eval={len(leak_all_eval)} "
+          f"train∩excluded={len(train_pid & excluded)} "
+          f"teacher_retention={teacher_retention}", file=sys.stderr)
     return 0
 
 
