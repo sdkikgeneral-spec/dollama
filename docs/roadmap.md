@@ -261,7 +261,7 @@ proxy 数値でなく**実用品質**。
 | 施策 | 機構 | 依存 / ゲート |
 |---|---|---|
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
-| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000**・diverse F1 が件数増で単調拡大=**スケール則**・全判定軸頑健・著者交絡は D2 で否定・**本線昇格=レシピ既定化を確定 (今後の訓練 A/D/F は多様化入力=tags-stay-real を既定)・アーティファクト本体 (`bitnet_dense{,_fp32}.safetensors`) と C++ 推論 golden (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインまで遅延** (2026-06-24 ユーザー決裁) / training-spec §14 / dataset-spec §15) |
+| **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000→10,000**・diverse F1 は seed 頑健に正だが **~2,000 で飽和** (2,000→10,000 は平坦・B-3 で「頭打ちなし」を訂正・training-spec §14.9)・著者交絡は D2 で否定・**本線昇格=レシピ既定化を確定 (今後の訓練 A/D/F は多様化入力=tags-stay-real を既定)・アーティファクト本体 (`bitnet_dense{,_fp32}.safetensors`) と C++ 推論 golden (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインまで遅延** (2026-06-24 ユーザー決裁) / training-spec §14 / dataset-spec §15) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts・ユニークペア天井 6,400 を突破。recall 天井そのものを上げる唯一の確実筋 | **法務/ToS ゲート** (dataset-spec §1.3: 5,000 超は PL 経由専門家確認) ＋ **`[B-merge-at-A]` 遅延タスク**(下記注記) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
@@ -329,6 +329,20 @@ proxy 数値でなく**実用品質**。
 > は B-2000 で消滅 — delta は分散帯の数倍に拡大し、絶対値が低いのは #1 がさらに低いだけで #1 を選ぶ理由にならない。
 > **残る論点 (絶対品質 diverse F1 ~0.32–0.37)** は A 実ペア増 / D 容量増で取りに行く (本線の良し悪しの話とは別軸)。
 > 詳細 training-spec §14.8 / dataset-spec §15.6。
+
+> **B-3 件数拡大 (2026-06-25) — スケール則は ~2,000 件で飽和 (前ノートの「頭打ちなし」を訂正)**:
+> 同方式・同物差し・同 sweep で**著述件数を 10,000 に拡大** (P=2,500 post × k=4 variant・B-2 の
+> スーパーセット・Replace で総 train 12,000=著述 10,000+synthetic 2,000・tags-stay-real)。`make` を
+> `--n-posts`/`--k-per-post` に一般化 (k=1 で B-1/B-2 bitwise 非回帰)。seed sweep 4 seed の delta(B10k−#1)
+> は全 set/metric で **判定 YES (seed 頑健・本物)** だが、**2,000→10,000 の 5 倍増で平坦** — diverse_a F1
+> +0.1472→**+0.1411**・diverse_b F1 +0.1788→**+0.1761** (seed 分散内・むしろ微減)、b 絶対値も 0.319→0.313 /
+> 0.361→0.359 で頭打ち。**前ノート (B-2) の「単調・頭打ちなし」は 500→2,000 の 2 点外挿の誤りで、3 点目
+> (10,000) で飽和が判明**。**運用結論**: 入力多様化単体の伸びしろは ~2,000 で尽きる → 残る低帯域
+> (diverse_a ~0.31 / diverse_b ~0.36) は **B 件数ではなく A 実ペア増 / D 容量増**で取る。**B 著述を 2,000 超に
+> 積む価値は薄く、`[B-merge-at-A]` の既定多様化ファイルは `pairs.train.diverse_b2000.jsonl` で足りる**
+> (b10k 不要)。本線昇格決裁 (2026-06-24) は不変・本番重み #1 据え置き・別名 `bitnet_dense_diverse_b10k`。
+> 本 sweep は 2026-06-25 の PC ハングから冪等再開 (`_results/*.npz` 存在 skip) で完走。
+> 詳細 training-spec §14.9 / dataset-spec §15.8。
 
 > **`[B-merge-at-A]` (A 出荷リトレイン時のチェックリスト・2026-06-24 決裁の遅延条項)**: 施策 B の正典化は
 > A 実ペア増と束ねる次の出荷リトレインで1回にまとめる (golden チャーンを集約)。その回で必ず行うこと:

@@ -645,6 +645,32 @@ py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n 2000 --seed 202
 #   (段b: main Claude が data/bitnet の著述 texts part06–20 を埋める)
 py -3.12 scripts/dollma_make_diverse_train.py --ingest
 ```
+
+### 15.8 B-3 件数拡大 (Replace 2,000 → 10,000・training-spec §14.9)
+
+§15.6 (Replace 2,000) を記録として残し、本節は**著述件数を 10,000 に拡大**したデータセットを追記する。
+**不変条件 (§15.1) はそのまま**: tags-stay-real・Replace 構成・既存 train バイト不変・gold⊆vocab。
+
+- **構築 (k-per-post 一般化)**: `dollma_make_diverse_train.py` を `--n-posts`/`--k-per-post` に一般化し、
+  **P=2,500 unique post × k=4 variant = 著述 10,000** を生成 (variant_idx/style_hint 付き・k=1 で
+  B-1/B-2 と bitwise 非回帰・test 14/14 緑)。**B-2 のスーパーセット** (variant 0 = B-2 著述 part01–20 を
+  再利用・新規 part21–36 に各 500 = +8,000)。Replace 後の総 train **12,000** (著述 **10,000** +
+  synthetic **2,000**)。段a で 3 リーク assert (抽出⊆train / val 非交差 / diverse-val 非交差・
+  スーパーセット assert)・段c `--ingest` で突合・凍結 (tags バイト不変・post_id 非漏出・ja/en 5,000/5,000・
+  uniq テキスト 9,997・リーク 0)。
+- **出力** (本番無改変・別名のみ・gitignore・再生成可):
+  - `data/bitnet/pairs.train.diverse_b10k.jsonl` (12,000 行) / `data/bitnet/stats.diverse_b10k.json`
+  - 中間: `diverse_train_prompts_b10k.jsonl` / `diverse_train_todo_b10k.jsonl` /
+    `diverse_train_texts_part01–36.jsonl` (著述スキーマ `{post_id,variant_idx,lang,text}`・UTF-8)
+  - 訓練重み (別名) `bitnet_dense_diverse_b10k{,_fp32}.safetensors`・sweep scratch
+    `data/bitnet/_seedsweep_b10k/`
+- **結果 (training-spec §14.9)**: sweep 4 seed で delta(B10k−#1) は全 set/metric で seed 頑健 (判定 YES)
+  だが、**~2,000 件で飽和** — 2,000→10,000 の 5 倍増で delta は平坦 (diverse_a F1 +0.1472→+0.1411 /
+  diverse_b +0.1788→+0.1761・seed 分散内)・b 絶対値も頭打ち (0.319→0.313 / 0.361→0.359)。
+  §15.6 で確認した「スケール則」は **~2,000 で頭打ち**と訂正される (効果が seed 頑健に正である点は不変)。
+- **運用知見**: 出荷リトレインの既定多様化ファイルは **b2000 で足りる** (b10k を作る必要はない)。残る
+  低帯域は B 件数ではなく **A 実ペア増 / D 容量増**で取りに行く。**B 著述を 2,000 超に積む価値は薄い**。
+
 ## 16. 品質スコアラ教師データ (Phase 4 Model B・B-3a)
 
 Model B (アニメ品質スコアラ・§13.9 で「別仕様」と予告) の **ScorerNet 蒸留教師データ**。

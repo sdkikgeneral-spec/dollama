@@ -938,6 +938,9 @@ paired t ≈ 35–47・全セルで p < 1e-269。
 - **スケール則**: 入力多様化の効果は著述件数増で**単調に強まり頭打ちが見えない** —
   in-dist は誤差内据え置きで out-of-template (汎化方向) だけが伸びる。D5 (§13.4・小幅で
   (b) 不成立) / D6 (§12.5・符号反転 seed ノイズ) と桁違いに対照的。
+  - **※ 訂正 (§14.9, B-3 で更新)**: 上記「頭打ちが見えない」は 500→2,000 の **2 点からの外挿**。
+    §14.9 で 3 点目 (10,000) を取ったところ **~2,000 件で飽和**することが判明した。
+    スケール則の表現は **§14.9 を正**とする (効果が seed 頑健に正である点・本線昇格決裁は不変)。
 - **本線昇格 決裁済 (2026-06-24・ユーザー) = レシピ既定化を確定**: 今後の訓練 (A 実ペア増 /
   D 容量増 / F 品質ループ) は多様化入力 (tags-stay-real) を**既定レシピ**とする。B は A/D と直交
   (依存連鎖 C→{B,A}→D→F の並列枝) ゆえ、劣るレシピ (#1 系) の上に A/D が積まれる事故を防ぐ。
@@ -965,6 +968,71 @@ py -3.12 scripts/train_bitnet.py --train-file data/bitnet/pairs.train.diverse_b2
 py -3.12 scripts/dollma_b_seedsweep.py
 py -3.12 scripts/dollma_b_seedsweep_analyze.py
 ```
+
+### 14.9 B-3 件数拡大 (Claude 著述 Replace 2,000 → 10,000)・スケール則は ~2,000 で飽和
+
+§14.8.3 で据えた「件数拡大と束ねて再評価」と「頭打ちが見えない (2 点外挿)」を回収する。
+本節は同方式・同物差し (diverse-val 生成 set-F1)・同 sweep 手続きで**著述件数を 10,000 に増やした**
+3 点目の結果を追記する。**結論: 効果は seed 頑健に健在だが、~2,000 件で飽和する** (2,000→10,000 の
+5 倍増で追加利得ゼロ)。
+
+**構成**: P=2,500 unique post × k=4 variant = 著述 10,000 本。Replace 後の総 train 12,000
+(著述 10,000 + synthetic 2,000)・**tags-stay-real**・本番重み/golden/凍結 val 無改変。B-2 の 2,000 を
+内包する**スーパーセット** (variant 0 = B-2 著述 part01–20 を再利用、新規 part21–36 に各 500)。
+`scripts/dollma_make_diverse_train.py` を **k-per-post 一般化** (`--n-posts`/`--k-per-post`・
+variant_idx/style_hint・k=1 で B-1/B-2 と bitwise 非回帰・test 14/14 緑)。出力
+`data/bitnet/pairs.train.diverse_b10k.jsonl` + `stats.diverse_b10k.json` (dataset-spec §15.7)・
+別名重み `bitnet_dense_diverse_b10k{,_fp32}.safetensors`。
+
+#### 14.9.1 seed 頑健性 sweep (4 seed・6ep paired・diverse) と 500→2,000→10,000 スケール則
+
+`scripts/dollma_b10k_seedsweep{,_analyze}.py` で §14.8.2 と同手続き・同 seed・同ハイパラ。
+唯一の差分は B arm の train ファイルと出力先 (scratch `data/bitnet/_seedsweep_b10k/`)。凍結物差し
+(pairs.eval_diverse_a/b) は b2000 sweep と **byte 一致**。per-sample paired delta = B10k − #1
+(n≈1,500/seed)。**3 sweep (500/2,000/10,000) の生 npz を横並びで再集計**:
+
+| set / metric | B500 Δ | B2000 Δ | **B10k Δ** | b 絶対値 500/2k/10k |
+|---|---|---|---|---|
+| diverse_a / F1 | +0.0957±0.0184 | +0.1472±0.0102 | **+0.1411±0.0206** | 0.268 / 0.319 / 0.313 |
+| diverse_a / Jaccard | +0.0647±0.0102 | +0.1047±0.0044 | **+0.1024±0.0111** | 0.165 / 0.205 / 0.202 |
+| diverse_b / F1 | +0.1263±0.0214 | +0.1788±0.0029 | **+0.1761±0.0199** | 0.309 / 0.361 / 0.359 |
+| diverse_b / Jaccard | +0.0877±0.0125 | +0.1314±0.0034 | **+0.1326±0.0119** | 0.195 / 0.239 / 0.240 |
+
+判定軸 (§14.4): **全 set/metric で (a) 4/4 正・(b) #1 分散帯 sd 超え・(c) 各 seed paired CI が 0 除外
+= YES (seed 頑健・本物)**。per-seed paired t ≈ 28–46・全セル p < 1e-170。**効果自体は B-2 同様に健在**。
+
+#### 14.9.2 判定 — スケール則は ~2,000 件で飽和 (頭打ち)
+
+- **飽和**: 500→2,000 は大幅増 (diverse_a F1 +0.0957→+0.1472 / diverse_b +0.1263→+0.1788) だが、
+  **2,000→10,000 は平坦** — delta は +0.1472→+0.1411 (a) / +0.1788→+0.1761 (b) と **seed 分散内で
+  むしろ微減**、b 絶対値も 0.319→0.313 (a) / 0.361→0.359 (b) と頭打ち。**5 倍の著述 (2,000→10,000)
+  で追加利得は実質ゼロ**。§14.8.3 の「単調・頭打ちなし」は 2 点外挿の誤りで、3 点目で飽和が見えた。
+- **含意 (運用知見)**: 入力多様化**単体**での伸びしろは ~2,000 件で尽きる。残る低帯域
+  (diverse_a ~0.31 / diverse_b ~0.36) は **B の件数ではなく A 実ペア増 / D 容量増**で取りに行く課題。
+  **今後 B 著述を 2,000 超に積む価値は薄い** (本線レシピの多様化件数は ~2,000 で足りる・10,000 は不要)。
+- **本線昇格決裁は不変** (§14.8.3・2026-06-24 ユーザー決裁): 多様化入力 (tags-stay-real) を既定レシピ化。
+  B-3 はその件数下限を「~2,000 で飽和」と確定しただけで、決裁・正典差し替えの遅延条項 (A 出荷リトレインで
+  1 回) は変えない。出荷時の既定多様化ファイルは **b2000 で足りる** (b10k を作る必要はない)。
+- 本番重みは **#1 据え置き・無改変**・別名 `bitnet_dense_diverse_b10k` 出力・凍結アンカー無改変。
+
+#### 14.9.3 再現手順 (件数 10,000 版) と PC ハング耐性
+
+```sh
+# 段a: seed 20260620 で 2,500 post × 4 variant = 10,000 著述プロンプト出力 (スーパーセット/3リーク assert)
+py -3.12 scripts/dollma_make_diverse_train.py --emit-prompts --n-posts 2500 --k-per-post 4 --seed 20260620
+#   (段b: main Claude / claude サブエージェントが新規 texts part21–36 を各 500 著述。
+#    禁止: ジェネレータ機械生成/固定ラッパー/カンマ列挙/no_humans 矛盾)
+# 段c: 著述 texts を突合・凍結 (tags バイト不変・総 12,000・著述 10,000 / synthetic 2,000)
+py -3.12 scripts/dollma_make_diverse_train.py --ingest
+# seed 頑健性 sweep (4 seed・本番非破壊・scratch _seedsweep_b10k/) → 集計・判定
+py -3.12 scripts/dollma_b10k_seedsweep.py
+py -3.12 scripts/dollma_b10k_seedsweep_analyze.py
+```
+
+- **ハング耐性**: sweep は各 seed-arm の完了を `_seedsweep_b10k/_results/eval_persample_{arm}_{seed}.npz`
+  存在で判定し、ある arm は skip して冪等再開する。本 sweep は **2026-06-25 に PC ハングで中断** (seed
+  20260621 の b-arm eval 中) したが、同コマンド再投入で完了済み arm を捨てずに続きから完走した。
+  eval が ~895s/本 で律速・GTX1080Ti で全 8 arm ≈ 1.5h。
 
 ## 15. INT8 dense 推論 (量子化圧縮実験)
 
