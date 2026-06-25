@@ -397,6 +397,43 @@ test_bitnet_infer_exe = executable('test_bitnet_infer',
 )
 test('bitnet_infer', test_bitnet_infer_exe, timeout : 600)
 
+# BitNet dense 推論プロファイラ (Tier 1 速度最適化・計測専用 exe・test 非登録)
+# 本番 bitnet.hpp は無改変・public API (forward / forward_fast) 経由。
+# double 参照経路と float32+AVX2 高速パスの seq8/32/63 中央値と倍率を出す。
+# 重み (bitnet_dense_fp32.safetensors) 不在時は health に skip 終了 (return 0)。
+prof_bitnet_exe = executable('prof_bitnet',
+  sources             : files('tests/prof_bitnet.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + ['-DWEIGHTS_PATH="' + bn_weights_path + '"'],
+)
+
+# ----------------------------------------------------------------
+# CPU トポロジ自動検出 (core/cpu_topology.hpp)
+# ----------------------------------------------------------------
+# 列挙のみ担当 (Win32 GetLogicalProcessorInformationEx / Linux sysfs best-effort)。
+# アフィニティ設定は core/affinity.hpp を流用。roadmap L221 HW 環境抽象化の基盤。
+
+# 構造的健全性テスト (純 C++・常時実行。Win32 不在環境は [SKIP] return 0)。
+test_cpu_topology_exe = executable('test_cpu_topology',
+  sources             : files('tests/test_cpu_topology.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('cpu_topology', test_cpu_topology_exe)
+
+# CPU LM 推論 Tier 2 前提計測 (計測専用 exe・test 非登録・prof_bitnet と同じ扱い)。
+# forward_fast を制御ピン留め (単一論理 / 物理スケール / HT 同居 / P vs E) で計時。
+# マスクは cpu_topology.hpp の自動検出で決定 (決め打ちマスク排除)。
+# WEIGHTS パスは prof_bitnet と同様に -D 埋め込み。重み不在時は健全に skip。
+prof_cpu_topology_exe = executable('prof_cpu_topology',
+  sources             : files('tests/prof_cpu_topology.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + ['-DWEIGHTS_PATH="' + bn_weights_path + '"'],
+)
+
 # BitNet dense INT8 推論テスト (Phase 4 圧縮実験・重みのみ INT8)
 # bitnet_dense_fp32 の FP32 射影 8 本を per-row INT8 量子化し、FP32 golden と
 # 突合して劣化 (logits corr / 生成一致率) を数値化する。重み/golden は dense #6 と

@@ -28,13 +28,46 @@
 //   2-<sep> 方式に拡げた generate_with_identity を追加 (重み・アーキは不変)。
 //   identity 対応重み bitnet_dense_identity_fp32.safetensors も同じ 74 テンソル
 //   [out,in] レイアウトなので、本クラスのコンストラクタでそのままロードできる。
+//
+// ──────────────────────────────────────────────────────────────────
+// Tier 1 速度最適化 (単スレッド AVX2):
+//   golden 突合の参照経路である forward() / linear() (double 蓄積) は一切触らず、
+//   float32 蓄積 + AVX2/FMA intrinsics の高速パス (linear_fast / attention_block_fast
+//   / ffn_block_fast / forward_fast) を新設し、generate() 系を高速パスへ切り替える。
+//   RoPE・softmax は double のまま据え置く (apply_rope / scores は既存ロジック流用)。
+//   forward_fast(..., last_only=true) は lm_head を最終位置だけ計算する (generate 用)。
 
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// ── AVX2/FMA intrinsics の取り込み (Tier 1 高速パス linear_fast 用) ──
+// MSVC: /arch:AVX2 (meson.build L30) 有効時は <immintrin.h> をそのまま使える。
+// GCC/Clang: __AVX2__ が立っていれば即時利用、立っていなくても関数単位の
+//            target("avx2,fma") 属性で当該関数だけ AVX2 を許可する
+//            (プロジェクト全体に -mavx2 を足さずに済む)。
+// いずれも使えない環境向けにスカラ float32 fallback をコンパイル時に選ぶ。
+#if defined(_MSC_VER)
+#  include <immintrin.h>
+#  define DOLLAMA_HAVE_AVX2 1
+#  define DOLLAMA_AVX2_TARGET
+#elif defined(__GNUC__) || defined(__clang__)
+#  if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+#    include <immintrin.h>
+#    define DOLLAMA_HAVE_AVX2 1
+#    define DOLLAMA_AVX2_TARGET __attribute__((target("avx2,fma")))
+#  else
+#    define DOLLAMA_HAVE_AVX2 0
+#    define DOLLAMA_AVX2_TARGET
+#  endif
+#else
+#  define DOLLAMA_HAVE_AVX2 0
+#  define DOLLAMA_AVX2_TARGET
+#endif
 
 #include "io/safetensors.hpp"
 #include "io/tokenizer.hpp"
@@ -171,29 +204,102 @@ public:
         return logits;
     }
 
+    // ── ホスト dense forward (Tier 1 高速パス・float32 蓄積 + AVX2) ──────
+    // forward() と同形の層構造を、matmul だけ linear_fast (float32 + AVX2/FMA) に
+    // 差し替えて実行する。RoPE / softmax は double 据え置き (apply_rope / scores 流用)。
+    //   last_only = false: 全位置の lm_head を計算し logits [S * VOCAB_SIZE] を返す
+    //                      (非回帰テスト用・forward() と同じ形)。
+    //   last_only = true : 最終位置のみ lm_head を計算し logits [VOCAB_SIZE] を返す
+    //                      (generate 用・lm_head の計算量を 1/S に削減)。
+    std::vector<float> forward_fast(const std::vector<int>& tokens,
+                                    bool last_only) const
+    {
+        const int S = static_cast<int>(tokens.size());
+        if (S <= 0)
+        {
+            throw std::runtime_error("BitNetDenseInfer::forward_fast: empty sequence");
+        }
+        if (S > MAX_SEQ_LEN)
+        {
+            throw std::runtime_error("BitNetDenseInfer::forward_fast: seq exceeds MAX_SEQ_LEN");
+        }
+        for (int t : tokens)
+        {
+            if (t < 0 || t >= VOCAB_SIZE)
+            {
+                throw std::runtime_error("BitNetDenseInfer::forward_fast: token id out of range");
+            }
+        }
+
+        // hidden state h[S][D_MODEL] を embedding で初期化。
+        std::vector<float> h(static_cast<size_t>(S) * D_MODEL, 0.0f);
+        for (int s = 0; s < S; ++s)
+        {
+            const float* e = embed_.data()
+                             + static_cast<size_t>(tokens[s]) * D_MODEL;
+            for (int d = 0; d < D_MODEL; ++d)
+            {
+                h[static_cast<size_t>(s) * D_MODEL + d] = e[d];
+            }
+        }
+
+        for (const auto& L : layers_)
+        {
+            attention_block_fast(L, h, S);
+            ffn_block_fast(L, h, S);
+        }
+
+        // 最終 RMSNorm → lm_head (tied embed)。float32 蓄積 (linear_fast 相当)。
+        std::vector<float> normed(D_MODEL);
+
+        if (last_only)
+        {
+            // generate 用: 最終位置のみ lm_head を計算する。
+            std::vector<float> logits(static_cast<size_t>(VOCAB_SIZE), 0.0f);
+            const int s = S - 1;
+            rms_norm(&h[static_cast<size_t>(s) * D_MODEL], final_norm_.data(),
+                     normed.data(), D_MODEL, RMS_EPS);
+            // lm_head = embed [VOCAB_SIZE, D_MODEL] と normed の matmul。
+            linear_fast(embed_.data(), normed.data(), VOCAB_SIZE, D_MODEL,
+                        logits.data());
+            return logits;
+        }
+
+        // 非回帰テスト用: 全位置の lm_head を計算する。
+        std::vector<float> logits(static_cast<size_t>(S) * VOCAB_SIZE, 0.0f);
+        for (int s = 0; s < S; ++s)
+        {
+            rms_norm(&h[static_cast<size_t>(s) * D_MODEL], final_norm_.data(),
+                     normed.data(), D_MODEL, RMS_EPS);
+            linear_fast(embed_.data(), normed.data(), VOCAB_SIZE, D_MODEL,
+                        &logits[static_cast<size_t>(s) * VOCAB_SIZE]);
+        }
+        return logits;
+    }
+
     // ── greedy デコード ────────────────────────────────────────────
     // prompt id 列 (= [<bos>] + encode_text_greedy(text) + [<sep>]) から
     // 次トークンを逐次 argmax で生成する。生成した tag id 列 (prompt・<eos>
     // を含まない pure な生成部) を返す。
-    //   - 各ステップ: 列全体を forward → 最終位置 FP32 logits の argmax。
+    //   - 各ステップ: 列全体を forward_fast(last_only=true) → 最終位置 logits の argmax。
     //   - tie は最小 id。
     //   - 次トークン == <eos>(=2) → 出力に含めず停止。
     //   - 列長が MAX_SEQ_LEN(=64) に達したら打ち切り。
     //   - repeat 抑制なし。<eos> 以外の specials はそのまま積む。
+    // Tier 1: forward_fast (float32 + AVX2 + last_only) 経由で高速化。argmax 仕様は不変。
     std::vector<int> generate(const std::vector<int>& prompt_ids) const
     {
         std::vector<int> seq = prompt_ids;
         std::vector<int> gen;
         while (static_cast<int>(seq.size()) < MAX_SEQ_LEN)
         {
-            std::vector<float> logits = forward(seq);
-            // 最終位置のロジット行。
-            const size_t last = (seq.size() - 1) * static_cast<size_t>(VOCAB_SIZE);
+            // 最終位置のロジット行 [VOCAB_SIZE] のみを得る。
+            std::vector<float> logits = forward_fast(seq, /*last_only=*/true);
             int best = 0;
-            float bestv = logits[last];
+            float bestv = logits[0];
             for (int v = 1; v < VOCAB_SIZE; ++v)
             {
-                const float lv = logits[last + static_cast<size_t>(v)];
+                const float lv = logits[static_cast<size_t>(v)];
                 // tie は小さい id を選ぶため、厳密に大きいときだけ更新する。
                 if (lv > bestv)
                 {
@@ -321,6 +427,7 @@ private:
     }
 
     // dense Linear: y[o] = Σ_i w[o*in + i] * x[i] (double 蓄積)。
+    // ★ golden 突合の参照経路。一切触らない (forward() からのみ呼ばれる)。
     static void linear(const float* w, const float* x,
                        int out_dim, int in_dim, float* y)
     {
@@ -334,6 +441,58 @@ private:
             }
             y[o] = static_cast<float>(acc);
         }
+    }
+
+    // ── Tier 1 高速 Linear: y[o] = Σ_i w[o*in + i] * x[i] (float32 蓄積 + AVX2/FMA) ──
+    // linear() と同形シグネチャ。double を使わず float32 蓄積で行ごとに内積を取る。
+    // 8-wide _mm256_fmadd_ps で内積を積み、末尾 <8 要素はスカラ処理。各出力行は
+    // 256bit ベクタの水平加算でまとめる。AVX2 不在環境はスカラ float32 fallback。
+    // forward_fast / attention_block_fast / ffn_block_fast からのみ呼ばれる
+    // (forward()/linear() の double 経路は無改変・非回帰)。
+    DOLLAMA_AVX2_TARGET
+    static void linear_fast(const float* w, const float* x,
+                            int out_dim, int in_dim, float* y)
+    {
+#if DOLLAMA_HAVE_AVX2
+        const int vec_end = in_dim - (in_dim % 8);  // 8 の倍数までベクタ化
+        for (int o = 0; o < out_dim; ++o)
+        {
+            const float* wrow = w + static_cast<size_t>(o) * in_dim;
+            __m256 acc = _mm256_setzero_ps();
+            int i = 0;
+            for (; i < vec_end; i += 8)
+            {
+                const __m256 wv = _mm256_loadu_ps(wrow + i);
+                const __m256 xv = _mm256_loadu_ps(x + i);
+                acc = _mm256_fmadd_ps(wv, xv, acc);
+            }
+            // 256bit (8 lane) を水平加算して 1 スカラにまとめる。
+            __m128 lo = _mm256_castps256_ps128(acc);
+            __m128 hi = _mm256_extractf128_ps(acc, 1);
+            lo = _mm_add_ps(lo, hi);          // [a0+a4, a1+a5, a2+a6, a3+a7]
+            lo = _mm_hadd_ps(lo, lo);
+            lo = _mm_hadd_ps(lo, lo);
+            float sum = _mm_cvtss_f32(lo);
+            // 末尾 <8 要素のスカラ処理。
+            for (; i < in_dim; ++i)
+            {
+                sum += wrow[i] * x[i];
+            }
+            y[o] = sum;
+        }
+#else
+        // AVX2 不在環境: float32 蓄積のスカラ fallback (double を使わない)。
+        for (int o = 0; o < out_dim; ++o)
+        {
+            const float* wrow = w + static_cast<size_t>(o) * in_dim;
+            float sum = 0.0f;
+            for (int i = 0; i < in_dim; ++i)
+            {
+                sum += wrow[i] * x[i];
+            }
+            y[o] = sum;
+        }
+#endif
     }
 
     // RoPE (GPT-NeoX 系・(i, i+half) ペア)。models/bitnet.hpp と同式。
@@ -355,6 +514,7 @@ private:
     }
 
     // causal multi-head self-attention (pre-RMSNorm + residual)。
+    // ★ golden 参照経路。一切触らない (forward() からのみ呼ばれる)。
     void attention_block(const Layer& L, std::vector<float>& h, int S) const
     {
         const int D = D_MODEL;
@@ -450,8 +610,108 @@ private:
         }
     }
 
+    // ── Tier 1 高速 attention block (linear → linear_fast のみ差し替え) ──
+    // attention_block と同形。Q/K/V/出力 projection の matmul を linear_fast
+    // (float32 + AVX2) に置換する。RoPE / softmax / attention 加重和は既存ロジック
+    // (double) をそのまま据え置く。forward_fast からのみ呼ばれる。
+    void attention_block_fast(const Layer& L, std::vector<float>& h, int S) const
+    {
+        const int D = D_MODEL;
+        // 1) pre-norm
+        std::vector<float> x(static_cast<size_t>(S) * D);
+        for (int s = 0; s < S; ++s)
+        {
+            rms_norm(&h[static_cast<size_t>(s) * D], L.attn_norm.data(),
+                     &x[static_cast<size_t>(s) * D], D, RMS_EPS);
+        }
+
+        // 2) Q/K/V projection (高速 Linear)。
+        std::vector<float> Q(static_cast<size_t>(S) * D);
+        std::vector<float> K(static_cast<size_t>(S) * D);
+        std::vector<float> V(static_cast<size_t>(S) * D);
+        for (int s = 0; s < S; ++s)
+        {
+            const float* xs = &x[static_cast<size_t>(s) * D];
+            linear_fast(L.wq.data(), xs, D, D, &Q[static_cast<size_t>(s) * D]);
+            linear_fast(L.wk.data(), xs, D, D, &K[static_cast<size_t>(s) * D]);
+            linear_fast(L.wv.data(), xs, D, D, &V[static_cast<size_t>(s) * D]);
+        }
+
+        // 3) RoPE を Q/K の各 head に適用 (double 据え置き)。
+        for (int s = 0; s < S; ++s)
+        {
+            for (int hd = 0; hd < N_HEADS; ++hd)
+            {
+                float* q = &Q[static_cast<size_t>(s) * D + hd * HEAD_DIM];
+                float* k = &K[static_cast<size_t>(s) * D + hd * HEAD_DIM];
+                apply_rope(q, s);
+                apply_rope(k, s);
+            }
+        }
+
+        // 4) causal scaled dot-product attention (head ごと・double softmax 据え置き)。
+        const double scale = 1.0 / std::sqrt(static_cast<double>(HEAD_DIM));
+        std::vector<float> attn_out(static_cast<size_t>(S) * D, 0.0f);
+        std::vector<double> scores(static_cast<size_t>(S));
+        for (int hd = 0; hd < N_HEADS; ++hd)
+        {
+            const int off = hd * HEAD_DIM;
+            for (int s = 0; s < S; ++s)
+            {
+                double maxv = -1e300;
+                for (int j = 0; j <= s; ++j)
+                {
+                    const float* q = &Q[static_cast<size_t>(s) * D + off];
+                    const float* k = &K[static_cast<size_t>(j) * D + off];
+                    double dot = 0.0;
+                    for (int d = 0; d < HEAD_DIM; ++d)
+                    {
+                        dot += static_cast<double>(q[d]) * static_cast<double>(k[d]);
+                    }
+                    dot *= scale;
+                    scores[static_cast<size_t>(j)] = dot;
+                    if (dot > maxv)
+                    {
+                        maxv = dot;
+                    }
+                }
+                double sum = 0.0;
+                for (int j = 0; j <= s; ++j)
+                {
+                    const double e = std::exp(scores[static_cast<size_t>(j)] - maxv);
+                    scores[static_cast<size_t>(j)] = e;
+                    sum += e;
+                }
+                const double inv = 1.0 / sum;
+                float* outv = &attn_out[static_cast<size_t>(s) * D + off];
+                for (int j = 0; j <= s; ++j)
+                {
+                    const double w = scores[static_cast<size_t>(j)] * inv;
+                    const float* v = &V[static_cast<size_t>(j) * D + off];
+                    for (int d = 0; d < HEAD_DIM; ++d)
+                    {
+                        outv[d] += static_cast<float>(w * static_cast<double>(v[d]));
+                    }
+                }
+            }
+        }
+
+        // 5) 出力 projection (高速 Linear) + residual。
+        std::vector<float> proj(D);
+        for (int s = 0; s < S; ++s)
+        {
+            linear_fast(L.wo.data(), &attn_out[static_cast<size_t>(s) * D],
+                        D, D, proj.data());
+            for (int d = 0; d < D; ++d)
+            {
+                h[static_cast<size_t>(s) * D + d] += proj[d];
+            }
+        }
+    }
+
     // SwiGLU FFN (pre-RMSNorm + residual)。
     //   y = w_down( silu(w_gate(x)) * w_up(x) )
+    // ★ golden 参照経路。一切触らない (forward() からのみ呼ばれる)。
     void ffn_block(const Layer& L, std::vector<float>& h, int S) const
     {
         const int D = D_MODEL;
@@ -474,6 +734,39 @@ private:
                 inter[f] = static_cast<float>(silu * static_cast<double>(u[f]));
             }
             linear(L.w_down.data(), inter.data(), D, F, y.data());
+            for (int d = 0; d < D; ++d)
+            {
+                h[static_cast<size_t>(s) * D + d] += y[d];
+            }
+        }
+    }
+
+    // ── Tier 1 高速 SwiGLU FFN (linear → linear_fast のみ差し替え) ──────
+    // ffn_block と同形。w_gate / w_up / w_down の matmul を linear_fast (float32 +
+    // AVX2) に置換する。SiLU ゲートは既存ロジック (double) をそのまま据え置く。
+    // forward_fast からのみ呼ばれる。
+    void ffn_block_fast(const Layer& L, std::vector<float>& h, int S) const
+    {
+        const int D = D_MODEL;
+        const int F = FFN_DIM;
+        std::vector<float> x(D);
+        std::vector<float> g(F);
+        std::vector<float> u(F);
+        std::vector<float> inter(F);
+        std::vector<float> y(D);
+        for (int s = 0; s < S; ++s)
+        {
+            rms_norm(&h[static_cast<size_t>(s) * D], L.ffn_norm.data(),
+                     x.data(), D, RMS_EPS);
+            linear_fast(L.w_gate.data(), x.data(), F, D, g.data());
+            linear_fast(L.w_up.data(),   x.data(), F, D, u.data());
+            for (int f = 0; f < F; ++f)
+            {
+                const double gv = static_cast<double>(g[f]);
+                const double silu = gv / (1.0 + std::exp(-gv));
+                inter[f] = static_cast<float>(silu * static_cast<double>(u[f]));
+            }
+            linear_fast(L.w_down.data(), inter.data(), D, F, y.data());
             for (int d = 0; d < D; ++d)
             {
                 h[static_cast<size_t>(s) * D + d] += y[d];

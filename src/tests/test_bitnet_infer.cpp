@@ -25,6 +25,8 @@
 //   3. A3 identity: prompt は identity_tags + scene_text から C++ 側で組み立て
 //      (generate_with_identity)、その生成も gen_ids と完全一致。
 //   4. CharacterBible.find->canonical_tags を identity_tags に流す結線疎通 (定性)。
+//   5. Tier 1 高速パス健全性: forward() (double, full) と forward_fast(last_only=false)
+//      (float32 + AVX2) の全 logits を突合 (max_abs < 1e-3 かつ corr >= 0.99999)。
 
 #include <chrono>
 #include <cmath>
@@ -288,6 +290,84 @@ static bool test_identity_greedy_decode()
                               "identity");
 }
 
+// ── Tier 1 高速パス健全性: forward (double) vs forward_fast (float32 + AVX2) ──
+// 同一入力 (logits golden の input_ids_s{8,32,63}) で参照経路 forward() と高速パス
+// forward_fast(last_only=false) の全 logits を突合する。double→float32 蓄積に
+// 変えても数値が崩れていないこと (max_abs < 1e-3 かつ corr >= 0.99999) を固定する。
+// weights/golden 不在時は [SKIP]。
+static bool test_forward_fast_matches_double()
+{
+    if (!file_exists(WEIGHTS_PATH) || !file_exists(LOGITS_GOLDEN_PATH))
+    {
+        std::cout << "[test_forward_fast_matches_double] SKIP (weights/golden 不在)\n";
+        return true;
+    }
+
+    BitNetDenseInfer model(WEIGHTS_PATH);
+    SafeTensors gold(LOGITS_GOLDEN_PATH);
+
+    const int seq_lens[3] = {8, 32, 63};
+    for (int sl : seq_lens)
+    {
+        const std::string suffix = "s" + std::to_string(sl);
+        const std::vector<int> ids = read_i32(gold, "input_ids_" + suffix);
+
+        const std::vector<float> ref  = model.forward(ids);
+        const std::vector<float> fast = model.forward_fast(ids, /*last_only=*/false);
+
+        if (ref.size() != fast.size())
+        {
+            std::cerr << "[test_forward_fast_matches_double] FAIL: seq=" << sl
+                      << " size ref " << ref.size() << " != fast " << fast.size()
+                      << "\n";
+            return false;
+        }
+
+        double max_abs = 0.0;
+        double sx = 0.0, sy = 0.0, sxx = 0.0, syy = 0.0, sxy = 0.0;
+        const size_t n = ref.size();
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double a = static_cast<double>(ref[i]);
+            const double b = static_cast<double>(fast[i]);
+            const double d = std::fabs(a - b);
+            if (d > max_abs)
+            {
+                max_abs = d;
+            }
+            sx += a;
+            sy += b;
+            sxx += a * a;
+            syy += b * b;
+            sxy += a * b;
+        }
+        const double nn = static_cast<double>(n);
+        const double cov = sxy - sx * sy / nn;
+        const double vx  = sxx - sx * sx / nn;
+        const double vy  = syy - sy * sy / nn;
+        const double corr = cov / std::sqrt(vx * vy);
+
+        std::cout << "[test_forward_fast_matches_double] seq=" << sl
+                  << " max_abs=" << max_abs << " corr=" << corr << "\n";
+
+        if (max_abs >= 1e-3)
+        {
+            std::cerr << "[test_forward_fast_matches_double] FAIL: seq=" << sl
+                      << " max_abs " << max_abs << " >= 1e-3\n";
+            return false;
+        }
+        if (!(corr >= 0.99999))
+        {
+            std::cerr << "[test_forward_fast_matches_double] FAIL: seq=" << sl
+                      << " corr " << corr << " < 0.99999\n";
+            return false;
+        }
+    }
+
+    std::cout << "[test_forward_fast_matches_double] PASSED\n";
+    return true;
+}
+
 // ── A3 identity 生成 (C++ 側で prompt 組み立て) ────────────────────
 // manifest_identity.json の各ケースの identity_tags / scene_text から
 // generate_with_identity で prompt を C++ 内で組み立てて生成し、
@@ -494,6 +574,7 @@ static bool test_character_bible_wiring()
 }
 
 // ── forward 速度の参考計測 (assert 外・情報) ───────────────────────
+// double 参照経路 forward() と Tier 1 高速パス forward_fast() の両方を計時して倍率を出す。
 static bool info_forward_speed()
 {
     if (!file_exists(WEIGHTS_PATH))
@@ -506,18 +587,30 @@ static bool info_forward_speed()
 
     // warmup
     model.forward(ids);
+    model.forward_fast(ids, false);
 
     const int N = 5;
-    const auto t0 = std::chrono::steady_clock::now();
+    auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < N; ++i)
     {
         volatile float sink = model.forward(ids)[0];
         (void)sink;
     }
-    const auto t1 = std::chrono::steady_clock::now();
-    const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count() / N;
-    std::cout << "[info_forward_speed] seq=8 forward ~" << ms << " ms ("
-              << (ms / ids.size()) << " ms/token-pos)\n";
+    auto t1 = std::chrono::steady_clock::now();
+    const double ms_d = std::chrono::duration<double, std::milli>(t1 - t0).count() / N;
+
+    t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < N; ++i)
+    {
+        volatile float sink = model.forward_fast(ids, false)[0];
+        (void)sink;
+    }
+    t1 = std::chrono::steady_clock::now();
+    const double ms_f = std::chrono::duration<double, std::milli>(t1 - t0).count() / N;
+
+    std::cout << "[info_forward_speed] seq=8 forward(double) ~" << ms_d
+              << " ms / forward_fast(float) ~" << ms_f << " ms ("
+              << (ms_f > 0.0 ? ms_d / ms_f : 0.0) << "x)\n";
     return true;
 }
 
@@ -536,6 +629,8 @@ int main()
         ok = dollama::test_identity_greedy_decode() && ok;
         ok = dollama::test_identity_generate_from_tags() && ok;
         ok = dollama::test_character_bible_wiring() && ok;
+        // Tier 1 高速パス健全性 (double vs float32+AVX2)
+        ok = dollama::test_forward_fast_matches_double() && ok;
         // 参考計測
         ok = dollama::info_forward_speed() && ok;
     }
