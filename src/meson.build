@@ -18,6 +18,14 @@ http_cpp_args = []
 if http_enabled
   http_deps     += http_dep
   http_cpp_args += '-DHAVE_HTTP'
+  # cpp-httplib は Windows 10 以降の Win32 API を要求する。MinGW GCC は
+  # _WIN32_WINNT を既定で低く設定するため、httplib.h の Windows 版判定 /
+  # CreateFile2 が通るよう Windows 10 (0x0A00) を明示する (MSVC では既定で充足)。
+  # なお非同期名前解決 (GetAddrInfoExCancel) は MinGW の msvcrt ヘッダに無いため、
+  # サブプロジェクトオプション cpp-httplib:non_blocking_getaddrinfo=disabled で無効化する。
+  if is_win
+    http_cpp_args += '-D_WIN32_WINNT=0x0A00'
+  endif
 endif
 
 # src/ をインクルードパスに追加 (core/*.hpp を #include "core/tensor.hpp" で参照可能)

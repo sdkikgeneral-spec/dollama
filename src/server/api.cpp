@@ -1,6 +1,7 @@
 // OpenAI Images 互換 HTTP API 実装
 //
 // エンドポイント:
+//   GET  /                       — ブラウザで開く簡易 Web UI (HTML 1 枚)
 //   POST /v1/images/generations — txt2img (JSON → GenRequest → 生成 → base64 PNG)
 //   POST /v1/images/edits       — img2img (現フェーズは 501 Not Implemented)
 //   GET  /health                — {"status":"ok"}
@@ -160,10 +161,132 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
     res.set_content(out.dump(), "application/json");
 }
 
+// ブラウザで開く簡易 Web UI (外部依存なし・インライン CSS/JS の単一ページ)。
+// prompt / negative_prompt を入力し /v1/images/generations を fetch して
+// 返ってきた b64_json を <img> に表示するだけの最小構成。
+const char* const kIndexHtml = R"HTML(<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dollama</title>
+<style>
+  body { font-family: sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 1.4rem; }
+  label { display: block; margin-top: 12px; font-weight: bold; }
+  textarea { width: 100%; box-sizing: border-box; font-size: 1rem; padding: 6px; }
+  button { margin-top: 16px; padding: 8px 20px; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #status { margin-top: 12px; min-height: 1.2em; }
+  #status.error { color: #c00; }
+  #result { margin-top: 16px; }
+  #result img { max-width: 100%; border: 1px solid #ccc; }
+  .note { margin-top: 8px; font-size: 0.85rem; color: #666; }
+</style>
+</head>
+<body>
+<h1>dollama 画像生成</h1>
+<p class="note">注記: この PC では生成器がスタブにフォールバックするため、本物の絵は出ません (UI と PNG 表示の確認用です)。</p>
+
+<label for="prompt">prompt</label>
+<textarea id="prompt" rows="3" placeholder="1girl, silver hair, magical girl">1girl, silver hair, magical girl</textarea>
+
+<label for="negative">negative_prompt</label>
+<textarea id="negative" rows="2" placeholder="lowres, bad anatomy"></textarea>
+
+<button id="gen">生成</button>
+
+<div id="status"></div>
+<div id="result"></div>
+
+<script>
+const btn = document.getElementById("gen");
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
+
+function setStatus(msg, isError)
+{
+  statusEl.textContent = msg;
+  statusEl.className = isError ? "error" : "";
+}
+
+btn.addEventListener("click", async () =>
+{
+  const prompt = document.getElementById("prompt").value;
+  const negative_prompt = document.getElementById("negative").value;
+  if (!prompt.trim())
+  {
+    setStatus("prompt を入力してください", true);
+    return;
+  }
+
+  btn.disabled = true;
+  setStatus("生成中...", false);
+  resultEl.innerHTML = "";
+
+  try
+  {
+    const resp = await fetch("/v1/images/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, negative_prompt, response_format: "b64_json" })
+    });
+
+    if (resp.status !== 200)
+    {
+      let detail = "HTTP " + resp.status;
+      try
+      {
+        const errJson = await resp.json();
+        if (errJson && errJson.error && errJson.error.message)
+        {
+          detail += ": " + errJson.error.message;
+        }
+      }
+      catch (e) {}
+      setStatus("生成に失敗しました (" + detail + ")", true);
+      return;
+    }
+
+    const data = await resp.json();
+    if (!data || !Array.isArray(data.data) || data.data.length === 0 || !data.data[0].b64_json)
+    {
+      setStatus("レスポンスに画像データがありません", true);
+      return;
+    }
+
+    const b64 = data.data[0].b64_json;
+    const img = document.createElement("img");
+    img.src = "data:image/png;base64," + b64;
+    resultEl.appendChild(img);
+    setStatus("完了", false);
+  }
+  catch (e)
+  {
+    setStatus("通信エラー: " + e, true);
+  }
+  finally
+  {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
+)HTML";
+
 } // namespace
 
 void register_routes(httplib::Server& svr, IImageGenerator& gen)
 {
+    // ブラウザで開く簡易 Web UI
+    svr.Get("/",
+        [](const httplib::Request&, httplib::Response& res)
+        {
+            res.status = 200;
+            res.set_content(kIndexHtml, "text/html; charset=utf-8");
+        });
+
     svr.Get("/health",
         [](const httplib::Request&, httplib::Response& res)
         {

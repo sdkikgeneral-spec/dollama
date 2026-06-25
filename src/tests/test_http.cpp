@@ -111,6 +111,39 @@ static bool test_base64_roundtrip()
 }
 
 // ----------------------------------------------------------------
+// GET / → 200 + text/html + HTML 内容 (簡易 Web UI)
+// ----------------------------------------------------------------
+static bool test_index_page(ServerFixture& fx)
+{
+    httplib::Client cli("127.0.0.1", fx.port);
+    auto res = cli.Get("/");
+    if (!res || res->status != 200)
+    {
+        std::cerr << "[index] status != 200 (got "
+                  << (res ? res->status : -1) << ")\n";
+        return false;
+    }
+    const std::string ctype = res->get_header_value("Content-Type");
+    if (ctype.find("text/html") == std::string::npos)
+    {
+        std::cerr << "[index] Content-Type に text/html が無い: " << ctype << "\n";
+        return false;
+    }
+    if (res->body.find("<!DOCTYPE html") == std::string::npos)
+    {
+        std::cerr << "[index] body に <!DOCTYPE html が無い\n";
+        return false;
+    }
+    if (res->body.find("/v1/images/generations") == std::string::npos)
+    {
+        std::cerr << "[index] body に /v1/images/generations が無い\n";
+        return false;
+    }
+    std::cout << "  [index] 200 OK text/html (" << res->body.size() << " bytes)\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
 // GET /health → 200 + status ok
 // ----------------------------------------------------------------
 static bool test_health(ServerFixture& fx)
@@ -278,6 +311,7 @@ int main()
     {
         ServerFixture fx;
         std::cout << "  [server] bound port " << fx.port << "\n";
+        ok = test_index_page(fx) && ok;
         ok = test_health(fx) && ok;
         ok = test_models(fx) && ok;
         ok = test_generations_ok(fx) && ok;
