@@ -1,6 +1,7 @@
 using Dollama.Ui.Components;
 using Dollama.Ui.Services;
 using Dollama.Ui.Telemetry;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,6 +37,17 @@ if (!app.Environment.IsDevelopment())
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 
 app.UseAntiforgery();
+
+// プリセットのサムネイル PNG を /thumb で静的公開する (ui/data/thumbs/)。
+// 起動時に必ずディレクトリを作る (無いと PhysicalFileProvider が落ちる)。
+// MapStaticAssets (wwwroot 配信) とは別 RequestPath なので順序衝突しない。
+var thumbsDir = Path.Combine(app.Environment.ContentRootPath, "data", "thumbs");
+Directory.CreateDirectory(thumbsDir);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(thumbsDir),
+    RequestPath = "/thumb",
+});
 
 app.MapStaticAssets();
 app.MapHub<TelemetryHub>("/hubs/telemetry");

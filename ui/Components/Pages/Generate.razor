@@ -22,10 +22,12 @@
         <section class="gen">
             <TagPresetField Label="プロンプト" Kind="prompt"
                             @bind-Tags="_promptTags"
+                            CurrentImage="_imageBytes"
                             Placeholder="例: 1girl と入力して Enter" />
 
             <TagPresetField Label="ネガティブ" Kind="negative"
                             @bind-Tags="_negativeTags"
+                            CurrentImage="_imageBytes"
                             Placeholder="例: lowres, bad anatomy" />
 
             <div class="row">
@@ -103,7 +105,8 @@
 
     private bool _busy;
     private string? _error;
-    private string? _imageData;   // base64 PNG
+    private string? _imageData;   // base64 PNG (img 表示用)
+    private byte[]? _imageBytes;  // 生成画像の生バイト (プリセット保存サムネ用)
     private bool _connected;
 
     private HubConnection? _hub;
@@ -150,6 +153,7 @@
         _busy = true;
         _error = null;
         _imageData = null;
+        _imageBytes = null;
         StateHasChanged();
 
         var req = new GenerationRequest
@@ -165,6 +169,7 @@
         try
         {
             var png = await Client.GenerateAsync(req);
+            _imageBytes = png; // 生バイトを保持 (プリセット保存時のサムネ元)
             _imageData = Convert.ToBase64String(png);
             _connected = true;
         }

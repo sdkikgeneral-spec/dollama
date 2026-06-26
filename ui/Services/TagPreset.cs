@@ -15,4 +15,9 @@ public sealed class TagPreset
 
     [JsonPropertyName("tags")]
     public List<string> Tags { get; set; } = new();
+
+    // サムネイル画像のファイル名 (data/thumbs/ 配下・例 "prompt_お気に入り.png")。
+    // nullable で既存 presets.json (thumbnail なし) と後方互換。
+    [JsonPropertyName("thumbnail")]
+    public string? Thumbnail { get; set; }
 }

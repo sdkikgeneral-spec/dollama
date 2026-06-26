@@ -90,6 +90,8 @@ desktop.ini
 # .NET / Blazor UI (ui/) のビルド成果物
 ui/bin/
 ui/obj/
+ui.Tests/bin/
+ui.Tests/obj/
 # UI のユーザーデータ (名前付きプリセット)。個人データなので追跡しない。
 ui/data/
 

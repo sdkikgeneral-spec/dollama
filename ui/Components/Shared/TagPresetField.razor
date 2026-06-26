@@ -1,24 +1,38 @@
-@* ラベル + 専用プリセット・バー + チップ入力 を 1 セットにした再利用フィールド。
+@* ラベル + 専用プリセット・カード一覧 + チップ入力 を 1 セットにした再利用フィールド。
    プロンプト用 (Kind="prompt") とネガティブ用 (Kind="negative") で 1 つずつ使う。
-   プリセットは Kind で型分けされ、このフィールドのバーからは同 Kind のものだけ見える。 *@
+   プリセットは Kind で型分けされ、このフィールドのカード一覧からは同 Kind のものだけ見える。
+   各カード = サムネ (直近生成画像) + 名前 + 削除 (×)。カード本体クリックでロード。 *@
 @inject PresetStore Presets
 
 <div class="field">
     <span>@Label</span>
 
-    <!-- 専用プリセット・バー (この Kind 限定) -->
-    <div class="presetbar">
-        <select class="preset-select" @bind="_selected">
-            <option value="">― @Label プリセット ―</option>
+    <!-- 専用プリセット・カード一覧 (この Kind 限定) -->
+    @if (_presets.Count > 0)
+    {
+        <div class="preset-grid">
             @foreach (var p in _presets)
             {
-                <option value="@p.Name">@p.Name</option>
+                var url = Presets.ThumbnailUrl(p);
+                <div class="preset-card" @onclick="() => Load(p)" title="@p.Name">
+                    @if (url is not null)
+                    {
+                        <img src="@url" alt="@p.Name" />
+                    }
+                    else
+                    {
+                        <div class="preset-noimg">no image</div>
+                    }
+                    <div class="name">@p.Name</div>
+                    <button type="button" class="del" title="削除"
+                            @onclick="() => Delete(p)" @onclick:stopPropagation="true">×</button>
+                </div>
             }
-        </select>
-        <button type="button" class="preset-btn" @onclick="Load"
-                disabled="@(string.IsNullOrEmpty(_selected))">ロード</button>
-        <button type="button" class="preset-btn danger" @onclick="DeleteSelected"
-                disabled="@(string.IsNullOrEmpty(_selected))">削除</button>
+        </div>
+    }
+
+    <!-- 保存バー -->
+    <div class="presetbar">
         <input class="preset-name" @bind="_newName" placeholder="保存名" />
         <button type="button" class="preset-btn" @onclick="SaveCurrent"
                 disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
@@ -44,8 +58,10 @@
 
     [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
 
+    // 直近生成画像の生バイト (PNG)。保存時にサムネとして使う。無ければサムネ無し保存。
+    [Parameter] public byte[]? CurrentImage { get; set; }
+
     private IReadOnlyList<TagPreset> _presets = new List<TagPreset>();
-    private string _selected = "";
     private string _newName = "";
     private string? _msg;
 
@@ -61,13 +77,8 @@
         await TagsChanged.InvokeAsync(tags);
     }
 
-    private async Task Load()
+    private async Task Load(TagPreset p)
     {
-        var p = _presets.FirstOrDefault(x => x.Name == _selected);
-        if (p is null)
-        {
-            return;
-        }
         // コピーで復元 (プリセット内のリストを直接編集しないため)
         await OnTagsChanged(new List<string>(p.Tags));
         _msg = $"「{p.Name}」をロードしました";
@@ -85,23 +96,18 @@
             Name = name,
             Kind = Kind,
             Tags = new List<string>(Tags),
-        });
+        }, CurrentImage);
         _presets = Presets.All(Kind);
-        _selected = name;
         _newName = "";
-        _msg = $"「{name}」を保存しました";
+        _msg = CurrentImage is not null
+            ? $"「{name}」をサムネ付きで保存しました"
+            : $"「{name}」を保存しました";
     }
 
-    private void DeleteSelected()
+    private void Delete(TagPreset p)
     {
-        if (string.IsNullOrEmpty(_selected))
-        {
-            return;
-        }
-        var name = _selected;
-        Presets.Delete(Kind, name);
+        Presets.Delete(Kind, p.Name);
         _presets = Presets.All(Kind);
-        _selected = "";
-        _msg = $"「{name}」を削除しました";
+        _msg = $"「{p.Name}」を削除しました";
     }
 }

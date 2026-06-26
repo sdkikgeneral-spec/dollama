@@ -1,7 +1,26 @@
-# UI プリセット・サムネイル 設計案
+# UI プリセット・サムネイル 設計
 
-UI で作成したタグプリセットに**サムネイル画像**を持たせ、選択 UI で一覧表示できるようにする提案。
-ステータス: **未着手・設計案 (要レビュー承認)**。実装はプランモード承認 → `project-leader` 経由で行う。
+UI で作成したタグプリセットに**サムネイル画像**を持たせ、選択 UI で一覧表示する。
+ステータス: **実装完了** (Blazor UI `ui/` のみ・C++ `src/` 無改修)。
+
+## 確定事項 (実装に反映済み)
+
+| 項目 | 確定内容 |
+|---|---|
+| サムネ取得元 | **直近の生成画像を自動** (追加操作ゼロ)。`Generate.razor` が生バイトを保持し `TagPresetField` の `CurrentImage` に渡す |
+| 保存形式 | **別ファイル PNG**。`ui/data/thumbs/` 配下。`presets.json` は `thumbnail` ファイル名のみ持つ |
+| 縮小 | **SixLabors.ImageSharp** (クロスプラットフォーム) で **128px 上限・アスペクト比維持** (`ResizeMode.Max`) |
+| 保存先 | `ui/data/thumbs/{kind}_{name}.png` (gitignore 済み・`ui/data/` 配下)。起動時 `Directory.CreateDirectory` |
+| ファイル名安全化 | `Path.GetInvalidFileNameChars()` を `_` 置換 + `..` 潰し + 区切り除去 + 先頭末尾ドット除去。日本語名は保持。最終的にパスが必ず `thumbs/` 配下に閉じることを検証 (パストラバーサル防止) |
+| 配信 | `app.UseStaticFiles` で `ui/data/thumbs/` を `/thumb` に静的公開。上書き検知のため URL は `?v={LastWriteTicks}` 付き |
+| 後方互換 | `thumbnail` は nullable。旧 `presets.json` はそのまま読める。サムネ実体が無い参照はプレースホルダ表示 |
+| 削除整合 | `PresetStore.Delete` が json エントリと対応 PNG の両方を削除 (孤児サムネを残さない) |
+
+実装ファイル: `TagPreset.cs` / `PresetStore.cs` / `Program.cs` / `Dollama.Ui.csproj` / `TagPresetField.razor` / `Generate.razor` / `wwwroot/app.css`。テスト: `ui.Tests/PresetStoreTests.cs` (14 ケース緑)。
+
+---
+
+## 背景 / 当初の設計案 (記録)
 
 ## 背景 / 現状
 
@@ -72,11 +91,11 @@ public sealed class TagPreset
 - `Thumbnail` は nullable。既存 `presets.json` (サムネ無し) はそのまま読め、UI ではプレースホルダ表示。
 - 削除時は対応する `thumbs/*.png` も併せて削除する (`PresetStore.Delete`)。
 
-## 決定が必要な点 (レビュー時に確認)
+## 決定済み (上の「確定事項」に反映)
 
-1. サムネ取得元: **①直近の生成画像を自動** (推奨) / ②手動ファイル選択 / ③両方。
-2. 保存形式: **①別ファイル PNG** (推奨) / ②base64 埋め込み。
-3. 縮小ライブラリ導入の可否 (ImageSharp 追加 OK か / 初版は原寸でいくか)。
+1. サムネ取得元: **①直近の生成画像を自動** に確定。
+2. 保存形式: **①別ファイル PNG** に確定。
+3. 縮小ライブラリ: **ImageSharp 導入** に確定 (128px 上限・アスペクト比維持)。
 
 ## 影響範囲 (実装時の触る場所)
 

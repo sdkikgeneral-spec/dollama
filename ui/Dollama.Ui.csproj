@@ -9,6 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.9" />
+    <!-- サムネ縮小 (クロスプラットフォーム・System.Drawing 不使用)。Apache-2.0 / Six Labors Split License。 -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
 </Project>

@@ -51,6 +51,7 @@ C++ 生成サーバー側 (別ターミナル):
 |---|---|
 | タグ・チップ入力 | プロンプト/ネガを danbooru タグとして 1 つずつ追加 (Enter / カンマ確定)・× で削除・空 Backspace で末尾削除。重複は無視・小文字寄せ |
 | 種別別プリセット | タグ群を **kind (prompt / negative) 別**に名前付き保存・ロード・削除。各入力欄に専用バー |
+| サムネ付きカード選択 | プリセットを **サムネイル付きカード一覧**で表示。カード本体クリックでロード・× で削除。サムネは**直近の生成画像を自動取得**し、保存時に 128px 上限へ縮小して紐付ける (サムネ無しはプレースホルダ) |
 | 生成 | チップ群を `", "` 結合して `POST /v1/images/generations` へ。返った base64 PNG を表示 |
 | 接続インジケータ | `GET /health` で C++ サーバー接続状態を表示 (緑/赤) |
 | HW テレメトリ | CPU / NPU / iGPU / RTX5080 の稼働を SignalR で push 表示 (**現状スタブ値**) |
@@ -61,12 +62,23 @@ C++ 生成サーバー側 (別ターミナル):
 
 ```json
 [
-  { "name": "base-girl", "kind": "prompt",   "tags": ["1girl", "long hair", "smile"] },
+  { "name": "base-girl", "kind": "prompt",   "tags": ["1girl", "long hair", "smile"], "thumbnail": "prompt_base-girl.png" },
   { "name": "neg-common", "kind": "negative", "tags": ["lowres", "bad anatomy"] }
 ]
 ```
 
 同一 kind 内で `name` は一意 (prompt と negative で同名は別物として共存可)。
+
+`thumbnail` は **nullable** (省略可)。サムネ無しの旧 `presets.json` もそのまま読める (後方互換)。
+サムネイル本体は別ファイル PNG として **`ui/data/thumbs/`** 配下に保存する
+(`{kind}_{name}.png`・日本語名は保持・不正文字は `_` 置換しパストラバーサル防止)。
+このディレクトリも gitignore 済み (`ui/data/` 配下)。`/thumb` で静的公開している。
+
+### サムネイルの縮小 (依存)
+
+縮小には [SixLabors.ImageSharp](https://github.com/SixLabors/ImageSharp) (クロスプラットフォーム・
+`System.Drawing` 不使用) を使い、128px 上限・アスペクト比維持で PNG 保存する。
+ライセンスは **Six Labors Split License** (オープンソース利用は Apache-2.0 相当で利用可・本プロジェクトはこの範囲)。
 
 ## プロジェクト構成
 
@@ -78,7 +90,7 @@ ui/
 │  ├─ Pages/Generate.razor       メイン画面 (フォーム + 画像 + テレメトリ)
 │  └─ Shared/
 │     ├─ TagInput.razor          チップ入力 (再利用)
-│     └─ TagPresetField.razor    ラベル + 専用プリセットバー + チップ入力 (再利用)
+│     └─ TagPresetField.razor    ラベル + プリセット・カード一覧 (サムネ) + チップ入力 (再利用)
 ├─ Services/
 │  ├─ DollamaClient.cs           C++ API ラッパ (型付き HttpClient)
 │  ├─ Dtos.cs                    生成リクエスト/レスポンス DTO (snake_case で C++ に一致)
