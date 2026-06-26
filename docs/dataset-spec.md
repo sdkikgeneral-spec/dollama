@@ -957,3 +957,15 @@ py -3.12 scripts/dollma_make_identity_pairs.py --n 22500 --val 2500 \
 
 スキーマは §13 (同一性条件付きペア) と完全同一 (`source:"identity_cond"` + `meta`)。Phase 2
 (再訓練 + diverse-val eval・§14) は本番重み #1 据え置きのまま別名出力で評価する。
+
+### 17.7 a12k seed sweep 結論と a25k の扱い (A クローズ・training-spec §9.10)
+
+Phase 2 (再訓練 + eval) は **a12k のみ** を 4 seed sweep で評価し、A をクローズした (training-spec
+§9.10)。結論: A 実ペア増の効果は diverse-val 生成 F1 ではなく **identity retention (across-seed
+0.9748 ± 0.0010・全 seed 頑健)**。diverse-val F1/Jaccard は 4 set/metric とも seed ノイズ
+(seed 42 のみ符号反転・#1 分散帯 sd 以下・D6 と同型) で施策 B ~2,000 飽和とも整合。
+
+**a25k (train 22,500 / val 2,500) は回さず未使用のまま保持する** (削除しない)。理由: 12k で
+diverse-val が seed ノイズである以上、25k で符号反転が安定化する見込みは薄く、計算コストに
+見合わない。生成済 `pairs.identity.{train,val}.a25k.jsonl` / `stats.identity.a25k.json` は
+将来 (A/D 容量増と束ねた再評価・retention のスケール検証等) のため§17.6 の成果物としてそのまま残す。

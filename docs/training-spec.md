@@ -345,6 +345,61 @@ py -3.12 scripts/train_bitnet.py --identity --smoke
   `gen_golden_identity` と突合する。tokenizer.hpp / vocab.json は変更不要 (`<sep>` 2 回は
   decode が構造トークンとして読み飛ばす)。
 
+### 9.10 A 実ペア増 a12k seed sweep (Phase 4-A 実ペア増・A クローズ確定)
+
+A2 (§9.6) の identity_cond ペアを Phase 1 (dataset-spec §17) で 5k -> **a12k** (train 10,800 /
+val 1,200・teacher_retention 1.0・凍結 eval 除外・リーク 0) に増やし、施策 C (§13) で据えた
+**凍結 diverse-val 生成 set-F1** + **identity retention** の二物差しで、実ペア増の効果が seed
+横断で頑健かを確定した。base(#1 plain hard CE) vs a(A2 `--identity` 混合) を **4 seed
+(20260620 / 20260621 / 42 / 7)・6ep paired** で回す
+(`scripts/dollma_a_seedsweep.py --scale a12k` + `dollma_a_seedsweep_analyze.py --scale a12k`)。
+両 arm とも val・eval_diverse_a/b は完全共通で、唯一の差分は a arm に identity_cond 行が混ざる
+こと。出力は `data/bitnet/_seedsweep_a12k/` 配下のみ (本番 `bitnet_dense*`/`identity`・golden・#1
+本線 pairs・凍結 eval を一切無改変)。
+
+**判定軸** (施策 B/C/D と同一): (a) 全 seed で delta の符号が + で一貫 (b) delta 平均が #1 自身の
+seed 分散帯 (base を seed 間で比べた band) の sd を超える (c) 各 seed の paired bootstrap 95%CI が
+0 を除外。
+
+**(1) diverse-val 生成 F1/Jaccard = seed ノイズ (頑健でない・D6 と同型)**
+
+| set / metric | per-seed delta = a - base (20260620 / 20260621 / 42 / 7) | across 平均 +- sd | #1 band sd | (a)符号 | (b)>band | (c)CI除外 | 頑健 |
+|---|---|---|---|---|---|---|---|
+| diverse_a / F1 | -0.0118 / -0.0358 / **+0.0286** / -0.0405 | -0.0149 +- 0.0316 | 0.0221 | NO (seed42 反転) | NO | YES x4 | **NO** |
+| diverse_a / Jaccard | -0.0040 / -0.0179 / **+0.0183** / -0.0200 | -0.0059 +- 0.0176 | 0.0124 | NO | NO | YES x4 | **NO** |
+| diverse_b / F1 | -0.0112 / -0.0376 / **+0.0286** / -0.0431 | -0.0158 +- 0.0327 | 0.0223 | NO | NO | YES x4 | **NO** |
+| diverse_b / Jaccard | -0.0030 / -0.0169 / **+0.0189** / -0.0206 | -0.0054 +- 0.0179 | 0.0125 | NO | NO | F/Y/Y/Y | **NO** |
+
+全 4 set/metric で判定 NO。各 seed 内では paired CI が 0 を除外する (per-sample n=1500・|t| 大) が、
+**seed 42 だけ符号が反転**し、across 平均は #1 自身の seed 分散帯 sd 以下に埋もれる。これは D6
+(§12.5・外部教師 TIPO 蒸留) と**同型の seed ノイズ** — 「単一 seed では有意に見えるが seed を跨ぐと
+符号が安定しない」。施策 B が ~2,000 件で diverse-val 利得が飽和したこと (§14.9) とも整合的で、
+**A の実ペア増は diverse-val 生成 F1 を上げる手ではない**。in-dist `pairs.val` の F1 は base とほぼ同値・
+legacy recall@10 は 0.78 -> 0.84 と上がり、a arm の val_loss は base より低い (識別は学習しているが、
+凍結 diverse-val の生成集合一致では優位が seed 頑健に立たない)。
+
+**(2) identity retention = 全 seed 頑健に 0.975 (A の本効果)**
+
+| seed | base retention | a retention |
+|---|---|---|
+| 20260620 | 0.5893 | 0.9753 |
+| 20260621 | 0.6314 | 0.9750 |
+| 42 | 0.5770 | 0.9734 |
+| 7 | 0.5760 | 0.9757 |
+| **across-seed** | ~0.576-0.631 | **0.9748 +- 0.0010** |
+
+a arm の retention は **across-seed 0.9748 +- 0.0010** と極めて低分散で全 seed 頑健。base
+(synthetic のみ・identity prefix を解さない) の ~0.58-0.63 から実ペア増 + 条件付け学習で 0.975 に
+到達する。`n_cases=1200` (a12k val 全件・A1 5k の n=500 から拡大しても retention は同帯で安定)。
+
+**結論 (A クローズ確定)**: A 実ペア増の効果は **diverse-val 生成 F1 ではなく「同一性条件追従
+(retention) を頑健に成立させる実ペア基盤」**。a25k は回さない (12k で diverse-val が seed ノイズ
+である以上、25k で符号反転が安定化する見込みは薄く、B ~2,000 飽和とも整合)。生成済 a25k ペアは
+破棄せず保持 (dataset-spec §17)。本番 #1 の即時差し替えはせず、`[B-merge-at-A]` 遅延条項どおり
+B(b2000 多様化) + A(identity 条件付け) を同じ出荷リトレインで 1 回まとめ焼きする。インフラ
+(`dollma_a_seedsweep{,_analyze}.py`・base npz スケール共有・`--only-seed` 小出し・冪等 skip) は
+再利用可能。
+
 
 ## 10. 蒸留混合の A/B 評価 (D3/D4 — 採用せず・負の結果を記録)
 
