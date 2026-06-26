@@ -847,3 +847,113 @@ CLIP image embedding (`clip_image_embed`[768]) と MLP 重みは研究機で配�
   非正規化/全ゼロ→None/長さ不一致→ValueError)・確率未配置で `None`・provenance
   (openrail/labels/期待値写像) を検証。
 - `test_dollma_make_scorer_labels.py` **9/9 緑** (torch/OV/SDXL 不要)。
+
+## 17. Phase 4-A 実ペア増 (12k / 25k) — 実ペア増 Phase 1
+
+§13 (同一性条件付きペア) の **実ペア増**。A 単体の伸びしろ ([input-diversification]
+スケール則が ~2,000 で飽和 → 残低帯域は「A 実ペア増 / D 容量増」で取る) を測るため、
+§13 と同一機構・同一スクリプト (`scripts/dollma_make_identity_pairs.py`・本体無改修) で
+A1 5k → **12k / 25k** に増やした **別名出力** を生成する。施策 B 多様化は被せない
+(A 単体で清潔に測る)。本番重み (`bitnet_dense{,_fp32}.safetensors`)・全 golden・A1 5k
+(無印 `pairs.identity.{train,val}.jsonl` / `stats.identity.json`)・凍結 eval
+(`pairs.eval_diverse_{a,b}.jsonl` / `eval_frozen_post_ids.json`)・#1 本線
+(`pairs.{train,val}.jsonl`) はすべて無改変。
+
+### 17.1 スクリプト引数 (本体無改修・§13 のまま)
+
+`dollma_make_identity_pairs.py` の Phase 4-A 既設引数 (§13 実装済) のみ使用:
+
+- `--out-tag <tag>`: 出力ファイル名サフィックス (例 `a12k` → `pairs.identity.{train,val}.a12k.jsonl`
+  / `stats.identity.a12k.json`)。空で従来名 (A1 5k と bitwise 非回帰)。
+- `--exclude-post-ids <path>`: 凍結 eval 等の post_id 集合 JSON。A train から恒久除外
+  (生成ループで skip + 末尾 assert で 2 重保証)。
+
+### 17.2 件数・実測 (seed 20260620・rating g・B 多様化非適用)
+
+| 指標 | A1 5k (§13.6) | **a12k** | **a25k** |
+|---|---|---|---|
+| train | 4,500 | **10,800** | **22,500** |
+| val | 500 | **1,200** | **2,500** |
+| total | 5,000 | 12,000 | 25,000 |
+| teacher_retention | 1.0 | **1.0** | **1.0** |
+| vocab retention (target tags in vocab) | 1.0 | **1.0** (186,332/186,332) | **1.0** (386,744/386,744) |
+| tokenizer 往復 | UNK 0・完全一致 | **UNK 0・完全一致** | **UNK 0・完全一致** |
+| identity 重複率 (val 基準) | 0.253 | **0.2871** (329/1,200) | **0.3003** (698/2,500) |
+| unique_identity_ratio | — | 0.7863 | 0.7361 |
+| id/pair mean · scene/pair mean | — | 5.65 · 9.88 | 5.59 · 9.88 |
+| lang ja:en | — | 0.501:0.499 | 0.502:0.498 |
+| uniq_text | — | 1.0 | 1.0 |
+
+- **identity 重複率は件数増で漸増** (5k 0.253 → 12k 0.2871 → 25k 0.3003)。同一性集合の
+  被覆が広がる中でも、val 側の約 70% は train 未見の identity 集合 (汎化を測れる領域が大きい)。
+- target タグの **vocab retention 両スケール 1.0** = OOV ゼロ (target は vocab 内タグのみを
+  射影する設計どおり)。
+
+### 17.3 リーク 0 証跡 (stats JSON `phase4a_exclusion`・両スケール)
+
+両 `stats.identity.{a12k,a25k}.json` で以下が全て 0 / disjoint:
+
+| 項目 | a12k | a25k |
+|---|---|---|
+| `excluded_count_loaded` (frozen 集合サイズ) | 1,000 | 1,000 |
+| `excluded_skipped_in_gen` (生成で skip した post) | 428 | 670 |
+| `frozen_eval_pids_read_direct` (eval pairs 直読の post_id) | 1,000 | 1,000 |
+| `leak_train_x_frozen_eval` | **0** | **0** |
+| `leak_all_x_frozen_eval` | **0** | **0** |
+| `leak_train_x_excluded` | **0** | **0** |
+| `leak_all_x_excluded` | **0** | **0** |
+| `post_id_train_val_disjoint` | true | true |
+| `text_train_val_disjoint` | true | true |
+
+`leak_*_x_frozen_eval` は `eval_frozen_post_ids.json` の集合経由でなく、凍結 eval の
+`pairs.eval_diverse_{a,b}.jsonl` を **直読** した 1,000 post_id との交差 (抽出ロジック非依存の
+独立再検証)。検証ログも両スケールで `検証 OK` (validate_identity 0 件)・`tokenizer 往復 OK`。
+
+### 17.4 fetch-factor・cache 取り扱い
+
+`fetch_posts` は cache (`data/bitnet/cache/danbooru_posts.jsonl`) を再利用し、不足分のみ
+**最古 id から過去方向に延伸** (既存を捨てない)。
+
+- **a12k**: `--fetch-factor 1.8` 既定。必要 `(10,800+1,200)*1.8+50 ≈ 21,650` posts <
+  cache 38,000 → **API 取得なし・cache 無改変**。
+- **a25k**: `--fetch-factor 2.2`。必要 `(22,500+2,500)*2.2+50 ≈ 55,050` posts > cache 38,000
+  → cache を **38,000 → 55,200 posts へ過去方向延伸** (約 86 バッチ・`--sleep 1.0`)。
+- 両スケールとも **歩留り不足なし** (full target 達成・fetch-factor を上げる再実行は不要)。
+
+**cache 退避手順 (A 専用に本番 cache を汚さない)**: A 着手前に現 cache を
+`danbooru_posts.jsonl.preA` へ退避 (過去方向延伸で a25k が cache を書き換えるため)。
+
+```sh
+# A 着手前 (1 回)
+cp data/bitnet/cache/danbooru_posts.jsonl data/bitnet/cache/danbooru_posts.jsonl.preA
+```
+
+### 17.5 再現手順 (seed 20260620・B 多様化非適用)
+
+```sh
+# 0. cache 退避 (§17.4)
+cp data/bitnet/cache/danbooru_posts.jsonl data/bitnet/cache/danbooru_posts.jsonl.preA
+
+# 1. 12k (cache 充足で API 取得なし)
+py -3.12 scripts/dollma_make_identity_pairs.py --n 10800 --val 1200 \
+    --seed 20260620 --out-tag a12k --sleep 1.0 \
+    --exclude-post-ids data/bitnet/eval_frozen_post_ids.json
+
+# 2. 25k (cache を 38,000 → 55,200 posts へ過去方向延伸)
+py -3.12 scripts/dollma_make_identity_pairs.py --n 22500 --val 2500 \
+    --seed 20260620 --out-tag a25k --sleep 1.0 --fetch-factor 2.2 \
+    --exclude-post-ids data/bitnet/eval_frozen_post_ids.json
+```
+
+歩留り不足警告 (`[id-pairs] 警告: 歩留り不足`) が出たら `--fetch-factor` を上げて再実行
+(12k は 1.8→2.2→2.6、25k は衝突・歩留り低下が効くので 2.2 始まり)。今回は両スケールとも
+不足なし。
+
+### 17.6 成果物 (すべて gitignore・再生成可)
+
+- `data/bitnet/pairs.identity.{train,val}.a12k.jsonl` (10,800 / 1,200) + `stats.identity.a12k.json`
+- `data/bitnet/pairs.identity.{train,val}.a25k.jsonl` (22,500 / 2,500) + `stats.identity.a25k.json`
+- cache バックアップ `data/bitnet/cache/danbooru_posts.jsonl.preA` (38,000 posts・A 着手前状態)
+
+スキーマは §13 (同一性条件付きペア) と完全同一 (`source:"identity_cond"` + `meta`)。Phase 2
+(再訓練 + diverse-val eval・§14) は本番重み #1 据え置きのまま別名出力で評価する。
