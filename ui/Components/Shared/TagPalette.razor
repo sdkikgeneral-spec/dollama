@@ -1,0 +1,146 @@
+@* タグパレット。キュレーション済みカテゴリ木 (静的 JSON) + お気に入り (編集可・永続) から
+   タグをクリックでプロンプト/ネガティブ/お気に入り列へ追加する。追加先は親 (Generate.razor) が
+   真実源で双方向バインド (@bind-Target) で共有する。中央入力欄・お気に入り入力欄のフォーカスで
+   自動更新され、このトグルの手動クリックでも上書きできる。
+   追加先が prompt/negative のときは親 (Generate.razor) に OnAddTag で通知し、実際のタグ列更新は
+   親が行う (状態の真実源は親)。追加先が favorites のときは FavoriteTagStore に直接追加して
+   このパレット内で完結する (OnAddTag は呼ばない)。
+   表示テキストは TagLang に応じて日本語化するが、親へ渡す値・お気に入り保存値は英語のまま。 *@
+@inject TagPaletteCatalog Catalog
+@inject FavoriteTagStore Favorites
+@inject TagLabels Labels
+
+<div class="palette">
+    <div class="palette-head">タグパレット</div>
+
+    <!-- 追加先トグル (◉プロンプト ○ネガティブ ○お気に入り)。Target を参照してハイライト。
+         中央入力欄/お気に入り入力欄のフォーカスでも親側が Target を更新するので追従する。 -->
+    <div class="palette-target">
+        <label class="@(Target == "prompt" ? "on" : "")">
+            <input type="radio" name="palette-target" checked="@(Target == "prompt")"
+                   @onchange="@(() => SetTarget("prompt"))" />
+            プロンプト
+        </label>
+        <label class="@(Target == "negative" ? "on" : "")">
+            <input type="radio" name="palette-target" checked="@(Target == "negative")"
+                   @onchange="@(() => SetTarget("negative"))" />
+            ネガティブ
+        </label>
+        <label class="@(Target == "favorites" ? "on" : "")">
+            <input type="radio" name="palette-target" checked="@(Target == "favorites")"
+                   @onchange="@(() => SetTarget("favorites"))" />
+            お気に入り
+        </label>
+    </div>
+
+    <!-- お気に入り (★編集可) -->
+    <details class="palette-cat" open>
+        <summary>★ お気に入り</summary>
+        <div class="palette-tags">
+            @foreach (var tag in _favorites)
+            {
+                <span class="fav-chip">
+                    <button type="button" class="fav-add" title="追加" @onclick="() => AddTag(tag)">@Labels.Display(tag, TagLang)</button>
+                    <button type="button" class="fav-x" title="お気に入りから削除"
+                            @onclick="() => RemoveFavorite(tag)">×</button>
+                </span>
+            }
+            @if (_favorites.Count == 0)
+            {
+                <span class="palette-empty">お気に入りは空です</span>
+            }
+        </div>
+        <div class="fav-bar">
+            <!-- この入力欄にフォーカスすると追加先=お気に入りへ切り替わる (フォーカス連動)。
+                 以降パレットのタグクリックがお気に入りに登録される。 -->
+            <input class="fav-entry" @bind="_favDraft" @bind:event="oninput"
+                   placeholder="お気に入りタグを追加"
+                   @onfocus="@(() => SetTarget("favorites"))"
+                   @onkeydown="OnFavKeyDown" />
+            <button type="button" class="fav-plus" title="お気に入りに追加"
+                    @onclick="AddFavorite" disabled="@(string.IsNullOrWhiteSpace(_favDraft))">+</button>
+        </div>
+    </details>
+
+    <!-- キュレーション木 (カテゴリごとに details) -->
+    @foreach (var cat in Catalog.Categories)
+    {
+        <details class="palette-cat">
+            <summary>@cat.Category</summary>
+            <div class="palette-tags">
+                @foreach (var tag in cat.Tags)
+                {
+                    <button type="button" class="palette-tag" @onclick="() => AddTag(tag)">@Labels.Display(tag, TagLang)</button>
+                }
+            </div>
+        </details>
+    }
+</div>
+
+@code {
+    // 親へタグ追加を通知するコールバック (追加先が prompt/negative のときのみ呼ぶ)。
+    [Parameter] public EventCallback<TagAdd> OnAddTag { get; set; }
+
+    // 追加先 ("prompt" / "negative" / "favorites")。親 (Generate) が真実源で双方向バインド (@bind-Target)。
+    // 中央入力欄・お気に入り入力欄のフォーカスで親側が更新し、ここのトグル手動クリックでも上書きする。
+    [Parameter] public string Target { get; set; } = "prompt";
+    [Parameter] public EventCallback<string> TargetChanged { get; set; }
+
+    // タグの表示言語 (Generate から CascadingValue で伝播)。既定は日本語。
+    [CascadingParameter(Name = "TagLang")] public string TagLang { get; set; } = "ja";
+
+    private IReadOnlyList<string> _favorites = new List<string>();
+    private string _favDraft = "";
+
+    protected override void OnInitialized()
+    {
+        // FavoriteTagStore はローカルファイル読みなのでプリレンダリング中でも安全 (同期・高速)。
+        _favorites = Favorites.All();
+    }
+
+    // 追加先トグルの手動切替・フォーカス連動。親へ双方向バインドで通知する。
+    private async Task SetTarget(string target)
+    {
+        Target = target;
+        await TargetChanged.InvokeAsync(target);
+    }
+
+    // パレットのタグ (カテゴリ木 / お気に入りチップ) を現在の追加先へ追加する。tag は英語値のまま。
+    // 追加先が favorites のときは FavoriteTagStore に直接登録してパレット内で完結する
+    // (親へは通知しない)。それ以外 (prompt/negative) は OnAddTag で親へ通知する。
+    private async Task AddTag(string tag)
+    {
+        if (string.Equals(Target, "favorites", StringComparison.OrdinalIgnoreCase))
+        {
+            // Favorites.Add が正規化 (trim+lowercase) と重複排除を行う。表示は Labels.Display で日本語化。
+            Favorites.Add(tag);
+            _favorites = Favorites.All();
+            return;
+        }
+
+        await OnAddTag.InvokeAsync(new TagAdd(tag, Target));
+    }
+
+    // 入力欄のタグをお気に入りに追加する (Enter / + ボタン)。手打ち経路は従来どおり。
+    private async Task OnFavKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AddFavorite();
+        }
+    }
+
+    private Task AddFavorite()
+    {
+        Favorites.Add(_favDraft);
+        _favDraft = "";
+        _favorites = Favorites.All();
+        return Task.CompletedTask;
+    }
+
+    private void RemoveFavorite(string tag)
+    {
+        Favorites.Remove(tag);
+        _favorites = Favorites.All();
+    }
+}

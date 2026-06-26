@@ -12,22 +12,61 @@
 <div class="app">
     <header class="topbar">
         <div class="brand">dollama <span class="brand-sub">/ 全 HW 協調 2D キャラ生成</span></div>
+
+        <!-- HW テレメトリ・ミニメーター (上部バーに横並び) -->
+        <div class="telemetry-mini" title="@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")">
+            @if (_sample is null)
+            {
+                <span class="tm-hint">テレメトリ接続待ち…</span>
+            }
+            else
+            {
+                @foreach (var d in _sample.Devices)
+                {
+                    <div class="tm-item" title="@d.Device @d.Role @d.Percent.ToString("0")%">
+                        <span class="tm-dev">@d.Device</span>
+                        <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
+                        <span class="tm-pct">@d.Percent.ToString("0")%</span>
+                    </div>
+                }
+            }
+        </div>
+
+        <!-- タグ表示言語トグル ([日本語|EN])。タグ値・生成 prompt は英語のまま不変で表示のみ切替。 -->
+        <div class="lang-toggle" title="タグの表示言語 (内部値・生成は英語のまま)">
+            <button type="button" class="@(_tagLang == "ja" ? "on" : "")"
+                    @onclick="@(() => SetTagLang("ja"))">日本語</button>
+            <button type="button" class="@(_tagLang == "en" ? "on" : "")"
+                    @onclick="@(() => SetTagLang("en"))">EN</button>
+        </div>
+
         <div class="conn @(_connected ? "ok" : "ng")">
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
         </div>
     </header>
 
+    <CascadingValue Value="_tagLang" Name="TagLang">
     <div class="main">
-        <!-- 生成パネル -->
+        <!-- 左ペイン: タグパレット + プリセット一覧 -->
+        <aside class="sidebar">
+            <TagPalette @bind-Target="_target" OnAddTag="AddTag" />
+            <PresetSidebar @ref="_presetSidebar" OnLoad="LoadPreset" />
+        </aside>
+
+        <!-- 中央: 生成コントロール -->
         <section class="gen">
             <TagPresetField Label="プロンプト" Kind="prompt"
                             @bind-Tags="_promptTags"
                             CurrentImage="_imageBytes"
+                            OnSaved="RefreshPresets"
+                            OnFocused="SetTarget"
                             Placeholder="例: 1girl と入力して Enter" />
 
             <TagPresetField Label="ネガティブ" Kind="negative"
                             @bind-Tags="_negativeTags"
                             CurrentImage="_imageBytes"
+                            OnSaved="RefreshPresets"
+                            OnFocused="SetTarget"
                             Placeholder="例: lowres, bad anatomy" />
 
             <div class="row">
@@ -53,7 +92,10 @@
             {
                 <div class="error">@_error</div>
             }
+        </section>
 
+        <!-- 右ペイン: 生成画像プレビュー専任 -->
+        <section class="canvas">
             <div class="preview">
                 @if (_busy)
                 {
@@ -69,32 +111,8 @@
                 }
             </div>
         </section>
-
-        <!-- HW テレメトリ・サイドバー -->
-        <aside class="telemetry">
-            <h2>HW テレメトリ</h2>
-            <p class="hint">@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")</p>
-            @if (_sample is null)
-            {
-                <p class="hint">接続待ち…</p>
-            }
-            else
-            {
-                @foreach (var d in _sample.Devices)
-                {
-                    <div class="meter">
-                        <div class="meter-head">
-                            <span class="dev">@d.Device</span>
-                            <span class="role">@d.Role</span>
-                            <span class="pct">@d.Percent.ToString("0")%</span>
-                        </div>
-                        <div class="bar"><div class="fill" style="width:@d.Percent.ToString("0")%"></div></div>
-                    </div>
-                }
-            }
-            <p class="note">※ 現在のテレメトリはスタブ値。実 HW 計測は C++ 側 /telemetry 実装後に差し替え。</p>
-        </aside>
     </div>
+    </CascadingValue>
 </div>
 
 @code {
@@ -102,6 +120,18 @@
     private List<string> _negativeTags = new();
     private string _size = "1024x1024";
     private int _steps = 20;
+
+    // パレットのタグ追加先 ("prompt" / "negative" / "favorites") の真実源。
+    // 中央入力欄・お気に入り入力欄のフォーカスで自動更新し (SetTarget / パレット側 onfocus)、
+    // TagPalette とは @bind-Target で双方向共有する。
+    // 初期状態 (どこも未フォーカス) は従来どおりプロンプト。
+    // favorites の登録は TagPalette 内で完結するため、ここへ TagAdd が飛んでくるのは
+    // prompt/negative のときだけ。
+    private string _target = "prompt";
+
+    // タグの表示言語。既定は日本語。配下のパレット・チップへ CascadingValue で伝播する。
+    // タグ値・C++ へ送る prompt は英語のまま不変で、これは表示専用の真実源。
+    private string _tagLang = "ja";
 
     private bool _busy;
     private string? _error;
@@ -111,6 +141,25 @@
 
     private HubConnection? _hub;
     private TelemetrySample? _sample;
+
+    // 左ペインのプリセット一覧。保存/削除後に Refresh して最新化する。
+    private PresetSidebar? _presetSidebar;
+
+    // 中央入力欄のフォーカスを受けて追加先を更新する (フォーカス連動)。
+    // プロンプト欄にフォーカス → 追加先=プロンプト、ネガティブ欄にフォーカス → 追加先=ネガティブ。
+    // お気に入り入力欄のフォーカスは TagPalette 側で追加先=favorites に切り替える。
+    // @bind-Target でパレットのトグルハイライトも追従する。
+    private void SetTarget(string kind)
+    {
+        _target = kind;
+    }
+
+    // 表示言語を切り替える。CascadingValue 経由で配下 (パレット・チップ) が再描画される。
+    private void SetTagLang(string lang)
+    {
+        _tagLang = lang;
+        StateHasChanged();
+    }
 
     // 接続チェックと SignalR 購読は「インタラクティブ確立後 (= 最初の描画後)」に行う。
     // OnInitializedAsync でやるとプリレンダリング中に HealthAsync(最大2秒) と
@@ -141,6 +190,57 @@
         });
 
         await _hub.StartAsync();
+    }
+
+    // パレットからのタグ追加 (追加先が prompt/negative のときのみ到達)。
+    // target で行き先の列を選び、新リスト再代入で TagInput (子) に確実に反映させる
+    // (リストの参照を変えないと再描画が走らない)。
+    // 安全側に倒し、negative は negative・prompt は prompt のみ処理し、それ以外
+    // (favorites 等の未知 target) は無視する (favorites は TagPalette 内で完結し
+    // ここへは来ない想定だが、万一来ても prompt へ誤混入させない)。
+    private void AddTag(TagAdd add)
+    {
+        var tag = (add.Tag ?? "").Trim().ToLowerInvariant();
+        if (tag.Length == 0)
+        {
+            return;
+        }
+
+        if (string.Equals(add.Target, "negative", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_negativeTags.Contains(tag))
+            {
+                _negativeTags = new List<string>(_negativeTags) { tag };
+            }
+        }
+        else if (string.Equals(add.Target, "prompt", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!_promptTags.Contains(tag))
+            {
+                _promptTags = new List<string>(_promptTags) { tag };
+            }
+        }
+        // それ以外 (未知 target) は無視 — 誤混入を防ぐ。
+    }
+
+    // 左ペインのプリセットカードをクリックでロード。kind に応じて該当列を置換する。
+    // 新リストを作って差し込み TagInput に反映させる。
+    private void LoadPreset(TagPreset p)
+    {
+        if (string.Equals(p.Kind, "negative", StringComparison.OrdinalIgnoreCase))
+        {
+            _negativeTags = new List<string>(p.Tags);
+        }
+        else
+        {
+            _promptTags = new List<string>(p.Tags);
+        }
+    }
+
+    // 保存後に左ペインのプリセット一覧を最新化する。
+    private void RefreshPresets()
+    {
+        _presetSidebar?.Refresh();
     }
 
     private async Task GenerateAsync()

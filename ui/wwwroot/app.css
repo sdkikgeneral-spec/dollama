@@ -1,4 +1,4 @@
-/* dollama UI — LM Studio 風ダーク 2 カラム (叩き台) */
+/* dollama UI — LM Studio 風ダーク 3 ペイン (左=タグ/プリセット, 中央=生成コントロール, 右=画像プレビュー) */
 
 :root
 {
@@ -40,8 +40,8 @@ html, body
 {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 10px 18px;
+    gap: 18px;
+    padding: 8px 18px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
 }
@@ -51,6 +51,7 @@ html, body
     font-weight: 700;
     font-size: 16px;
     letter-spacing: 0.02em;
+    white-space: nowrap;
 }
 
 .brand-sub
@@ -60,6 +61,48 @@ html, body
     font-size: 12px;
 }
 
+/* ── タグ表示言語トグル ([日本語|EN]・上部バー) ── */
+.lang-toggle
+{
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.lang-toggle button
+{
+    appearance: none;
+    border: none;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.lang-toggle button + button
+{
+    border-left: 1px solid var(--border);
+}
+
+.lang-toggle button:hover
+{
+    color: var(--text);
+}
+
+/* 現在の表示言語をハイライト */
+.lang-toggle button.on
+{
+    background: var(--accent);
+    color: #0d1117;
+    font-weight: 600;
+}
+
 .conn
 {
     display: flex;
@@ -67,6 +110,7 @@ html, body
     gap: 6px;
     font-size: 12px;
     color: var(--muted);
+    white-space: nowrap;
 }
 
 .conn .dot
@@ -87,18 +131,88 @@ html, body
     color: var(--ok);
 }
 
-/* ── メイン 2 カラム ── */
+/* ── HW テレメトリ・ミニメーター (上部バー・横並び) ── */
+.telemetry-mini
+{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tm-hint
+{
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.tm-item
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.tm-dev
+{
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.tm-bar
+{
+    display: inline-block;
+    width: 64px;
+    height: 6px;
+    background: var(--panel-2);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.tm-fill
+{
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #9d7bff);
+    transition: width 0.4s ease;
+}
+
+.tm-pct
+{
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    width: 30px;
+    text-align: right;
+}
+
+/* ── メイン 3 ペイン (左ペイン + 中央コントロール + 右プレビュー) ── */
 .main
 {
     display: grid;
-    grid-template-columns: 1fr 320px;
+    /* 左ペインを 320px に広げ、追加先トグル 3 ラベルが横一列で潰れず収まるようにする */
+    grid-template-columns: 320px minmax(340px, 400px) 1fr;
     gap: 16px;
     padding: 16px;
     flex: 1;
     min-height: 0;
 }
 
-/* 生成パネル */
+/* 左ペイン (タグパレット + プリセット一覧・縦スクロール) */
+.sidebar
+{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    min-height: 0;
+    padding-right: 4px;
+}
+
+/* 中央: 生成コントロール列 */
 .gen
 {
     display: flex;
@@ -109,6 +223,21 @@ html, body
     border-radius: 10px;
     padding: 16px;
     overflow-y: auto;
+    min-height: 0;
+}
+
+/* 右ペイン: 生成画像プレビュー専任 */
+.canvas
+{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .field
@@ -180,9 +309,12 @@ textarea:focus, select:focus
     font-size: 13px;
 }
 
+/* プレビュー枠は右ペイン (.canvas) を埋める */
 .preview
 {
     flex: 1;
+    width: 100%;
+    height: 100%;
     min-height: 280px;
     display: flex;
     align-items: center;
@@ -221,87 +353,329 @@ textarea:focus, select:focus
     to { transform: rotate(360deg); }
 }
 
-/* ── テレメトリ・サイドバー ── */
-.telemetry
+/* ── 狭い画面では 1 カラムへ縦積み (左→中央→右) ── */
+@media (max-width: 1100px)
+{
+    .main
+    {
+        grid-template-columns: 1fr;
+    }
+
+    /* 縦積み時はサイドバーの縦スクロールを解除して潰れないように */
+    .sidebar
+    {
+        overflow-y: visible;
+    }
+
+    .canvas
+    {
+        min-height: 320px;
+    }
+}
+
+/* ── タグパレット / プリセット一覧 (左ペイン共通の見た目) ── */
+.palette, .preset-sidebar
 {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 16px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
 }
 
-.telemetry h2
+.palette-head
 {
-    margin: 0;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
 }
 
-.hint
+/* 追加先トグル (◉プロンプト ○ネガティブ ○お気に入り) */
+.palette-target
 {
-    margin: 0;
+    /* 320px 幅の左ペインで 3 ラベルを等幅 3 分割の 1 行に並べる (折返し禁止) */
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.palette-target label
+{
+    /* グリッドセルを等幅で埋める。文字が切れないよう中央寄せ・パディングは控えめに。 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    font-size: 12px;
     color: var(--muted);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 4px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.palette-target label.on
+{
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.palette-target input[type="radio"]
+{
+    accent-color: var(--accent);
+}
+
+/* カテゴリ (details/summary) */
+.palette-cat
+{
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel-2);
+    padding: 0 8px;
+}
+
+.palette-cat > summary
+{
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    padding: 6px 2px;
+    list-style: none;
+}
+
+.palette-cat > summary::-webkit-details-marker
+{
+    display: none;
+}
+
+.palette-cat > summary::before
+{
+    content: "▸ ";
+    color: var(--muted);
+}
+
+.palette-cat[open] > summary::before
+{
+    content: "▾ ";
+}
+
+.palette-tags
+{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0 8px;
+}
+
+.palette-empty
+{
+    color: var(--muted);
+    font-size: 11px;
+    padding: 4px 0 8px;
+}
+
+/* クリックで追加するタグボタン */
+.palette-tag
+{
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.palette-tag:hover
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* お気に入りチップ (追加 + 削除) */
+.fav-chip
+{
+    display: inline-flex;
+    align-items: center;
+    background: rgba(110, 168, 254, 0.15);
+    border: 1px solid rgba(110, 168, 254, 0.4);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.fav-add
+{
+    background: transparent;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    padding: 2px 4px 2px 10px;
+}
+
+.fav-add:hover
+{
+    color: var(--accent);
+}
+
+.fav-x
+{
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 6px 0 2px;
+}
+
+.fav-x:hover
+{
+    color: var(--ng);
+}
+
+.fav-bar
+{
+    display: flex;
+    gap: 6px;
+    padding-bottom: 8px;
+}
+
+.fav-entry
+{
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font: inherit;
     font-size: 12px;
 }
 
-.meter
+.fav-entry:focus
+{
+    outline: none;
+    border-color: var(--accent);
+}
+
+.fav-plus
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0 10px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.fav-plus:hover:not(:disabled)
+{
+    border-color: var(--accent);
+}
+
+.fav-plus:disabled
+{
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* ── 左ペイン: プリセット・コンパクトカード一覧 ── */
+.ps-list
 {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    padding: 4px 0 8px;
 }
 
-.meter-head
+.ps-card
 {
+    position: relative;
     display: flex;
-    align-items: baseline;
-    gap: 6px;
-    font-size: 12px;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 6px;
+    cursor: pointer;
+    transition: border-color 0.12s;
 }
 
-.meter-head .dev
+.ps-card:hover
 {
-    font-weight: 700;
+    border-color: var(--accent);
 }
 
-.meter-head .role
+.ps-card img
 {
-    color: var(--muted);
-    flex: 1;
-}
-
-.meter-head .pct
-{
-    font-variant-numeric: tabular-nums;
-    color: var(--accent);
-}
-
-.bar
-{
-    height: 8px;
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
     background: var(--panel-2);
     border-radius: 4px;
-    overflow: hidden;
+    flex-shrink: 0;
 }
 
-.fill
+.ps-noimg
 {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), #9d7bff);
-    transition: width 0.4s ease;
-}
-
-.note
-{
-    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: var(--panel-2);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
     color: var(--muted);
-    font-size: 11px;
-    line-height: 1.5;
+    font-size: 9px;
+    flex-shrink: 0;
 }
 
-/* ── プリセット・バー ── */
+.ps-name
+{
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ps-del
+{
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.ps-del:hover
+{
+    border-color: var(--ng);
+    color: #ffb4ae;
+}
+
+/* ── プリセット・保存バー (中央 TagPresetField) ── */
 .presetbar
 {
     display: flex;
@@ -338,12 +712,6 @@ textarea:focus, select:focus
     border-color: var(--accent);
 }
 
-.preset-btn.danger:hover:not(:disabled)
-{
-    border-color: var(--ng);
-    color: #ffb4ae;
-}
-
 .preset-btn:disabled
 {
     opacity: 0.45;
@@ -354,92 +722,6 @@ textarea:focus, select:focus
 {
     font-size: 12px;
     color: var(--accent);
-}
-
-/* ── プリセット・カード一覧 (サムネ選択) ── */
-.preset-grid
-{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.preset-card
-{
-    position: relative;
-    width: 104px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px;
-    cursor: pointer;
-    transition: border-color 0.12s;
-}
-
-.preset-card:hover
-{
-    border-color: var(--accent);
-}
-
-.preset-card img
-{
-    display: block;
-    width: 100%;
-    height: 92px;
-    object-fit: contain;
-    background: var(--bg);
-    border-radius: 4px;
-}
-
-/* サムネ無しのプレースホルダ */
-.preset-card .preset-noimg
-{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 92px;
-    background: var(--bg);
-    border: 1px dashed var(--border);
-    border-radius: 4px;
-    color: var(--muted);
-    font-size: 11px;
-}
-
-.preset-card .name
-{
-    margin-top: 4px;
-    font-size: 12px;
-    color: var(--text);
-    /* 長名は省略表示 */
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.preset-card .del
-{
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    width: 20px;
-    height: 20px;
-    line-height: 18px;
-    text-align: center;
-    background: rgba(0, 0, 0, 0.55);
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 0;
-}
-
-.preset-card .del:hover
-{
-    border-color: var(--ng);
-    color: #ffb4ae;
 }
 
 /* ── チップ入力 (TagInput) ── */

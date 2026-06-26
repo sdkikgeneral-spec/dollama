@@ -27,6 +27,15 @@ builder.Services.AddHostedService<TelemetryBroadcaster>();
 // プリセット永続化ストア (ui/data/presets.json)
 builder.Services.AddSingleton<Dollama.Ui.Services.PresetStore>();
 
+// キュレーション済みタグパレット (wwwroot/tag-palette.json・起動時に 1 回読む)
+builder.Services.AddSingleton<Dollama.Ui.Services.TagPaletteCatalog>();
+
+// お気に入りタグの永続化ストア (ui/data/favorites.json)
+builder.Services.AddSingleton<Dollama.Ui.Services.FavoriteTagStore>();
+
+// タグの日本語ラベル辞書 (wwwroot/tag-labels.ja.json・起動時に 1 回読む)
+builder.Services.AddSingleton<Dollama.Ui.Services.TagLabels>();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())

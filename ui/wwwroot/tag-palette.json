@@ -1,0 +1,50 @@
+[
+  {
+    "category": "人数",
+    "tags": ["1girl", "1boy", "solo", "2girls", "2boys", "multiple girls", "multiple boys", "group"]
+  },
+  {
+    "category": "構図・アングル",
+    "tags": ["full body", "upper body", "portrait", "cowboy shot", "close-up", "from above", "from below", "from side", "from behind", "dutch angle", "wide shot", "feet out of frame"]
+  },
+  {
+    "category": "髪型",
+    "tags": ["long hair", "short hair", "very long hair", "medium hair", "twintails", "ponytail", "braid", "twin braids", "bob cut", "hair bun", "double bun", "ahoge", "bangs", "side ponytail", "drill hair"]
+  },
+  {
+    "category": "髪色",
+    "tags": ["black hair", "brown hair", "blonde hair", "silver hair", "white hair", "red hair", "blue hair", "pink hair", "purple hair", "green hair", "grey hair", "orange hair", "multicolored hair", "gradient hair"]
+  },
+  {
+    "category": "目",
+    "tags": ["blue eyes", "red eyes", "green eyes", "brown eyes", "purple eyes", "yellow eyes", "pink eyes", "aqua eyes", "grey eyes", "heterochromia", "closed eyes", "half-closed eyes"]
+  },
+  {
+    "category": "表情",
+    "tags": ["smile", "blush", "serious", "angry", "crying", "surprised", "smug", "expressionless", "open mouth", "closed mouth", "grin", "pout", "embarrassed", "happy", "sad"]
+  },
+  {
+    "category": "服装",
+    "tags": ["school uniform", "serafuku", "dress", "kimono", "japanese clothes", "swimsuit", "bikini", "hoodie", "suit", "armor", "maid", "sweater", "shirt", "skirt", "jacket"]
+  },
+  {
+    "category": "ポーズ・視線",
+    "tags": ["standing", "sitting", "lying", "kneeling", "looking at viewer", "looking back", "looking away", "arms up", "waving", "hand on hip", "arms crossed", "outstretched arm", "head tilt", "crossed legs"]
+  },
+  {
+    "category": "画風",
+    "tags": ["anime style", "anime screencap", "cel shading", "sketch", "watercolor", "lineart", "monochrome", "chibi", "realistic", "flat color", "pastel colors"]
+  },
+  {
+    "category": "背景",
+    "tags": ["simple background", "white background", "transparent background", "gradient background", "solid background"]
+  },
+  {
+    "category": "品質",
+    "tags": ["masterpiece", "best quality", "highly detailed", "high resolution", "ultra-detailed", "absurdres", "highres", "official art", "8k"]
+  },
+  {
+    "category": "ネガティブ定番",
+    "tags": ["lowres", "bad anatomy", "bad hands", "missing fingers", "extra digit", "fewer digits", "worst quality", "low quality", "jpeg artifacts", "signature", "watermark", "blurry", "text", "error", "cropped"]
+  }
+]

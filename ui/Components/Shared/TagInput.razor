@@ -1,12 +1,14 @@
 @* 再利用チップ入力。タグ (danbooru タグ) を 1 つずつ追加・削除する。
-   プロンプトとネガティブの両方で使う。Tags は親と双方向バインド。 *@
+   プロンプトとネガティブの両方で使う。Tags は親と双方向バインド。
+   チップ表示は TagLang に応じて日本語化するが、保持する Tags の値は英語のまま不変。 *@
+@inject TagLabels Labels
 
 <div class="taginput">
     <div class="chips">
         @foreach (var tag in Tags)
         {
             <span class="tag-chip">
-                @tag
+                @Labels.Display(tag, TagLang)
                 <button type="button" class="chip-x" @onclick="() => Remove(tag)" title="削除">×</button>
             </span>
         }
@@ -14,19 +16,33 @@
                placeholder="@(Tags.Count == 0 ? Placeholder : "")"
                @bind="_draft"
                @bind:event="oninput"
+               @onfocus="OnInputFocused"
                @onkeydown="OnKeyDown" />
     </div>
 </div>
 
 @code {
-    // 親と共有するタグ列 (双方向バインド)
+    // 親と共有するタグ列 (双方向バインド)。値は英語の danbooru タグのまま保持する。
     [Parameter] public List<string> Tags { get; set; } = new();
     [Parameter] public EventCallback<List<string>> TagsChanged { get; set; }
 
     // 空のときに表示するプレースホルダ
     [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
 
+    // 入力欄がフォーカスされたときに親へ通知する。
+    // パレットの追加先 (プロンプト/ネガティブ) をフォーカス連動させるために使う。
+    [Parameter] public EventCallback OnFocused { get; set; }
+
+    // タグの表示言語 (Generate から CascadingValue で伝播)。既定は日本語。
+    [CascadingParameter(Name = "TagLang")] public string TagLang { get; set; } = "ja";
+
     private string _draft = "";
+
+    // 入力欄フォーカス時に親へ通知 (追加先のフォーカス連動)。
+    private async Task OnInputFocused()
+    {
+        await OnFocused.InvokeAsync();
+    }
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {

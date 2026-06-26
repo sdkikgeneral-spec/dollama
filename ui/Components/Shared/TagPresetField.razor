@@ -1,39 +1,19 @@
-@* ラベル + 専用プリセット・カード一覧 + チップ入力 を 1 セットにした再利用フィールド。
+@* ラベル + チップ入力 + 保存バー を 1 セットにした再利用フィールド。
    プロンプト用 (Kind="prompt") とネガティブ用 (Kind="negative") で 1 つずつ使う。
-   プリセットは Kind で型分けされ、このフィールドのカード一覧からは同 Kind のものだけ見える。
-   各カード = サムネ (直近生成画像) + 名前 + 削除 (×)。カード本体クリックでロード。 *@
+   プリセットの一覧表示・ロード・削除は左ペインの PresetSidebar に集約したため、
+   このフィールドからはカードグリッドを撤去し「保存」だけを担う。
+   保存後は OnSaved を呼び、親が PresetSidebar を Refresh して一覧へ反映する。 *@
 @inject PresetStore Presets
 
 <div class="field">
     <span>@Label</span>
 
-    <!-- 専用プリセット・カード一覧 (この Kind 限定) -->
-    @if (_presets.Count > 0)
-    {
-        <div class="preset-grid">
-            @foreach (var p in _presets)
-            {
-                var url = Presets.ThumbnailUrl(p);
-                <div class="preset-card" @onclick="() => Load(p)" title="@p.Name">
-                    @if (url is not null)
-                    {
-                        <img src="@url" alt="@p.Name" />
-                    }
-                    else
-                    {
-                        <div class="preset-noimg">no image</div>
-                    }
-                    <div class="name">@p.Name</div>
-                    <button type="button" class="del" title="削除"
-                            @onclick="() => Delete(p)" @onclick:stopPropagation="true">×</button>
-                </div>
-            }
-        </div>
-    }
+    <TagInput Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
+              OnFocused="NotifyFocused" />
 
     <!-- 保存バー -->
     <div class="presetbar">
-        <input class="preset-name" @bind="_newName" placeholder="保存名" />
+        <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
         <button type="button" class="preset-btn" @onclick="SaveCurrent"
                 disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
     </div>
@@ -41,8 +21,6 @@
     {
         <div class="preset-msg">@_msg</div>
     }
-
-    <TagInput Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder" />
 </div>
 
 @code {
@@ -61,15 +39,15 @@
     // 直近生成画像の生バイト (PNG)。保存時にサムネとして使う。無ければサムネ無し保存。
     [Parameter] public byte[]? CurrentImage { get; set; }
 
-    private IReadOnlyList<TagPreset> _presets = new List<TagPreset>();
+    // 保存完了を親へ通知 (親が PresetSidebar.Refresh する)。
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    // 入力欄がフォーカスされたときに、自分の Kind を引数に親へ通知する。
+    // 親 (Generate) はこれを追加先 (_target) に反映し、パレットの追加先をフォーカス連動させる。
+    [Parameter] public EventCallback<string> OnFocused { get; set; }
+
     private string _newName = "";
     private string? _msg;
-
-    protected override void OnInitialized()
-    {
-        // PresetStore はローカルファイル読みなのでプリレンダリング中でも安全 (同期・高速)
-        _presets = Presets.All(Kind);
-    }
 
     private async Task OnTagsChanged(List<string> tags)
     {
@@ -77,14 +55,13 @@
         await TagsChanged.InvokeAsync(tags);
     }
 
-    private async Task Load(TagPreset p)
+    // 配下 TagInput のフォーカスを受け、自分の Kind を添えて親へ伝える。
+    private async Task NotifyFocused()
     {
-        // コピーで復元 (プリセット内のリストを直接編集しないため)
-        await OnTagsChanged(new List<string>(p.Tags));
-        _msg = $"「{p.Name}」をロードしました";
+        await OnFocused.InvokeAsync(Kind);
     }
 
-    private void SaveCurrent()
+    private async Task SaveCurrent()
     {
         var name = _newName.Trim();
         if (name.Length == 0)
@@ -97,17 +74,12 @@
             Kind = Kind,
             Tags = new List<string>(Tags),
         }, CurrentImage);
-        _presets = Presets.All(Kind);
         _newName = "";
         _msg = CurrentImage is not null
             ? $"「{name}」をサムネ付きで保存しました"
             : $"「{name}」を保存しました";
-    }
 
-    private void Delete(TagPreset p)
-    {
-        Presets.Delete(Kind, p.Name);
-        _presets = Presets.All(Kind);
-        _msg = $"「{p.Name}」を削除しました";
+        // 左ペインのプリセット一覧を最新化させる。
+        await OnSaved.InvokeAsync();
     }
 }

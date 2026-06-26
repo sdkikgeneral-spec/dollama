@@ -1,0 +1,75 @@
+@* 左ペインに集約したプリセット一覧。prompt / negative を details 2 グループで表示し、
+   各プリセットをサムネ付きコンパクトカードで並べる。
+   カードクリック=ロード (OnLoad で親へ通知)・×=削除 (その場で削除 + 再読込)。
+   保存は中央の TagPresetField 側で行い、親が Refresh() を呼んでここを更新する。 *@
+@inject PresetStore Presets
+
+<div class="preset-sidebar">
+    <div class="palette-head">プリセット</div>
+
+    @foreach (var grp in _groups)
+    {
+        <details class="palette-cat" open>
+            <summary>@grp.Label (@grp.Items.Count)</summary>
+            <div class="ps-list">
+                @if (grp.Items.Count == 0)
+                {
+                    <span class="palette-empty">保存済みはありません</span>
+                }
+                @foreach (var p in grp.Items)
+                {
+                    var url = Presets.ThumbnailUrl(p);
+                    <div class="ps-card" @onclick="() => OnLoad.InvokeAsync(p)" title="@p.Name">
+                        @if (url is not null)
+                        {
+                            <img src="@url" alt="@p.Name" />
+                        }
+                        else
+                        {
+                            <div class="ps-noimg">no image</div>
+                        }
+                        <span class="ps-name">@p.Name</span>
+                        <button type="button" class="ps-del" title="削除"
+                                @onclick="() => Delete(grp.Kind, p)" @onclick:stopPropagation="true">×</button>
+                    </div>
+                }
+            </div>
+        </details>
+    }
+</div>
+
+@code {
+    // カードクリックで選択されたプリセットを親へ通知 (親がタグ列へ反映)。
+    [Parameter] public EventCallback<TagPreset> OnLoad { get; set; }
+
+    private sealed record Group(string Kind, string Label, IReadOnlyList<TagPreset> Items);
+
+    private List<Group> _groups = new();
+
+    protected override void OnInitialized()
+    {
+        Reload();
+    }
+
+    // 親から呼べる再読込 (保存・削除後に最新化する)。
+    public void Refresh()
+    {
+        Reload();
+        StateHasChanged();
+    }
+
+    private void Reload()
+    {
+        _groups = new List<Group>
+        {
+            new("prompt", "プロンプト", Presets.All("prompt")),
+            new("negative", "ネガティブ", Presets.All("negative")),
+        };
+    }
+
+    private void Delete(string kind, TagPreset p)
+    {
+        Presets.Delete(kind, p.Name);
+        Reload();
+    }
+}
