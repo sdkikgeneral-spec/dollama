@@ -167,12 +167,12 @@ conv probe 次第。
 
 | 項目 | リスク | 対策 |
 |---|---|---|
-| SDXL UNet 自作カーネル | 実装規模が最大・デバッグが困難 | 小さいモデル (64×64 latent) で動作確認してからスケール |
+| ~~SDXL UNet 自作カーネル~~ | ~~実装規模が最大・デバッグが困難~~ | ✅ 解消 (タスク 2-5)。「小さいモデルで確認してからスケール」を完遂。noise_pred **SSIM 0.999998**・24 段ゴールデン全緑・test_unet 緑 |
 | ~~タグ生成 LM 基礎データ~~ | quality / quantity 未確定 | ✅ #1 で 5,000 ペア確保・解消 |
-| A 同一性条件付けデータ | 現 dataset は同一性を target 除外 (dataset-spec §4) → 条件付きペアが無い | dataset-spec §13 で新規設計 (dataset-curator) |
-| B 品質スコアラの正解ラベル | 「良い絵」の教師信号をどう得るか (難問) | §11 の合格/不合格蓄積 + 大型評価器を teacher に蒸留 |
+| ~~A 同一性条件付けデータ~~ | ~~現 dataset は同一性を target 除外 (dataset-spec §4) → 条件付きペアが無い~~ | ✅ 解消。dataset-spec §13 で新規設計→A1 retention 0.947→**a12k 4 seed sweep でクローズ** (identity retention **0.975** で同一性条件付けの機能基盤確定・diverse-val F1 は seed ノイズ・dataset-spec §17.7 / training-spec §9.10) |
+| B 品質スコアラの正解ラベル | 「良い絵」の教師信号をどう得るか (難問) | 🟡 前進。§11 軸ラベルは **WD14 soft ラベルで 8 軸蒸留** (B-3b〜B-3d 完了・ScorerNet 11.18M・OV/NPU 載り実証)。**quality (美的) head はライセンス整理待ちで凍結中** (waifu-scorer-v4-beta 既定・§16.9) → ここだけ未解消 |
 | ~~B の NPU 実行性~~ | ~~conv 系は NPU で遅い前科 (iGPU 8x・probe4)~~ | ✅ 解消 (probe 済)。純 conv は **NPU 最速** (448² 4.62ms・NPU/CPU 0.55x)。WD14 268ms は Window Attention 由来と切り分け。scorer_device=NPU・実スコアラは純 conv 設計が前提 (`dollma_probe_quality_scorer.py`) |
-| safetensors パーサー | バイナリ仕様の正確な実装が必要 | 既存仕様書とテストファイルで検証 |
+| ~~safetensors パーサー~~ | ~~バイナリ仕様の正確な実装が必要~~ | ✅ 解消 (タスク 2-3)。golden 5 テンソル突合・**19.0 µs/op**・test_safetensors 緑 |
 | Linux 対応 (HTTP) | ~~Winsock2/POSIX 二重実装~~ | cpp-httplib がクロスプラットフォーム吸収 → 解消 |
 
 ---
