@@ -1,6 +1,8 @@
 # モデルファイル (大容量バイナリ)。ルート直下のみ無視 (src/models/ のソースは追跡する)。
 # ISNet-anime OV IR (models/isnet-anime/model_ov_fp32.* 176MB / fp16 88MB) もここで無視。
 # scripts/dollma_convert_matting.py で再生成する (ONNX は HF キャッシュ・_matting_paths.json)。
+# ScorerNet OV IR (models/scorer-net/model_ov_fp32.* 45MB / fp16 22MB) も /models/ で無視。
+# scripts/dollma_convert_scorer.py で再生成する (重み data/scorer/scorer_net_fp32.safetensors)。
 /models/
 
 # VAE ゴールデンデータ (計 ~400MB, GitHub 100MB 制限超)。

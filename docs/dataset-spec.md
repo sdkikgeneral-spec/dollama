@@ -772,10 +772,15 @@ ScorerNet 出力 `[1,1+8]` の `index0=quality` / `index1..8=axis[0..7]` に 1:1
 
 ### 16.8 引き渡し
 
-- **model-trainer** (B-3b): `data/scorer/scorer.{train,val}.jsonl` を読む。`axis`=8 軸 BCE/MSE
+- **model-trainer** (B-3b ✅ 完了): `data/scorer/scorer.{train,val}.jsonl` を読む。`axis`=8 軸 BCE/MSE
   target・`quality`=スカラ MSE/Huber target (null の間は B head を縮退 or 凍結)。seed 固定。
-- **cpp-implementer** (B-3d): `QualityScorer` の `axis_scores[8]` は `AnomalyAxis` に 1:1
-  対応させ、`QualityGate` と同じ軸語彙で B-5 FB ループに渡す (本節の軸順と厳密一致)。
+- **model-converter** (B-3c ✅ 完了 2026-06-28・研究機): `scripts/dollma_convert_scorer.py` で
+  B-3b 重みを OV IR 静的化 `[1,3,512,512]→[1,9]` FP32/FP16 (`models/scorer-net/`・gitignore 再生成可)。
+  **NPU compile+推論成功 8.32ms (NPU/CPU 0.711x)・iGPU 6.28ms 最速・PyTorch vs OV FP32 1.34e-05**。
+  golden `src/tests/data/scorer/golden_scorernet.safetensors` (input [1,3,512,512] + logits [1,9]) +
+  meta json を B-3e 用に確定 (出力 f32 [1,9]・index0=quality / 1..8=8軸・`ov::element::f32` 厳密一致)。
+- **cpp-implementer** (B-3d・要 OV 有効ビルド): `QualityScorer` の `axis_scores[8]` は `AnomalyAxis` に 1:1
+  対応させ、`QualityGate` と同じ軸語彙で B-5 FB ループに渡す (本節の軸順と厳密一致)。B-3e = golden 突合 test。
 
 ### 16.9 美的モデル選定 (品質スカラ B 系統)
 

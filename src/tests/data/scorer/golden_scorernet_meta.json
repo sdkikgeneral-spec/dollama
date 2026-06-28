@@ -1,0 +1,103 @@
+{
+  "model": "ScorerNet (B-3b 純 conv ResNet-18 級・品質+解剖8軸)",
+  "task": "Phase 4 Model B / B-3c (PyTorch -> OV IR 変換 + 全 HW 実測 + golden)",
+  "weights_src": "data/scorer/scorer_net_fp32.safetensors",
+  "param_count": 11181129,
+  "eval_mode": "model.eval() 適用済 (BN running stats 使用・訓練統計焼き込み回避)",
+  "ir_fp32": "models/scorer-net/model_ov_fp32.xml",
+  "ir_fp16": "models/scorer-net/model_ov_fp16.xml",
+  "input": {
+    "name": "x",
+    "element_type": "f32",
+    "shape": [
+      1,
+      3,
+      512,
+      512
+    ],
+    "layout": "NCHW",
+    "range": "[0,1] (train_scorer は img/255 のみ・追加正規化なし)"
+  },
+  "output": {
+    "name": "output.0",
+    "element_type": "f32",
+    "shape": [
+      1,
+      9
+    ],
+    "semantics": "index0=quality logit (sigmoid 前) / index1..8=解剖8軸 logit",
+    "axis_map": {
+      "1": "Hands",
+      "2": "Limbs",
+      "3": "Head",
+      "4": "Eyes",
+      "5": "Ears",
+      "6": "Mouth",
+      "7": "Digits",
+      "8": "GlobalAnatomy"
+    }
+  },
+  "convert_ms": 413.0,
+  "accuracy": {
+    "max_abs_pytorch_vs_ovfp32": 1.33514404296875e-05,
+    "max_abs_ovfp32_vs_ovfp16": 0.00740814208984375,
+    "max_abs_pytorch_vs_ovfp16": 0.00740814208984375,
+    "gate_pytorch_vs_ovfp32": "<= 1e-4 (PASS)"
+  },
+  "latency_median_ms": {
+    "CPU": {
+      "median_ms": 11.7,
+      "ir": "model_ov_fp32.xml",
+      "max_abs_vs_ovfp32": 0.0
+    },
+    "GPU.0": {
+      "median_ms": 6.28,
+      "ir": "model_ov_fp16.xml",
+      "max_abs_vs_ovfp32": 0.045215606689453125
+    },
+    "GPU.1": {
+      "median_ms": 13.16,
+      "ir": "model_ov_fp32.xml",
+      "max_abs_vs_ovfp32": 1.1444091796875e-05
+    },
+    "NPU": {
+      "median_ms": 8.32,
+      "ir": "model_ov_fp16.xml",
+      "max_abs_vs_ovfp32": 0.011060714721679688
+    }
+  },
+  "probe_4b": {
+    "prediction": "NPU 512² 6.14ms / NPU/CPU 0.55x",
+    "measured_npu_ms": 8.32,
+    "measured_cpu_ms": 11.7,
+    "npu_over_cpu": 0.711
+  },
+  "golden": {
+    "file": "golden_scorernet.safetensors",
+    "format": "safetensors (F32). src/io/safetensors.hpp で読める。",
+    "seed": 20260628,
+    "input_gen": "torch.Generator(seed=20260628) rand [1,3,512,512] [0,1]",
+    "tensors": {
+      "input": {
+        "dtype": "F32",
+        "shape": [
+          1,
+          3,
+          512,
+          512
+        ],
+        "note": "決定的固定入力。C++ B-3e はこれを IR 入力へコピーして渡す。"
+      },
+      "logits": {
+        "dtype": "F32",
+        "shape": [
+          1,
+          9
+        ],
+        "note": "OV IR(FP32) CPU 出力 = 期待 logits。C++ は max abs err で突合。"
+      }
+    },
+    "note": "golden は OV IR(FP32) CPU 出力を正とする (C++ も同じ IR を使うので一致するはず)。"
+  },
+  "io_warning_for_B3e": "入力 element_type は f32 ([1,3,512,512] NCHW)。C++ では ov::element::f32 で テンソルを作り IR と厳密一致させること (CLIP の i32/i64 0xC0000409 教訓)。出力は f32 [1,9]、get_output_tensor(0)。index0=quality / index1..8=8軸 logit。"
+}
