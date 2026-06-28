@@ -245,6 +245,16 @@ test_pipeline_exe = executable('test_pipeline',
 )
 test('pipeline', test_pipeline_exe, timeout : 120)
 
+# MultiFramePipeline (Phase 4-(1) W1) 正当性テスト + 並列ベンチ
+# 各段は sleep_for スタブ callable で駆動・OV/CUDA 非依存ゆえ常時実走 (SKIP なし)。
+test_multi_frame_pipeline_exe = executable('test_multi_frame_pipeline',
+  sources             : files('tests/test_multi_frame_pipeline.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('multi_frame_pipeline', test_multi_frame_pipeline_exe, timeout : 120)
+
 # CharacterBible / プロンプト合成テスト
 test_character_exe = executable('test_character',
   sources             : files('tests/test_character.cpp'),
