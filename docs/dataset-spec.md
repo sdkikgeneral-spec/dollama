@@ -761,13 +761,14 @@ ScorerNet 出力 `[1,1+8]` の `index0=quality` / `index1..8=axis[0..7]` に 1:1
 
 ### 16.7 研究機で実走するために残る手順
 
-1. `dollma_gen_scorer_corpus.py --run` の `run_on_research_machine` を結線
+1. ✅ **完了** `dollma_gen_scorer_corpus.py --run` の `run_on_research_machine` を結線
    (SDXL 生成 = `Txt2ImgGenerator`/`dollama --prompt`・WD14 タグ付け = OV `[1,448,448,3]` f32)。
-   良/悪を散らすジョブ設計 (品質ネガ ON/OFF) は実装済。まず数百枚 (配管優先・後段で拡大)。
+   良/悪を散らすジョブ設計 (品質ネガ ON/OFF) は実装済。**E-1 実走 = 実 PNG 180枚 (良90/悪90)・~17s/枚** (commit 63116f0・main マージ済 51b7740)。
 2. 外部美的モデルを **ライセンス確認後**に `QualityProvider` 実装として差す
-   (不可なら `anatomy_proxy` で縮退・PL 判断)。
-3. `scorer_wd14.jsonl` → `dollma_make_scorer_labels.py` で `scorer.{train,val}.jsonl` 生成。
-4. B-3b (`scripts/train_scorer.py`・model-trainer) が本データを消費して ScorerNet を蒸留訓練。
+   (不可なら `anatomy_proxy` で縮退・PL 判断)。**現状 quality=null で B head 凍結のまま (B-3b は anatomy 8軸のみ訓練)・ライセンス整理後に再訓練で有効化**。
+3. ✅ **完了** `scorer_wd14.jsonl` → `dollma_make_scorer_labels.py` で `scorer.{train,val}.jsonl` 生成 (train162/val18・axis=WD14 max-sigmoid soft・quality=null)。
+4. ✅ **完了 (2026-06-28・B-3b)** `scripts/train_scorer.py`・model-trainer が本データを消費して ScorerNet を蒸留訓練。
+   **train_loss ep0 0.0933→ep5 0.00747 (CPU 95.0s・seed 20260620)・params 11.18113M (probe 一致)・実 PNG 180枚実ロード・同 seed bitwise 一致・quality 全 null → B head 凍結 (§16.8)**。出力 `data/scorer/scorer_net{,_fp32}.safetensors` (gitignore)・test_dollma_train_scorer 9/9 緑。**残: B-3c (OV 変換・研究機) → B-3d (C++ グルー `src/infer/quality_scorer.hpp`) → B-3e (test) → B-5 (FB ループ)**。
 
 ### 16.8 引き渡し
 
