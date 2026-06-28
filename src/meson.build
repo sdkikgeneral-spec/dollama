@@ -245,6 +245,25 @@ test_matting_exe = executable('test_matting',
 # ISNet-anime は重い (CPU ~583ms/推論 x ベンチ N=7 + ロード)。既定 30s を超えうるため延伸。
 test('matting', test_matting_exe, timeout : 180)
 
+# Model B / B-5-1: IScorer / make_scorer (ScorerNet 品質スコアラ・純 cpp 結線) 契約テスト
+# scorer_runner.hpp は OV 非依存 (ScorerResult を再利用するだけ・QualityScorer 本体は OV ガード越し)。
+# make_scorer の実体を解決するため scorer_runner(_stub).cpp を test exe にリンクする
+# (OV 有無で切替・test_matting の matter_runner(_stub).cpp 流儀をそのまま写経)。
+# exe(main) には B-5-1 では登録しない (呼び出し元=生成器結線は成果物3まで来ないため未使用リンク回避)。
+scorer_runner_sources = ['tests/test_scorer_runner.cpp']
+if openvino_dep.found()
+  scorer_runner_sources += 'server/scorer_runner.cpp'
+else
+  scorer_runner_sources += 'server/scorer_runner_stub.cpp'
+endif
+test_scorer_runner_exe = executable('test_scorer_runner',
+  sources             : files(scorer_runner_sources),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('scorer_runner', test_scorer_runner_exe)
+
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
   sources             : files('tests/test_affinity.cpp'),
