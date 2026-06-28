@@ -200,6 +200,24 @@ test_quality_gate_exe = executable('test_quality_gate',
 )
 test('quality_gate', test_quality_gate_exe)
 
+# Model B / B-3e: QualityScorer (ScorerNet 品質スコアラ) OV 推論グルー テスト
+# quality_scorer.hpp は OV ガード越し (HAVE_OPENVINO 未定義時は推論 [SKIP]・logits_to_result は常時)。
+# IR (model_ov_fp32.xml) は .gitignore 済・再生成可。golden は src/tests/data/scorer/。
+# パスは meson の cpp_args で -D 埋め込み (cwd 非依存)。OV/IR/golden 不在は test 側で [SKIP]。
+# glue 単体ゆえ外部 .cpp リンク不要 (matter_runner のような stub 切替も不要)。
+scorer_model_xml   = meson.project_source_root() / 'models' / 'scorer-net' / 'model_ov_fp32.xml'
+scorer_golden_path = meson.project_source_root() / 'src' / 'tests' / 'data' / 'scorer' / 'golden_scorernet.safetensors'
+test_quality_scorer_exe = executable('test_quality_scorer',
+  sources             : files('tests/test_quality_scorer.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args + [
+    '-DSCORER_MODEL_XML="' + scorer_model_xml + '"',
+    '-DSCORER_GOLDEN_PATH="' + scorer_golden_path + '"',
+  ],
+)
+test('quality_scorer', test_quality_scorer_exe)
+
 # マッティング (ISNet-anime) CPU 推論テスト (M-4)
 # matting.hpp は OV ガード越し (HAVE_OPENVINO 未定義時は推論 [SKIP]・compose_rgba は常時)。
 # モデル (model_ov_fp32.xml) は .gitignore 済・再生成可。golden は src/tests/data/matting/。
