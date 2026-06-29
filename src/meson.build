@@ -98,6 +98,13 @@ if http_enabled
   else
     exe_sources += 'server/matter_runner_stub.cpp'
   endif
+  # B-5-3: 品質スコアラ (IScorer) の make_scorer 実体。cli_generate.hpp が呼ぶ。
+  #   OV 有効 → OV 実体 (scorer_runner.cpp)、OV 無効 → nullptr 返しの stub。
+  if openvino_dep.found()
+    exe_sources += 'server/scorer_runner.cpp'
+  else
+    exe_sources += 'server/scorer_runner_stub.cpp'
+  endif
 endif
 
 exe = executable('dollama',
@@ -263,6 +270,17 @@ test_scorer_runner_exe = executable('test_scorer_runner',
   cpp_args            : cpp_args,
 )
 test('scorer_runner', test_scorer_runner_exe)
+
+# Model B / B-5-2: 採点後処理グルー (scoring_postprocess.hpp) 単体テスト
+# 純ヘッダ + fake IScorer ゆえ scorer_runner(_stub).cpp のリンク不要 (OV 条件分岐なし)。
+# OV/CUDA 非依存で開発機でも SKIP なし実走する。
+test_scoring_postprocess_exe = executable('test_scoring_postprocess',
+  sources             : files('tests/test_scoring_postprocess.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('scoring_postprocess', test_scoring_postprocess_exe)
 
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
@@ -823,12 +841,14 @@ endif
 # M-6: cli_generate.hpp (build_image_generator) が make_matter を呼ぶため、matter 実体を
 #   リンクする。OV 有無で matter_runner(_stub) を切り替える (exe と同じ DI 設計)。
 cli_matter_src = openvino_dep.found() ? 'server/matter_runner.cpp' : 'server/matter_runner_stub.cpp'
+cli_scorer_src = openvino_dep.found() ? 'server/scorer_runner.cpp' : 'server/scorer_runner_stub.cpp'
 if cuda_enabled
   test_cli_generate_exe = executable('test_cli_generate',
     sources             : files(['tests/test_cli_generate.cpp',
                                  'server/pipeline_generator_factory.cu',
                                  'server/diffusion_runner.cu',
-                                 cli_matter_src] + diffusion_cu_sources),
+                                 cli_matter_src,
+                                 cli_scorer_src] + diffusion_cu_sources),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
@@ -839,7 +859,8 @@ else
     sources             : files('tests/test_cli_generate.cpp',
                                 'server/pipeline_generator_factory_stub.cpp',
                                 'server/diffusion_runner_stub.cpp',
-                                cli_matter_src),
+                                cli_matter_src,
+                                cli_scorer_src),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,

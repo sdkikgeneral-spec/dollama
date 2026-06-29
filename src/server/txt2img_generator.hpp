@@ -19,6 +19,8 @@
 //   - M-6: マッティング (α 抽出) は純 cpp interface IMatter 越し (set_matter で注入)。
 //     最終 PNG エンコードを encode_png_maybe_transparent に委譲し、matter が有れば
 //     透過 PNG、無ければ不透明 PNG を返す。
+//   - B-5-3: 品質採点 (ScorerNet) は純 cpp interface IScorer 越し (set_scorer で注入)。
+//     生キャラ rgb を matting 合成前に score_image_safe で安全に採点する (matting と独立)。
 //
 //   従って本ヘッダを include してよいのは HAVE_OPENVINO 定義済みの cpp TU
 //   (= MSVC でコンパイルされる .cpp、CUDA 非露出)。
@@ -29,6 +31,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -40,6 +43,8 @@
 #include "server/matter_runner.hpp"
 #include "server/matting_postprocess.hpp"
 #include "server/png.hpp"
+#include "server/scorer_runner.hpp"
+#include "server/scoring_postprocess.hpp"
 
 namespace dollama
 {
@@ -95,6 +100,12 @@ public:
         matter_ = std::move(m);
     }
 
+    // B-5-3: スコアラを後付け注入する (build_image_generator が DI 後に 1 回呼ぶ)。
+    void set_scorer(std::unique_ptr<IScorer> s) override
+    {
+        scorer_ = std::move(s);
+    }
+
     // 1 リクエスト分を本 txt2img で生成し PNG バイト列を返す。
     GenResult generate(const GenRequest& req) override
     {
@@ -129,6 +140,25 @@ public:
             tc.time_ids.data(),
             rgb, w, h);
 
+        // --- B-5-3: スコアラ注入時のみ生キャラ rgb を採点 (matting 合成前)。失敗しても
+        //     生成は止めない (score_image_safe が例外/nullptr を握る)。結果は現状ログのみ
+        //     (消費者 F 未着手ゆえ GenResult 添付/API 露出はしない=死にコード回避)。
+        ScoringOutcome sc = score_image_safe(scorer_.get(), rgb, w, h);
+        if (sc.scored)
+        {
+            std::clog << "[scorer] quality=" << sc.result.quality << " anomaly:";
+            auto flags = collect_anomalous_axes(sc.result);
+            if (flags.empty())
+            {
+                std::clog << " none";
+            }
+            for (const auto& f : flags)
+            {
+                std::clog << ' ' << axis_name(f.axis) << '(' << f.score << ')';
+            }
+            std::clog << '\n';
+        }
+
         // --- HWC uint8 RGB → PNG (M-6: matting ON なら透過 PNG・OFF/無なら不透明) ---
         GenResult out;
         out.png_bytes = encode_png_maybe_transparent(
@@ -146,6 +176,7 @@ private:
     TextConditioner                  tc_;
     std::unique_ptr<IDiffusionRunner> runner_;
     std::unique_ptr<IMatter>          matter_; // M-6: set_matter で注入 (既定 nullptr = 不透明)
+    std::unique_ptr<IScorer>          scorer_; // B-5-3: set_scorer で注入 (既定 nullptr = 不採点)
 };
 
 } // namespace dollama

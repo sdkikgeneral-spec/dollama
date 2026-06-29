@@ -21,6 +21,9 @@
 //   - M-6: マッティング (α 抽出) は純 cpp interface IMatter 越し (set_matter で注入)。
 //     matting_postprocess.hpp / matter_runner.hpp は純 cpp (CUDA/OV 非依存) なので
 //     CUDA TU から安全に include でき、factory シグネチャは不変。
+//   - B-5-3: 品質採点 (ScorerNet) は純 cpp interface IScorer 越し (set_scorer で注入)。
+//     scoring_postprocess.hpp / scorer_runner.hpp も純 cpp (CUDA/OV 非依存) ゆえ
+//     CUDA TU から安全に include でき、生キャラ rgb を matting 前に安全採点する。
 // ----------------------------------------------------------------
 #pragma once
 
@@ -28,6 +31,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -38,6 +42,8 @@
 #include "server/matter_runner.hpp"
 #include "server/matting_postprocess.hpp"
 #include "server/png.hpp"
+#include "server/scorer_runner.hpp"
+#include "server/scoring_postprocess.hpp"
 
 namespace dollama
 {
@@ -67,6 +73,12 @@ public:
     void set_matter(std::unique_ptr<IMatter> m) override
     {
         matter_ = std::move(m);
+    }
+
+    // B-5-3: スコアラを後付け注入する (build_image_generator が DI 後に 1 回呼ぶ)。
+    void set_scorer(std::unique_ptr<IScorer> s) override
+    {
+        scorer_ = std::move(s);
     }
 
     // 1 リクエスト分を拡散ループで生成し PNG バイト列を返す。
@@ -106,6 +118,25 @@ public:
         int w = 0, h = 0;
         pipe_.generate(steps, seed, rgb, w, h);
 
+        // B-5-3: スコアラ注入時のみ生キャラ rgb を採点 (matting 合成前)。失敗しても
+        //   生成は止めない (score_image_safe が例外/nullptr を握る)。結果は現状ログのみ
+        //   (消費者 F 未着手ゆえ GenResult 添付/API 露出はしない=死にコード回避)。
+        ScoringOutcome sc = score_image_safe(scorer_.get(), rgb, w, h);
+        if (sc.scored)
+        {
+            std::clog << "[scorer] quality=" << sc.result.quality << " anomaly:";
+            auto flags = collect_anomalous_axes(sc.result);
+            if (flags.empty())
+            {
+                std::clog << " none";
+            }
+            for (const auto& f : flags)
+            {
+                std::clog << ' ' << axis_name(f.axis) << '(' << f.score << ')';
+            }
+            std::clog << '\n';
+        }
+
         // HWC uint8 RGB → PNG (M-6: matting ON なら透過 PNG・OFF/無なら不透明)。
         GenResult out;
         out.png_bytes = encode_png_maybe_transparent(
@@ -124,6 +155,7 @@ private:
     bool              deterministic_seed_;
     uint64_t          fixed_seed_;
     std::unique_ptr<IMatter> matter_; // M-6: set_matter で注入 (既定 nullptr = 不透明)
+    std::unique_ptr<IScorer> scorer_; // B-5-3: set_scorer で注入 (既定 nullptr = 不採点)
 };
 
 } // namespace dollama

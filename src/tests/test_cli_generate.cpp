@@ -107,6 +107,36 @@ static bool test_write_png_file()
     return true;
 }
 
+// build_image_generator() のログに DI 注入の各行 (matting / scorer) が出ることを確認。
+// 開発機 (OV 無) では make_matter / make_scorer が nullptr を返すため、
+// それぞれ「無効」行が出る (M-6 / B-5-3 の DI 配管が通っている非回帰)。
+static bool test_di_log_lines()
+{
+    std::ostringstream log;
+    std::unique_ptr<IImageGenerator> gen = build_image_generator(log);
+    if (!gen)
+    {
+        std::cerr << "[log] build_image_generator が nullptr を返した\n";
+        return false;
+    }
+    const std::string text = log.str();
+
+    // M-6: matting の DI 行が出ていること (対称性の非回帰)。
+    if (text.find("matting:") == std::string::npos)
+    {
+        std::cerr << "[log] ログに matting: 行が無い\n";
+        return false;
+    }
+    // B-5-3: scorer の DI 行が出ていること (開発機 OV 無では「scorer: 無効」)。
+    if (text.find("scorer:") == std::string::npos)
+    {
+        std::cerr << "[log] ログに scorer: 行が無い\n";
+        return false;
+    }
+    std::cout << "  [log] matting/scorer DI ログ行 OK\n";
+    return true;
+}
+
 } // namespace dollama
 
 int main()
@@ -117,6 +147,7 @@ int main()
     std::cout << "=== test_cli_generate ===\n";
     ok = test_build_and_generate() && ok;
     ok = test_write_png_file() && ok;
+    ok = test_di_log_lines() && ok;
 
     if (ok)
     {

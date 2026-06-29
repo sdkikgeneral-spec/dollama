@@ -7,7 +7,7 @@
 // 責務分離:
 //   - 生成器の責務は PNG バイト列まで。
 //   - base64 化は配管側 (サーバ責務) で行う (generator は base64 を知らない)。
-// CUDA / OpenVINO 依存は一切ない純 C++ (IMatter も純 cpp interface)。
+// CUDA / OpenVINO 依存は一切ない純 C++ (IMatter / IScorer も純 cpp interface)。
 #pragma once
 
 #include <cstdint>
@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "server/matter_runner.hpp" // IMatter (純 cpp interface・set_matter 注入用)
+#include "server/scorer_runner.hpp" // IScorer (純 cpp interface・set_scorer 注入用)
 
 namespace dollama
 {
@@ -55,6 +56,11 @@ struct IImageGenerator
     //   1 回だけ呼ぶ。マッティングをサポートする生成器 (Txt2Img/Pipeline) のみ override し、
     //   StubGenerator 等は no-op のまま (不透明 PNG)。
     virtual void set_matter(std::unique_ptr<IMatter>) {}
+
+    // B-5-3: 品質スコアラ (IScorer) を後付け注入する (既定 no-op)。set_matter と対称。
+    //   build_image_generator が DI 確定後に 1 回だけ呼ぶ。採点対応の生成器
+    //   (Txt2Img/Pipeline) のみ override し、StubGenerator 等は no-op (不採点)。
+    virtual void set_scorer(std::unique_ptr<IScorer>) {}
 };
 
 } // namespace dollama

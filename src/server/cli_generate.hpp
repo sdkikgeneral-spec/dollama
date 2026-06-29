@@ -38,6 +38,7 @@
 
 #include "server/generator.hpp"
 #include "server/matter_runner.hpp"
+#include "server/scorer_runner.hpp"
 #include "server/pipeline_generator_factory.hpp"
 #include "server/stub_generator.hpp"
 
@@ -222,6 +223,35 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
         else
         {
             log << "  matting: 無効 (モデル/OV 無 — 不透明 PNG)\n";
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // B-5-3: 品質スコアラ (IScorer) を後付け注入する (gen 確定後・matting 注入の後に 1 回)。
+    //   - モデル xml: env DOLLAMA_SCORER_WEIGHTS 優先。既定は HAVE_OPENVINO 時のみ
+    //     models/ ツリーを find_model_xml で探索 (OV 無時は空文字 → stub nullptr)。
+    //   - device: env DOLLAMA_SCORER_DEVICE 優先。既定 "NPU" (拡散中遊休 NPU で並列採点・
+    //     iGPU は matting が専有するため NPU を既定にする。quality_scorer.hpp 設計意図)。
+    //   make_scorer は OV 無効ビルドで stub が常に nullptr → set_scorer no-op で不採点。
+    {
+#ifdef HAVE_OPENVINO
+        const std::string scorer_xml =
+            resolve_path("DOLLAMA_SCORER_WEIGHTS",
+                         find_model_xml("scorer-net/model_ov_fp32.xml"));
+#else
+        const std::string scorer_xml = resolve_path("DOLLAMA_SCORER_WEIGHTS", "");
+#endif
+        const std::string scorer_dev = resolve_path("DOLLAMA_SCORER_DEVICE", "NPU");
+
+        std::unique_ptr<IScorer> s = make_scorer(scorer_xml, scorer_dev);
+        if (s)
+        {
+            gen->set_scorer(std::move(s));
+            log << "  scorer: " << scorer_dev << " (model='" << scorer_xml << "')\n";
+        }
+        else
+        {
+            log << "  scorer: 無効 (モデル/OV 無 — 不採点)\n";
         }
     }
 
