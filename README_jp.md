@@ -8,9 +8,10 @@
 ML フレームワークに頼らず C++ でフルスクラッチ実装を目指す。
 
 > ⚠️ **実装中 — 完成品ではなく研究中のプロジェクトです。**
-> フル C++ 拡散パイプライン (自作 UNet + Euler スケジューラ + VAE decode) が **実画像 1024×1024 を生成するようになりました** (タスク 2-6a)。
-> ただし現状は (1) 速度が自作 naive カーネル律速で **20steps 84s** (PyTorch/diffusers の probe10 比 22倍遅く、Tensor Core/flash 化が次の本丸)、
-> (2) 入力は golden 埋め込みで、**任意テキスト → 画像の本結線 (CLIP-G を加えた SDXL dual encoder + CFG) は未了** (タスク 2-6b)。
+> フル C++ 拡散パイプライン (自作 UNet + Euler スケジューラ + VAE decode) が **任意テキストから実画像 1024×1024 を生成**し
+> (CLIP-G を加えた SDXL dual encoder + CFG・タスク 2-6b)、結果を **切り抜き済み透過 PNG** にマッティング (iGPU ISNet-anime) するようになりました。
+> 速度は当初の 84s から **20steps 11.3s** へ短縮済み (im2col / Tensor Core GEMM + cuBLAS フォールバック・probe10 の 3.80s 比 約3倍)。
+> 残るカーネル律速は UNet attention ですが、自作 CUDA の速度詰めはここで一旦打ち切り、研究の本丸を **自作タグ生成 LM (Phase 4)** に移しています。
 > API・ファイル構成・計測値は今後変わります。**研究プロセスの公開**を目的としており、すぐ使えるツールではありません。
 
 > **本研究は Intel 環境 (Core Ultra 9 285 — Intel AI Boost NPU + Intel Xe iGPU) と
@@ -41,12 +42,14 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | フェーズ | 内容 | 状態 |
 |---|---|---|
 | Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
-| Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 84s**) |
+| Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 11.3s** へ最適化) |
+| Phase 2-6b | 任意テキスト → 画像 (CLIP-G を加えた SDXL dual encoder + CFG + negative prompt) + マッティング → 透過 PNG | ✅ 完了 (prompt → 実画像 1024² 透過 PNG を一気通貫) |
 | Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
-| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ データ/モデル定義/トークナイザ済 (#1〜#3) |
+| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ 進行中 — dense LM が C++ で訓練・推論 (CPU/GPU・golden corr 1.0・GPU 87.5x・INT8 / AVX2 経路)、同一性条件付け (A) はクローズ (retention 0.975)、入力多様化 (B) は本線昇格、品質スコアラ (Model B) は解剖 8 軸で蒸留済 |
 
-> **次の本丸**: ① 速度最適化 (direct conv → im2col/Tensor Core GEMM、naive attention → flash) で 84s → probe10 の 3.80s 同等へ。
-> ② 任意テキスト → 画像の本結線 (タスク 2-6b: CLIP-G を加えた SDXL dual encoder + CFG + negative prompt)。
+> **次の本丸**: 研究の焦点は **自作タグ生成 LM (Phase 4)** — 暫定 Qwen2 段を 33M フルスクラッチモデル
+> (自然文 → danbooru タグ・同一性条件付き) に置き換え、Model B のアニメ品質フィードバックループを閉じる。
+> 出力品質への最大レバーは、より新しいアニメ特化 SDXL checkpoint への差し替え (カーネル無改修)。
 
 > 詳細なロードマップは [`docs/roadmap.md`](docs/roadmap.md)、HW 役割の根拠は下記「何が分かったか」を参照。
 

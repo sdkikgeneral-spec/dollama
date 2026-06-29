@@ -10,12 +10,13 @@ without ML frameworks.
 
 > ⚠️ **Work in progress — research project, not a finished product.**
 > The full from-scratch C++ diffusion pipeline (custom UNet + Euler scheduler + VAE decode) now
-> **generates real 1024×1024 images** (task 2-6a). Two caveats remain: (1) speed is bound by the naive
-> hand-written kernels — **84 s for 20 steps** (22× slower than the PyTorch/diffusers probe10 baseline;
-> Tensor-Core / flash kernels are the next focus), and (2) inputs are golden embeddings — **wiring up
-> arbitrary text → image (SDXL dual encoder with CLIP-G + CFG) is not done yet** (task 2-6b).
-> APIs, file layout, and measurements will change. Published for transparency of the research process,
-> not for turnkey use.
+> **generates real 1024×1024 images from arbitrary text** (SDXL dual encoder with CLIP-G + CFG, task 2-6b),
+> and mats the result to a **cut-out transparent PNG** (iGPU ISNet-anime). Speed has been brought down from
+> an initial 84 s to **11.3 s for 20 steps** (im2col / Tensor-Core GEMM + cuBLAS fallbacks; ~3× of the
+> PyTorch/diffusers probe10 baseline of 3.80 s). The remaining kernel bottleneck is UNet attention, but the
+> from-scratch CUDA speed work is paused here — the research focus has moved to the **custom tag-generation
+> LM (Phase 4)**. APIs, file layout, and measurements will change. Published for transparency of the
+> research process, not for turnkey use.
 
 > **This research targets a specific machine: an Intel Core Ultra 9 285 (Intel AI Boost NPU + Intel Xe iGPU)
 > combined with an NVIDIA RTX 5080.** The NPU / iGPU usage (via OpenVINO) depends on Intel-platform
@@ -50,12 +51,15 @@ other's wait time.
 | Phase | Scope | Status |
 |---|---|---|
 | Phase 1 | C++ pipeline skeleton (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/threads) | ✅ Done (9.13 frames/s) |
-| Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — **84 s / 20 steps**) |
+| Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — optimized to **11.3 s / 20 steps**) |
+| Phase 2-6b | Arbitrary text → image (SDXL dual encoder with CLIP-G + CFG + negative prompt) + matting → transparent PNG | ✅ Done (prompt → real 1024² transparent PNG end-to-end) |
 | Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
-| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ Dense line #1–#4/#6 + identity conditioning (A) done — text→tags & character-bible→tags in C++, golden corr 1.0, identity retention 0.947 |
+| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ In progress — dense LM trains & infers in C++ (CPU/GPU, golden corr 1.0; GPU 87.5×, INT8 / AVX2 paths), identity conditioning (A) closed (retention 0.975), input-diversification (B) promoted to mainline, quality scorer (Model B) distilled over 8 anatomy axes |
 
-> **Next up:** ① speed optimization (direct conv → im2col/Tensor-Core GEMM, naive attention → flash) to bring
-> 84 s down toward probe10's 3.80 s. ② arbitrary text → image (task 2-6b: SDXL dual encoder with CLIP-G + CFG + negative prompt).
+> **Next up:** the research focus is now the **custom tag-generation LM (Phase 4)** — replacing the interim
+> Qwen2 prompt stage with a 33M from-scratch model (text → danbooru tags, identity-conditioned) and closing
+> the Model B anime quality-feedback loop. Swapping in a more recent anime-specialized SDXL checkpoint
+> (no kernel changes needed) remains the single biggest lever on output quality.
 
 > Full roadmap in [`docs/roadmap.md`](docs/roadmap.md); the rationale behind the HW roles is in
 > "What we learned" below.
@@ -90,9 +94,10 @@ Key takeaways from 10 probes plus the Phase 2 hand-written kernels. **Conclusion
    Phase 2 implements GEMM / activation / GroupNorm / Conv2d / Attention from scratch, each validated
    against a CPU reference with golden tests (GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS).
    On top of those, a custom VAE decode (final SSIM 0.999992) and custom SDXL UNet (noise_pred SSIM 0.999998)
-   are wired to the Euler scheduler to **generate a real 1024² image in 20 steps (84 s)**. Correctness is
-   there — speed (bound by direct conv + naive attention, 22× slower than probe10) is the next focus, with
-   Tensor-Core / flash kernels as the main lever.
+   are wired to the Euler scheduler to **generate a real 1024² image from arbitrary text in 20 steps**.
+   Speed was optimized from an initial 84 s down to **11.3 s** (im2col / Tensor-Core GEMM + cuBLAS
+   fallbacks; ~3× of probe10); the remaining bottleneck is UNet attention, and the research focus has
+   since moved on to the custom tag-generation LM (Phase 4).
 
 → **"Use all the hardware" is not wishful thinking — measurements show it holds.** The key is not direct
 interconnects but *temporal* cooperation: assign each device the task it's best at, and fill the GPU's
@@ -151,7 +156,7 @@ generation window with NPU/CPU work.
     │
     ├─ [CPU] WD14 SwinV2 tagger (101ms) ← runs in parallel during GPU generation
     │         generated image → danbooru tags → LLM feedback loop
-    └─ output image
+    └─→ [iGPU] matting (ISNet-anime, ~100ms) → α extraction → transparent PNG
 ```
 
 ### img2img (additional path)
@@ -221,8 +226,8 @@ character-consistency design, and full roadmap, see **[README_jp.md](README_jp.m
 
 > Status: builds today include the core, CLIP (NPU) / WD14 (CPU) inference glue, the threaded pipeline
 > skeleton, the full Phase 2 CUDA stack (kernels + VAE decode + SDXL UNet + Euler scheduler + diffusion
-> loop), and the OpenAI-compatible HTTP server, all with tests. **End-to-end image generation from golden
-> embeddings works** (84 s / 20 steps); generation from arbitrary text is task 2-6b.
+> loop), the OpenAI-compatible HTTP server, and matting → transparent PNG, all with tests.
+> **End-to-end image generation from arbitrary text works** (11.3 s / 20 steps).
 
 ### One-shot installer (Windows, recommended)
 
@@ -272,7 +277,8 @@ SDXL stages you must obtain and convert the models yourself:
 - **CLIP-L text encoder** and **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU), converted via the scripts in
   `scripts/` (see the probe scripts) using `optimum-intel` / OpenVINO.
 - **Qwen2-1.5B (INT4)** for the interim LLM prompt stage.
-- **SDXL** for the diffusion stage (the custom CUDA kernels now generate images; the text front-end is task 2-6b).
+- **SDXL** for the diffusion stage (the custom CUDA kernels generate images from text end-to-end).
+- **ISNet-anime** (anime-segmentation) for matting → transparent PNG (iGPU; optional, falls back to opaque PNG).
 
 The project **code** is Apache-2.0 (below), but each model's **weights are governed by their own upstream
 licenses**. You are responsible for complying with those terms.
