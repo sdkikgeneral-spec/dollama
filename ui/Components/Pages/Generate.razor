@@ -84,9 +84,15 @@
                 </label>
             </div>
 
-            <button class="generate" @onclick="GenerateAsync" disabled="@_busy">
-                @(_busy ? "生成中…" : "生成")
-            </button>
+            <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
+            <div class="gen-actions">
+                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@_busy">
+                    @((_busy && !_runningDraft) ? "生成中…" : "生成")
+                </button>
+                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@_busy">
+                    @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
+                </button>
+            </div>
 
             @if (_error is not null)
             {
@@ -96,6 +102,11 @@
 
         <!-- 右ペイン: 生成画像プレビュー専任 -->
         <section class="canvas">
+            @* 直近プレビューのモード・実送信サイズをバッジ表示。生成前/未生成時は非表示。 *@
+            @if (_lastMode is not null)
+            {
+                <div class="gen-mode">@_lastMode</div>
+            }
             <div class="preview">
                 @if (_busy)
                 {
@@ -134,10 +145,14 @@
     private string _tagLang = "ja";
 
     private bool _busy;
+    private bool _runningDraft;    // 現在 busy 中の生成が下書きモードかどうか (文言出し分け用)
     private string? _error;
     private string? _imageData;   // base64 PNG (img 表示用)
     private byte[]? _imageBytes;  // 生成画像の生バイト (プリセット保存サムネ用)
     private bool _connected;
+
+    // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
+    private string? _lastMode;
 
     private HubConnection? _hub;
     private TelemetrySample? _sample;
@@ -243,7 +258,11 @@
         _presetSidebar?.Refresh();
     }
 
-    private async Task GenerateAsync()
+    // 生成。draft=true のときだけ解像度を下書き (768²) へ落として高速プレビューする。
+    // 本番 (draft=false) は従来どおり選択サイズ (_size) で生成する。
+    // ステップ数は両モード共通で据え置き (本番と同じ重み・同じ step・解像度だけ違う)。
+    // _size 自体は書き換えず req.Size をローカルに上書きするだけ (下書き後に本番を押せば選択サイズで出る)。
+    private async Task GenerateAsync(bool draft = false)
     {
         if (_busy || _promptTags.Count == 0)
         {
@@ -251,16 +270,20 @@
         }
 
         _busy = true;
+        _runningDraft = draft;
         _error = null;
         _imageData = null;
         _imageBytes = null;
         StateHasChanged();
 
+        // 実際に C++ サーバーへ送る size。下書きのときだけ落とす。
+        var sendSize = draft ? DraftPreview.ResolveDraftSize(_size) : _size;
+
         var req = new GenerationRequest
         {
             Prompt = string.Join(", ", _promptTags),
             NegativePrompt = _negativeTags.Count == 0 ? null : string.Join(", ", _negativeTags),
-            Size = _size,
+            Size = sendSize,
             Steps = _steps,
         };
 
@@ -272,6 +295,8 @@
             _imageBytes = png; // 生バイトを保持 (プリセット保存時のサムネ元)
             _imageData = Convert.ToBase64String(png);
             _connected = true;
+            // 成功後にモードバッジを記録 (例「下書き 768²」「本番 1024²」)。
+            _lastMode = $"{(draft ? "下書き" : "本番")} {ModeBadge(sendSize)}";
         }
         catch (GenerationException ex)
         {
@@ -287,6 +312,17 @@
             Activity.Exit();
             _busy = false;
         }
+    }
+
+    // "WxH" の幅を取り出して「768²」形式に整形する。パース不能ならそのまま返す。
+    private static string ModeBadge(string size)
+    {
+        var parts = size.Split('x', 'X');
+        if (parts.Length >= 1 && int.TryParse(parts[0].Trim(), out var w))
+        {
+            return $"{w}²";
+        }
+        return size;
     }
 
     public async ValueTask DisposeAsync()
