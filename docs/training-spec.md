@@ -1131,3 +1131,91 @@ dense INT8 で 33M dense LM の量子化耐性を測った。ternary GEMM (#5) �
 - **GPU INT8** (device 上の int8 GEMM) は別タスク。
 - **ternary GEMM (#5・`src/kernels/ternary_gemm.cu`)** は乗算削減の別実験軸。
 - **INT4** (4bit 重み) も別タスク。本節は CPU・重みのみ INT8 dense に限定する。
+
+
+## 16. 施策 D — 容量増 (33M → 80M) seed sweep (D クローズ・陰性確定)
+
+施策 B (入力多様化) が ~2,000 件で飽和 (§14.9)・施策 A (実ペア増) が diverse-val F1 に
+seed ノイズで非寄与 (§9.10) と判明した後、残る diverse-val F1 の伸びしろを **容量** に賭けて
+測った。`src/models/bitnet_config.hpp` の `DOLLAMA_BITNET_ARCH=d80m` (N_LAYERS 8→16 /
+FFN_DIM 1792→2464・D_MODEL/heads/HEAD_DIM/vocab/max_seq 据え置き = **79,908,864 params**)
+ビルド時切替と `train_bitnet.py --arch d80m` は配線済 (改修ゼロで焼ける)。
+
+**設計 (A/B/D5/D6 と同一作法)**: 2 アーム **c33(33M) / d80(80M)** とも完全同一レシピ =
+b2000 多様化 train (`--train-file`) ∧ a12k identity (`--identity`)。唯一の差分は `--arch d80m`
+の有無 (= 容量のみ)。4 seed (20260620 / 20260621 / 42 / 7)・6ep paired を
+`scripts/dollma_d_seedsweep.py` (`--only-seed` 小出し・`_results/*.npz` 冪等 skip) で回し、
+`dollma_d_seedsweep_analyze.py` で 3 軸判定。出力は `data/bitnet/_seedsweep_d80m/` 配下のみ
+(本番 `bitnet_dense*`/golden・#1 本線 pairs・凍結 eval を一切無改変)。delta = d80 − c33・
+band は **c33 の seed 分散** (A の base band と同じ役割)。
+
+**着手前に明文化した打ち切り基準**: 主指標 = diverse-val 生成 set-F1 を 3 軸
+((a)全 seed 符号一貫 (b)delta 平均が c33 seed 分散帯 sd 超え (c)各 seed paired 95%CI が 0 除外) で
+測り、**不成立なら陰性確定 (データ律速で容量効かず)・80M は出荷しない**。retention(≥0.975 床) /
+in-dist pairs.val F1 はガードレール (非退行の床であって D の成否ではない)。
+
+### 16.1 主指標 diverse-val 生成 F1/Jaccard = seed ノイズ (全 4 set/metric 判定 NO)
+
+delta = d80(80M) − c33(33M)・per-seed paired (n=1500/seed)。
+
+| set / metric | per-seed delta (20260620 / 20260621 / 42 / 7) | across 平均 ± sd | c33 band sd | (a)符号 | (b)>band | (c)CI除外 | 頑健 |
+|---|---|---|---|---|---|---|---|
+| diverse_a / F1 | −0.0240 / −0.0047 / −0.0008 / **+0.0133** | −0.0040 ± 0.0154 | 0.0114 | NO (seed7 反転) | NO | Y/N/N/Y | **NO** |
+| diverse_a / Jaccard | −0.0169 / −0.0041 / −0.0007 / **+0.0091** | −0.0032 ± 0.0107 | 0.0079 | NO | NO | Y/Y/N/Y | **NO** |
+| diverse_b / F1 | −0.0264 / −0.0042 / **+0.0064** / **+0.0156** | −0.0021 ± 0.0181 | 0.0131 | NO | NO | Y/N/Y/Y | **NO** |
+| diverse_b / Jaccard | −0.0207 / −0.0046 / **+0.0048** / **+0.0115** | −0.0023 ± 0.0140 | 0.0098 | NO | NO | Y/Y/Y/Y | **NO** |
+
+全 4 set/metric で判定 NO。**seed 20260620 で大きく負 (−0.024〜−0.026)・seed 7 で正
+(+0.013〜+0.016) と符号が反転**し、across 平均は −0.002〜−0.004 (むしろわずかに負) で c33
+自身の seed 分散帯 sd 以下に埋もれる。各 seed 内では paired CI が 0 を除外することがある
+(per-sample n=1500・|t| 大) が seed を跨ぐと安定しない = **A12k (§9.10)・D6 (§12.5) と同型の
+seed ノイズ**。施策 B の ~2,000 飽和 (§14.9) と整合し、**diverse-val F1 の頭打ちはデータ律速で、
+容量 (33M→80M) では取れない**ことが確定した。
+
+### 16.2 ガードレール — 80M はむしろ床割れ気味
+
+| seed | c33 retention | d80 retention | c33 in-dist F1 | d80 in-dist F1 |
+|---|---|---|---|---|
+| 20260620 | 0.9807 | 0.9744 | 0.4552 | 0.4516 |
+| 20260621 | 0.9800 | 0.9739 | 0.4629 | 0.4570 |
+| 42 | 0.9752 | 0.9771 | 0.4605 | 0.4609 |
+| 7 | 0.9755 | 0.9711 | 0.4612 | 0.4559 |
+| **across** | **0.9778 ± 0.0029 (全 seed ≥0.975 ✅)** | **0.9741 ± 0.0025 (3/4 seed 床割れ ❌)** | 0.4599 | 0.4564 (微退行) |
+
+c33 は retention 床 0.975 を全 seed クリア・in-dist も健全。**d80 は retention が 4 seed 中 3 seed
+(0.9744/0.9739/0.9711) で床割れ**し、in-dist pairs.val F1 もわずかに退行。80M を採る理由はガード
+レール側にも無い。
+
+### 16.3 判定 — D 陰性確定 (80M 不採用・勝者 = c33 33M)
+
+着手前の打ち切り基準にそのまま該当 (3 軸不成立)。**容量倍増 (33M→80M) で diverse-val F1 は
+seed ノイズ内 (平均わずかに負)・retention 床割れ・in-dist 微退行** → **80M は出荷しない**。
+80M は CPU/GPU forward が ~2x (matmul 律速) になるが、その対価を払うロバストな F1 実利が無い。
+
+**勝者 = c33 (33M・b2000 多様化 ∧ a12k identity) = #1 超え出荷候補**。施策 A/B/D5/D6/D の
+探索を通じ、**diverse-val F1 を頑健に押し上げたのは入力多様化 (B・~2,000 で飽和) のみ**で、
+蒸留 (D5/D6)・実ペア増 (A)・容量 (D) はいずれも非寄与か seed ノイズと確定した。残る低帯域
+(diverse_a ~0.31 / diverse_b ~0.36) を取りに行く次のフロンティアは、容量でもデータ件数でもない
+別軸 (データ多様性の質・アーキ・損失設計など) に求める必要がある。
+
+正典差し替え (`bitnet_dense.safetensors` 置換 + C++ golden 再生成) は `[B-merge-at-A]` 遅延条項
+どおり**勝者 33M (b2000 ∧ identity) で 1 回だけ**まとめ焼きする (別途プランモードで設計)。
+
+### 16.4 検証・非回帰 (ルール#4・Python のため C++ meson test 対象外)
+
+- `scripts/test_dollma_d_seedsweep.py` 構造テスト **8/8 緑** (2 アーム c33/d80・両 arm 同一
+  レシピ・d80 のみ `--arch d80m` が train/eval 両方に連動・SEEDS/COMMON/setup コピー対象)。
+- sweep 出力は `data/bitnet/_seedsweep_d80m/` 配下のみ (gitignore)。本番重み/golden/凍結 eval/
+  #1 本線 train/val を一切無改変。`--identity` 駆動の重みは arch 非依存固定名
+  `bitnet_dense_identity*` に出るため、各 arm は train 直後に即 eval→`_results/` 退避で衝突回避。
+
+### 16.5 再現手順
+
+```
+# 全 4 seed (~3.8h・GTX1080Ti FP32・eval-only 律速)
+py -3.12 scripts/dollma_d_seedsweep.py
+# seed 小出し (冪等再開可)
+py -3.12 scripts/dollma_d_seedsweep.py --only-seed 20260620
+# 集計・3 軸判定
+py -3.12 scripts/dollma_d_seedsweep_analyze.py
+```

@@ -969,3 +969,17 @@ Phase 2 (再訓練 + eval) は **a12k のみ** を 4 seed sweep で評価し、A
 diverse-val が seed ノイズである以上、25k で符号反転が安定化する見込みは薄く、計算コストに
 見合わない。生成済 `pairs.identity.{train,val}.a25k.jsonl` / `stats.identity.a25k.json` は
 将来 (A/D 容量増と束ねた再評価・retention のスケール検証等) のため§17.6 の成果物としてそのまま残す。
+
+## 18. Phase 4-D 容量増 sweep のデータ (新規データ無し・既存流用)
+
+施策 D (容量増 33M→80M・training-spec §16) は**新規データセットを一切作らない**。c33/d80 両
+アームとも完全同一レシピ = b2000 多様化 train (§15.6 `pairs.train.diverse_b2000.jsonl`) ∧ a12k
+identity (§17.6 `pairs.identity.{train,val}.a12k.jsonl`)・凍結 diverse-val (§14) で、唯一の差分は
+モデル容量 (`--arch d80m`) のみ。`scripts/dollma_d_seedsweep.py` の `setup_sweep_dir()` が上記
+正準ファイルを `data/bitnet/_seedsweep_d80m/` へ sha 一致確認付きコピーするだけ (A/B sweep と同手)。
+
+**結論 (D クローズ・陰性確定・training-spec §16)**: 容量倍増では diverse-val F1 が seed ノイズ内
+(across 平均わずかに負・c33 分散帯 sd 以下)・retention 3/4 seed 床割れ・in-dist 微退行 →
+**80M 不採用・勝者 = 33M (b2000 ∧ a12k identity)**。diverse-val F1 を頑健に押し上げたのは入力
+多様化 (B・~2,000 飽和) のみで、蒸留 (D5/D6)・実ペア増 (A)・容量 (D) は非寄与/seed ノイズと確定。
+sweep 成果物は `_seedsweep_d80m/` 配下のみ (gitignore)・本番データ無改変。

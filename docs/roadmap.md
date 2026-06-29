@@ -243,6 +243,16 @@ Qwen2 文多様化が「過学習悪化」に見えたのも、LLM 文が val �
 (素の text→tags は DanTagGen が実現済・新規性が薄いと §Phase4 レビューでも確認)。上げるべきは
 proxy 数値でなく**実用品質**。
 
+**プログラム結論 (2026-06-29・C/B/A/D 決着)**: C (評価作り直し) で据えた diverse-val 生成
+set-F1 の上で B/A/D を 4 seed paired sweep で測った結果、**diverse-val F1 を頑健に押し上げたのは
+施策 B (入力多様化) のみ**で、しかも **~2,000 件で飽和** (B-3・training-spec §14.9)。**施策 A
+(実ペア増) は diverse-val F1 に seed ノイズで非寄与**だが identity retention 0.975 を頑健に成立
+させる機能基盤 (§9.10)。**施策 D (容量増 33M→80M) は陰性確定** — F1 は seed ノイズ内 (符号反転)・
+retention 床割れ・in-dist 微退行で 80M 不採用 (§16・勝者 = 33M b2000∧identity)。**蒸留 4 路線
+(D2/D4/D5/D6) も全て recall/F1 非寄与**。→ **データ件数でも容量でもない別軸 (データ多様性の質・
+アーキ・損失設計、そして本命 F の実品質オンライン信号) が残る diverse-val 低帯域
+(diverse_a ~0.31 / diverse_b ~0.36) を取りに行く次のフロンティア**。
+
 **5 施策と依存連鎖** (独立メニューではない):
 
 ```
@@ -264,7 +274,7 @@ proxy 数値でなく**実用品質**。
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
 | **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000→10,000**・diverse F1 は seed 頑健に正だが **~2,000 で飽和** (2,000→10,000 は平坦・B-3 で「頭打ちなし」を訂正・training-spec §14.9)・著者交絡は D2 で否定・**本線昇格=レシピ既定化を確定 (今後の訓練 A/D/F は多様化入力=tags-stay-real を既定)・アーティファクト本体 (`bitnet_dense{,_fp32}.safetensors`) と C++ 推論 golden (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインまで遅延** (2026-06-24 ユーザー決裁) / training-spec §14 / dataset-spec §15) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts。**a12k 4 seed sweep でクローズ (二分結論・training-spec §9.10)**: diverse-val 生成 F1 は **12k で seed ノイズ** (4 set/metric 判定 NO・seed 42 のみ反転・~2,000 飽和の B と整合) → **diverse F1 を上げる手ではない**。一方 **identity retention は頑健に 0.975** (across-seed 0.9748±0.0010・全 seed) = **同一性条件付けの機能基盤**。a25k は回さず未使用保持。recall 天井底上げは D 容量増側で取りに行く | ✅ **a12k で評価完了・クローズ** (本番 #1 即時差し替えなし・**法務/ToS ゲート** dataset-spec §1.3 / `[B-merge-at-A]` 遅延タスク=下記注記でまとめ焼き) |
-| **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
+| **D** 容量増 | 33M→**80M** (`DOLLAMA_BITNET_ARCH=d80m`・N_LAYERS 8→16 / FFN_DIM 1792→2464 = 79.91M)。両アーム同一レシピ (b2000 ∧ a12k identity)・`--arch` だけ差・4 seed 6ep paired sweep で diverse-val F1 優位の seed 頑健性を測定。**陰性確定・80M 不採用 (training-spec §16)**: diverse-val F1/Jaccard は 4 set/metric とも判定 NO (seed 20260620 で負・seed 7 で正と符号反転・across 平均 −0.002〜−0.004 で c33 seed 分散帯 sd 以下 = A12k/D6 と同型の seed ノイズ)・retention は 3/4 seed が床 0.975 割れ・in-dist 微退行。**容量 (33M→80M) では diverse-val F1 は取れない (データ律速・施策 B ~2,000 飽和と整合)** → **勝者 = c33 (33M・b2000 ∧ a12k identity) = #1 超え出荷候補**。80M は forward ~2x の対価に見合う実利なし | ✅ **陰性確定・クローズ** (打ち切り基準どおり 80M 不出荷・正典化は `[B-merge-at-A]` で勝者 33M を 1 回まとめ焼き) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
 
 **C と F は同じ軸の両端**: C = より良いオフライン proxy、F = 本物のオンライン信号 (良い絵か)。
