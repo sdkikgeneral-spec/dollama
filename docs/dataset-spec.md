@@ -765,7 +765,7 @@ ScorerNet 出力 `[1,1+8]` の `index0=quality` / `index1..8=axis[0..7]` に 1:1
    (SDXL 生成 = `Txt2ImgGenerator`/`dollama --prompt`・WD14 タグ付け = OV `[1,448,448,3]` f32)。
    良/悪を散らすジョブ設計 (品質ネガ ON/OFF) は実装済。**E-1 実走 = 実 PNG 180枚 (良90/悪90)・~17s/枚** (commit 63116f0・main マージ済 51b7740)。
 2. 外部美的モデルを **ライセンス確認後**に `QualityProvider` 実装として差す
-   (不可なら `anatomy_proxy` で縮退・PL 判断)。**現状 quality=null で B head 凍結のまま (B-3b は anatomy 8軸のみ訓練)・ライセンス整理後に再訓練で有効化**。
+   (不可なら `anatomy_proxy` で縮退・PL 判断)。✅ **Q-1 完了 (2026-06-30・`dollma_score_quality_v4.py`)**: waifu_scorer_v4 (apache-2.0) を実走し `scorer.{train,val}.jsonl` の quality を充填 (**quality=null はライセンスの壁でなく実行ギャップであり解消**)。分布 quality_norm 0.0/med 0.061/0.178 (std 0.0753)・非退化だが [0,0.18] 圧縮 (§16.9 Q-1)。**B head 凍結解除は Q-2 (ScorerNet quality head 有効再訓練・raw_waifu から再正規化推奨) で実施**。
 3. ✅ **完了** `scorer_wd14.jsonl` → `dollma_make_scorer_labels.py` で `scorer.{train,val}.jsonl` 生成 (train162/val18・axis=WD14 max-sigmoid soft・quality=null)。
 4. ✅ **完了 (2026-06-28・B-3b)** `scripts/train_scorer.py`・model-trainer が本データを消費して ScorerNet を蒸留訓練。
    **train_loss ep0 0.0933→ep5 0.00747 (CPU 95.0s・seed 20260620)・params 11.18113M (probe 一致)・実 PNG 180枚実ロード・同 seed bitwise 一致・quality 全 null → B head 凍結 (§16.8)**。出力 `data/scorer/scorer_net{,_fp32}.safetensors` (gitignore)・test_dollma_train_scorer 9/9 緑。**残: B-3c (OV 変換・研究機) → B-3d (C++ グルー `src/infer/quality_scorer.hpp`) → B-3e (test) → B-5 (FB ループ)**。
@@ -853,6 +853,32 @@ CLIP image embedding (`clip_image_embed`[768]) と MLP 重みは研究機で配�
   非正規化/全ゼロ→None/長さ不一致→ValueError)・確率未配置で `None`・provenance
   (openrail/labels/期待値写像) を検証。
 - `test_dollma_make_scorer_labels.py` **9/9 緑** (torch/OV/SDXL 不要)。
+
+#### Q-1 実採点結果 (waifu_scorer_v4・実行ギャップ解消・2026-06-30)
+
+§16.9 で「重み/CLIP image encode は研究機で配置・採点」とした配管を **Q-1 で実走**
+(`scripts/dollma_score_quality_v4.py`・本機 RTX5080 cu128 + open_clip)。**quality=null は
+ライセンスの壁ではなく実行ギャップ**であり、apache-2.0 の waifu-scorer-v4-beta を回すだけで解消した。
+
+- パイプライン: CLIP ViT-L/14 (open_clip `ViT-L-14-quickgelu` pretrained=openai・QuickGELU で
+  OpenAI `clip.load("ViT-L/14")` に厳密一致) → image embed[768] → **L2 正規化** (aesthetic-predictor
+  `normalized` 相当・waifu-scorer 忠実) → MLP (768→2048→512→256→128→32→1・BatchNorm 入り・
+  model.safetensors header で strict ロード一致) → 生スコア → `normalize_score` で /10 クランプ [0,1]。
+  ※ transformers の CLIPModel は import が sklearn を引き研究機 SAC が DLL をブロックするため不可 →
+  open_clip (純 torch) で回避。
+- **分布 (E-1 180 枚)**: raw min/med/max −1.71/0.61/1.78 (mean 0.74 std 0.81) → quality_norm
+  **0.0/0.061/0.178 (mean 0.077 std 0.0753)**。**非退化** (分散あり・histogram [0,0.1) 108 / [0.1,0.2) 72) だが
+  **[0,0.18] に強圧縮**・raw 負値 28/180 が 0 にクランプ。good/bad 分離は +0.0102 (弱いが正方向)。
+- **解釈**: 対象は base-SDXL-1.0 のキャラ生成で、danbooru masterpiece 基準のアニメ美的スコアラが
+  正当に低評価している (天井が「素 SDXL 1.0 = 去年級」という現状と整合)。スコアラの不具合ではない。
+- **Q-2 への引き渡し**: `quality` は /10 正準写像で充填済 (model-trainer はそのまま消費可)。ただし
+  圧縮が強いため、各行に **`raw_waifu`** (生スコア) を残した。Q-2 は raw からパーセンタイル/min-max
+  再正規化で dynamic range を回復するのが望ましい (clamp で worst 28 枚の順序が潰れている)。
+- **アンサンブル余地**: `quality_waifu` 列を別に残したので、ユーザーが openrail (deepghs/anime_aesthetic)
+  を**本人承認**した場合に `quality_deepghs` を足して平均アンサンブルへ後付けできる (Q-1 では未実行)。
+- 出力: `data/scorer/scorer.{train,val}.jsonl` (quality 非 null・元は `.qnull.bak.jsonl` 退避) +
+  `data/scorer/scorer_quality_report.json` (分布/histogram/provenance)。重みは
+  `data/scorer/weights/waifu_scorer_v4/model.safetensors` (apache-2.0・gitignore 再生成可)。
 
 ## 17. Phase 4-A 実ペア増 (12k / 25k) — 実ペア増 Phase 1
 

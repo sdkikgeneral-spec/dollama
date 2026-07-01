@@ -285,8 +285,9 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - 評価: recall@10 退役 → **diverse 生成 set-F1 が主指標** (4-C) ✅
 - 入力多様化 B: ~2,000 件で飽和・本線昇格決裁済 (出荷リトレイン `[B-merge-at-A]` で A と一括焼き) ✅
 - 蒸留 D2/D4/D5/D6: 全不採用 (過学習抑制のみ・recall 非寄与) ✅
-- Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ)
-- **残**: Model B 実スコアラ→FB ループ (B-5 消費者 F) / 残低帯域は A 実ペア増・D 容量増で取る / ternary GEMM は圧縮実験
+- Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ) / **Q-1 quality ラベル実採点 ✅** (waifu_scorer_v4 apache-2.0・quality=null は実行ギャップで解消・分布 0.0/med0.061/0.178 std0.0753・非退化だが [0,0.18] 圧縮 → Q-2 で head 凍結解除・raw_waifu から再正規化)
+- 品質 FB ループ F: **F-0a 計装 ✅** = 報酬関数 `dollma_reward.py` (worst-axis 主・全0→0/全1→-1・quality 前方互換 null) + rollout 収集ハーネス `dollma_collect_rollouts.py` (LM→SDXL→ScorerNet→reward→JSONL・開発機は [SKIP]・実走は研究機 gpu-benchmarker) + 信号ゲートの位置づけ。Python テスト 13/13 緑
+- **残**: F-0a 研究機実走 (50-100 rollout・reward 分布で anatomy-only の学習信号性を判定) → **F-0b 報酬で LM fine-tune** / 残低帯域は A 実ペア増・D 容量増で取る / ternary GEMM は圧縮実験
 
 ## 実装作業のルール
 
