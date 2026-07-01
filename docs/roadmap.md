@@ -266,6 +266,8 @@ proxy 数値でなく**実用品質**。
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts。**a12k 4 seed sweep でクローズ (二分結論・training-spec §9.10)**: diverse-val 生成 F1 は **12k で seed ノイズ** (4 set/metric 判定 NO・seed 42 のみ反転・~2,000 飽和の B と整合) → **diverse F1 を上げる手ではない**。一方 **identity retention は頑健に 0.975** (across-seed 0.9748±0.0010・全 seed) = **同一性条件付けの機能基盤**。a25k は回さず未使用保持。recall 天井底上げは D 容量増側で取りに行く | ✅ **a12k で評価完了・クローズ** (本番 #1 即時差し替えなし・**法務/ToS ゲート** dataset-spec §1.3 / `[B-merge-at-A]` 遅延タスク=下記注記でまとめ焼き) |
 | **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
+| **F-0a** 信号ゲート | **✅ 実走 80/80 → 判定 = 信号弱 (補強してから)** (2026-07-02・研究機 gpu-benchmarker)。reward std 0.0377 / best−worst 0.2031 (PL 閾値 std>0.1 かつ best−worst>0.3 に未達)。worst-axis argmax **Limbs 77/80** で他 7 軸ほぼ死 (ScorerNet dynamic range が Limbs 単軸) + worst 帯は多人数/背景/mecha/文字焼き込み等スコープ外題材への confound (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし生成 prompt の clean vs clutter で **|r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の勾配源・−1 飽和帯ではない (checkpoint エスカレーション不要)。詳細 measurements-log.md | ✅ 実走・判定済 |
+| **F-0b** SFT | **保留 (F-0a 補強後)**。最小補強順: ① **quality head 有効化 (Q-2 waifu 再正規化 / deepghs 合流)** で生存中の直交軸を reward に足す (最小・最大レバー) → ② **7 死軸の分解能診断** (B 側 ScorerNet) → ③ 補強後 F-0a smoke 再走で std→>0.1 or clean/clutter 分離維持を確認 → 立てば SFT 着手 | ⏸ 補強待ち |
 
 **C と F は同じ軸の両端**: C = より良いオフライン proxy、F = 本物のオンライン信号 (良い絵か)。
 このプログラムの背骨は**物差しを proxy→実品質へ動かすこと**で、recall という枯れた数値から

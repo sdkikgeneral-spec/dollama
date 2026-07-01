@@ -111,3 +111,6 @@ data/scorer/weights/
 # Q-1 quality 実採点の生成物 (dollma_score_quality_v4.py・再生成可)。
 data/scorer/scorer_quality_report.json
 data/scorer/*.qnull.bak.jsonl
+# F-0a rollout 収集の生成物 (dollma_collect_rollouts.py・研究機実走で再生成可・PNG 群で大容量)。
+# reward 分布/判定は docs (measurements-log/CLAUDE.md/roadmap) に記録済。
+data/rollouts/

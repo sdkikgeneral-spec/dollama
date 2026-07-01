@@ -20,8 +20,8 @@ best と worst に学習可能なギャップがあるか」(= anatomy-only が�
 
 実走に必要な env / 資産 (研究機・gpu-benchmarker 向け):
   - models/scorer-net/model_ov_fp32.xml / .bin  (dollma_convert_scorer.py で生成済)
-  - data/bitnet_dense_fp32.safetensors          (scripts/train_bitnet.py で訓練済)
-  - data/vocab.json                              (BitNet トークナイザ語彙)
+  - data/bitnet/bitnet_dense_fp32.safetensors   (scripts/train_bitnet.py で訓練済・本線 #1)
+  - data/bitnet/vocab.json                       (BitNet トークナイザ語彙)
   - env DOLLAMA_OV_TOKENIZERS_DLL                (本 txt2img(NPU) 有効化に必須・
                                                   未設定だと段2 golden に落ち prompt 無視)
   - build/src/dollama.exe                        (--http サーバ)
@@ -45,9 +45,12 @@ if HERE not in sys.path:
 from dollma_reward import reward_from_scorer  # noqa: E402  (純関数・依存なし)
 
 # 実走資産パス (研究機で存在を確認・開発機では不在→[SKIP])。
+# BitNet 重み/vocab は本線 #1 (dense hard CE 6ep) = data/bitnet/ 配下が実体。
+# 同一性版 bitnet_dense_identity_fp32.safetensors も同ディレクトリにあるが既定にしない
+# (アーキ差の可能性)。CLI (--bitnet-weights / --vocab) で上書き可 (定数是正 + CLI の二段構え)。
 SCORER_IR = os.path.join(ROOT, "models", "scorer-net", "model_ov_fp32.xml")
-BITNET_WEIGHTS = os.path.join(ROOT, "data", "bitnet_dense_fp32.safetensors")
-VOCAB_PATH = os.path.join(ROOT, "data", "vocab.json")
+BITNET_WEIGHTS = os.path.join(ROOT, "data", "bitnet", "bitnet_dense_fp32.safetensors")
+VOCAB_PATH = os.path.join(ROOT, "data", "bitnet", "vocab.json")
 DOLLAMA_EXE = os.path.join(ROOT, "build", "src", "dollama.exe")
 
 # ScorerNet I/O 規約 (dollma_convert_scorer.py / golden_scorernet_meta.json と厳密一致)。
@@ -151,10 +154,33 @@ def build_input_texts(n, seed):
 
 
 # ============================================================
+# BitNet state_dict リマップ (export 命名 → PyTorch state_dict 命名)
+#   export_safetensors は bitnet.hpp レイアウト命名 (embed / layers.{i}.wq / final_norm)
+#   で保存するため、BitNetDense.state_dict() 命名 (embed.weight / layers.{i}.wq.weight /
+#   final_norm.weight) と一致しない。dump_golden と同じ写しを通してから strict ロードする。
+# ============================================================
+def _remap_bitnet_state_dict(sd, n_layers):
+    """export_safetensors 命名の state_dict を BitNetDense の state_dict 命名へ写す。"""
+    new_sd = {}
+    new_sd["embed.weight"] = sd["embed"]
+    new_sd["final_norm.weight"] = sd["final_norm"]
+    for i in range(n_layers):
+        p = f"layers.{i}."
+        new_sd[p + "attn_norm.weight"] = sd[p + "attn_norm"]
+        new_sd[p + "ffn_norm.weight"] = sd[p + "ffn_norm"]
+        for w in ("wq", "wk", "wv", "wo", "w_gate", "w_up", "w_down"):
+            new_sd[p + w + ".weight"] = sd[p + w]
+    return new_sd
+
+
+# ============================================================
 # 研究機 実走部 (--run でのみ呼ばれる。重い import は関数内に隔離)
 # ============================================================
-def _research_assets_status():
-    """実走資産の有無を (ok, reasons) で返す。開発機では ok=False → [SKIP]。"""
+def _research_assets_status(args):
+    """実走資産の有無を (ok, reasons) で返す。開発機では ok=False → [SKIP]。
+
+    BitNet 重み/vocab は args 経由 (定数是正 + CLI 上書きの二段構え) で参照する。
+    """
     reasons = []
     try:
         import openvino  # noqa: F401
@@ -166,10 +192,10 @@ def _research_assets_status():
         reasons.append("torch 不在")
     if not os.path.isfile(SCORER_IR):
         reasons.append(f"ScorerNet IR 不在: {SCORER_IR}")
-    if not os.path.isfile(BITNET_WEIGHTS):
-        reasons.append(f"BitNet 重み不在: {BITNET_WEIGHTS}")
-    if not os.path.isfile(VOCAB_PATH):
-        reasons.append(f"vocab 不在: {VOCAB_PATH}")
+    if not os.path.isfile(args.bitnet_weights):
+        reasons.append(f"BitNet 重み不在: {args.bitnet_weights}")
+    if not os.path.isfile(args.vocab):
+        reasons.append(f"vocab 不在: {args.vocab}")
     return (len(reasons) == 0), reasons
 
 
@@ -206,20 +232,18 @@ def run_on_research_machine(args, input_texts):
     # BitNet (LM) — greedy 生成・トークナイザ・列構築を train_bitnet から借りる。
     import train_bitnet as tb
 
-    # --- LM ロード ---
+    # --- LM ロード (重み/vocab は args 経由) ---
     device = args.lm_device
-    tok = tb.Tokenizer(VOCAB_PATH)
+    tok = tb.Tokenizer(args.vocab)
     model = tb.BitNetDense().to(device)
-    sd = load_file(BITNET_WEIGHTS)
-    # export 命名 → state_dict 命名の写しが要る場合は train_bitnet 側に合わせる
-    # (dump_golden と同経路)。strict は train_bitnet の規約に従う。
-    try:
-        model.load_state_dict(sd, strict=True)
-    except Exception:
-        # export 命名差異があれば dump_golden 同様のリマップが要る。ここでは素直に投げる。
-        raise
+    sd = load_file(args.bitnet_weights)
+    # export_safetensors 命名 (embed / layers.{i}.* / final_norm) を state_dict 命名へ写す
+    # (dump_golden と同経路)。写さずに strict ロードすると Missing/Unexpected key で落ちる。
+    remapped = _remap_bitnet_state_dict(sd, tb.N_LAYERS)
+    model.load_state_dict(remapped, strict=True)
     model.eval()
-    print(f"[rollout] LM ロード完了 device={device} vocab={tok.vocab_size()}", file=sys.stderr)
+    print(f"[rollout] LM ロード完了 device={device} vocab={tok.vocab_size()} "
+          f"weights={args.bitnet_weights}", file=sys.stderr)
 
     def lm_prompt(input_text):
         """input_text → danbooru タグ列文字列 (BitNet greedy)。"""
@@ -315,6 +339,7 @@ def run_on_research_machine(args, input_texts):
             "best_minus_worst": round(rmax - rmin, 4),  # 学習可能ギャップの粗指標
             "quality_enabled": QUALITY_ENABLED,
             "scorer_ir": os.path.relpath(SCORER_IR, ROOT).replace(os.sep, "/"),
+            "bitnet_weights": os.path.relpath(args.bitnet_weights, ROOT).replace(os.sep, "/"),
             "out": args.out,
             "seed_note": "画像 seed = server 内 wall-clock(秒) ゆえ非再現",
         }
@@ -333,6 +358,10 @@ def main(argv=None):
     ap.add_argument("--out", default="data/rollouts/rollouts.jsonl", help="JSONL 出力パス")
     ap.add_argument("--img-dir", dest="img_dir", default="data/rollouts/img")
     ap.add_argument("--seed", type=int, default=20260630, help="input_text サンプリング seed")
+    ap.add_argument("--bitnet-weights", dest="bitnet_weights", default=BITNET_WEIGHTS,
+                    help="BitNet 本線重み safetensors (既定=本線 #1 dense fp32)")
+    ap.add_argument("--vocab", dest="vocab", default=VOCAB_PATH,
+                    help="BitNet トークナイザ語彙 vocab.json")
     ap.add_argument("--exe", default=DOLLAMA_EXE, help="dollama 実行ファイル (--http)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--steps", type=int, default=20)
@@ -351,10 +380,11 @@ def main(argv=None):
 
     input_texts = build_input_texts(args.n, args.seed)
 
-    ok, reasons = _research_assets_status()
+    ok, reasons = _research_assets_status(args)
     if not args.run:
         # 既定: 計画だけ表示 (実走しない)。
         print(f"[PLAN] rollout {args.n} 件 / out={args.out} / seed={args.seed}")
+        print(f"[PLAN] BitNet 重み: {args.bitnet_weights}")
         print(f"[PLAN] 実走資産: {'揃っている' if ok else '不足'}"
               + ("" if ok else f" ({'; '.join(reasons)})"))
         print("[PLAN] 研究機で実走するには --run を付ける (gpu-benchmarker 担当)。")

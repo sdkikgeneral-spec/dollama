@@ -17,6 +17,7 @@
     - quality_from_logits: 凍結 (False) で None・有効 (True) で確率。
     - rollout_row: スキーマ・quality:null フィールド常在。
     - build_input_texts: seed 決定性・件数・プール内。
+    - 既定資産パス: --bitnet-weights / --vocab の既定が data/bitnet/... を指す。
 
 実行:
   py -3.14 scripts/tests/test_dollma_reward_rollouts.py
@@ -170,6 +171,26 @@ def test_build_input_texts_determinism():
     assert len(set(first_cycle)) == pool_n
     # 別 seed では並びが変わりうる。
     assert cr.build_input_texts(12, 1) != a or True
+
+
+def test_default_asset_paths():
+    # 定数是正の回帰: BitNet 重み/vocab の既定が data/bitnet/ 配下の本線 #1 を指す
+    # (OV/重み不要・argparse 既定値の検証のみ。実走前にパスずれを開発機で捕まえる)。
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bitnet-weights", dest="bitnet_weights", default=cr.BITNET_WEIGHTS)
+    ap.add_argument("--vocab", dest="vocab", default=cr.VOCAB_PATH)
+    args = ap.parse_args([])
+    # 既定は module 定数と一致 (定数是正 + CLI 上書きの二段構え)。
+    assert args.bitnet_weights == cr.BITNET_WEIGHTS
+    assert args.vocab == cr.VOCAB_PATH
+    # 実体は data/bitnet/bitnet_dense_fp32.safetensors と data/bitnet/vocab.json。
+    bw = args.bitnet_weights.replace(os.sep, "/")
+    vp = args.vocab.replace(os.sep, "/")
+    assert bw.endswith("data/bitnet/bitnet_dense_fp32.safetensors"), bw
+    assert vp.endswith("data/bitnet/vocab.json"), vp
+    # 同一性版は既定に選ばない (アーキ差の可能性)。
+    assert "identity" not in bw
 
 
 def test_main_plan_does_not_raise():

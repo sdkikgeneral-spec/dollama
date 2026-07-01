@@ -250,6 +250,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 品質スコアラ NPU probe (B) | 純 conv 448² **NPU 4.62ms** (NPU/CPU 0.55x) | (probe) |
 | ScorerNet 訓練 (B-3b) / OV 変換 (B-3c) | 11.18M / NPU 8.32ms / PyTorch↔OV err 1.34e-5 | test_dollma_train_scorer |
 | 品質スコアラ C++ 結線 (B-3d→B-5) | `IScorer`/scorer_runner/scoring_postprocess で生成器結線完了 (採点はログのみ・消費者 F 未着手) | test_scoring_postprocess |
+| **品質 FB ループ F-0a 信号ゲート (実走 80/80)** | reward min-0.203/max-0.0/mean-0.0253/**std0.0377**/best−worst**0.2031** → **信号弱 (補強してから)**。argmax **Limbs 77/80**・他7軸ほぼ死 (max<0.012)。clean vs clutter prompt で **|r| 4倍分離** (0.007 vs 0.0285)。**判定: F-0b 保留・quality head 有効化 (Q-2) を先に** | (dollma_collect_rollouts) |
 
 **統合パイプライン**
 
@@ -286,8 +287,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - 入力多様化 B: ~2,000 件で飽和・本線昇格決裁済 (出荷リトレイン `[B-merge-at-A]` で A と一括焼き) ✅
 - 蒸留 D2/D4/D5/D6: 全不採用 (過学習抑制のみ・recall 非寄与) ✅
 - Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ) / **Q-1 quality ラベル実採点 ✅** (waifu_scorer_v4 apache-2.0・quality=null は実行ギャップで解消・分布 0.0/med0.061/0.178 std0.0753・非退化だが [0,0.18] 圧縮 → Q-2 で head 凍結解除・raw_waifu から再正規化)
-- 品質 FB ループ F: **F-0a 計装 ✅** = 報酬関数 `dollma_reward.py` (worst-axis 主・全0→0/全1→-1・quality 前方互換 null) + rollout 収集ハーネス `dollma_collect_rollouts.py` (LM→SDXL→ScorerNet→reward→JSONL・開発機は [SKIP]・実走は研究機 gpu-benchmarker) + 信号ゲートの位置づけ。Python テスト 13/13 緑
-- **残**: F-0a 研究機実走 (50-100 rollout・reward 分布で anatomy-only の学習信号性を判定) → **F-0b 報酬で LM fine-tune** / 残低帯域は A 実ペア増・D 容量増で取る / ternary GEMM は圧縮実験
+- 品質 FB ループ F: **F-0a 計装 ✅ + 実走 80/80 ✅ → 信号ゲート判定 = 信号弱 (補強してから) ✅** = reward std0.038 / best−worst0.203 (両方 PL 閾値 std>0.1・>0.3 に未達)。argmax **Limbs 77/80**・他7軸ほぼ死 (ScorerNet の分解能が Limbs のみ生存)。worst 帯は多人数/背景/mecha/文字焼き込み等**スコープ外題材**への発火が主 (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし **clean vs clutter prompt で |r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の prompt 品質勾配あり (flat noise ではない=飽和 -1 帯でもない)
+- **残 (F-0b 保留・補強を先に)**: ① **quality head 有効化 (Q-2, waifu 再正規化/deepghs 合流)** で reward に生存中の直交軸を足す (最小・最大レバー) ② **7 死軸の分解能診断** (B 側 ScorerNet: anatomy が Limbs 以上になれるか) ③ 補強後 F-0a smoke 再走で std→>0.1 or 分離維持を確認 → **F-0b SFT** / 残低帯域は A 実ペア増・D 容量増 / ternary GEMM は圧縮実験
 
 ## 実装作業のルール
 
