@@ -44,12 +44,18 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
 | Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 11.3s** へ最適化) |
 | Phase 2-6b | 任意テキスト → 画像 (CLIP-G を加えた SDXL dual encoder + CFG + negative prompt) + マッティング → 透過 PNG | ✅ 完了 (prompt → 実画像 1024² 透過 PNG を一気通貫) |
+| Phase 2-6c | **拡散 backend プラグイン枠** — prompt→RGB 境界を純 cpp interface (`IDiffusionBackend`) に切り出し registry 化。芯 (自作カーネル) を汚さず最新モデルへ差し替える口を開ける | ✅ 完了 (`SDXLBackend` 稼働 + `SD35Backend` stub で別アーキ受け入れを型実証・全 46 test 緑) |
+| Phase 2-6d | **最新アニメ特化 SDXL への差し替え** — NoobAI-XL / Animagine XL 4.0 / Illustrious XL を 3 preset 対応 (全て SDXL アーキゆえカーネル無改修・重みのみ差し替え) | 🔲 計画確定・未着手 (絵の質の最大レバー) |
 | Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
 | Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ 進行中 — dense LM が C++ で訓練・推論 (CPU/GPU・golden corr 1.0・GPU 87.5x・INT8 / AVX2 経路)、同一性条件付け (A) はクローズ (retention 0.975)、入力多様化 (B) は本線昇格、品質スコアラ (Model B) は解剖 8 軸で蒸留済 |
 
 > **次の本丸**: 研究の焦点は **自作タグ生成 LM (Phase 4)** — 暫定 Qwen2 段を 33M フルスクラッチモデル
 > (自然文 → danbooru タグ・同一性条件付き) に置き換え、Model B のアニメ品質フィードバックループを閉じる。
 > 出力品質への最大レバーは、より新しいアニメ特化 SDXL checkpoint への差し替え (カーネル無改修)。
+> そのための土台として **拡散 backend をプラグイン化済み (2-6c)** — 芯を共有したまま最新モデルへ
+> 差し替えられる構造ができており、次に NoobAI-XL / Animagine XL 4.0 / Illustrious XL の
+> **3 preset 対応 (2-6d)** で実際に最新モデルへ載せ替える。ComfyUI 的な機能網羅は追わず、
+> 「2D キャラ生成に必要なアーキだけを差し替える」棲み分けとする。
 
 > 詳細なロードマップは [`docs/roadmap.md`](docs/roadmap.md)、HW 役割の根拠は下記「何が分かったか」を参照。
 
