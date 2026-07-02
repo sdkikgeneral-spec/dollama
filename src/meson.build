@@ -81,6 +81,9 @@ exe_sources = ['main.cpp']
 exe_cuda_sources = []
 if http_enabled
   exe_sources += 'server/api.cpp'
+  # 拡散 backend プラグイン枠 (make_backend registry)。cli_generate.hpp が呼ぶ。
+  # SDXLBackend の参照は OV 有無で本 .cpp 内でガードされる (OV 無なら sdxl は nullptr)。
+  exe_sources += 'server/diffusion_backend.cpp'
   if cuda_enabled
     # CUDA 有効: 本 txt2img を DI 可能にする。factory.cu / diffusion_runner.cu と全カーネルをリンク。
     exe_cuda_sources += 'server/pipeline_generator_factory.cu'
@@ -281,6 +284,30 @@ test_scoring_postprocess_exe = executable('test_scoring_postprocess',
   cpp_args            : cpp_args,
 )
 test('scoring_postprocess', test_scoring_postprocess_exe)
+
+# 拡散 backend プラグイン枠 (diffusion_backend.hpp / backend_image_generator.hpp) 単体テスト
+# 純 cpp (OV/CUDA 非依存) ゆえ開発機でも SKIP なし常時実走する。fake backend をヘッダ内に
+# 定義して BackendImageGenerator の PNG 化 / set_matter/set_scorer 注入を検証し、
+# registry (make_backend "sd35" 非null・generate throw / 未知名 nullptr) を検証する。
+# make_backend の実体を解決するため server/diffusion_backend.cpp をリンクする。
+# OV 有効ビルドでは diffusion_backend.cpp が sdxl_backend.hpp を引くが、SDXLBackend は
+# make_diffusion_runner (未リンク) を要するため本 test では触らない ("sd35"/fake のみ)。
+# → OV 有効時のみ diffusion_runner(_stub) をリンクして未解決シンボルを塞ぐ。
+diffusion_backend_test_sources = ['tests/test_diffusion_backend.cpp',
+                                  'server/diffusion_backend.cpp']
+if openvino_dep.found()
+  # OV 有効: SDXLBackend の translation は走るが実行しない。make_diffusion_runner の
+  #   実体は不要 (SDXLBackend を構築しない) だが、リンカが宣言参照を要求するため
+  #   diffusion_runner_stub.cpp (nullptr 返し・CUDA 非依存) をリンクして塞ぐ。
+  diffusion_backend_test_sources += 'server/diffusion_runner_stub.cpp'
+endif
+test_diffusion_backend_exe = executable('test_diffusion_backend',
+  sources             : files(diffusion_backend_test_sources),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('diffusion_backend', test_diffusion_backend_exe)
 
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
@@ -847,6 +874,7 @@ if cuda_enabled
     sources             : files(['tests/test_cli_generate.cpp',
                                  'server/pipeline_generator_factory.cu',
                                  'server/diffusion_runner.cu',
+                                 'server/diffusion_backend.cpp',
                                  cli_matter_src,
                                  cli_scorer_src] + diffusion_cu_sources),
     include_directories : src_inc,
@@ -859,6 +887,7 @@ else
     sources             : files('tests/test_cli_generate.cpp',
                                 'server/pipeline_generator_factory_stub.cpp',
                                 'server/diffusion_runner_stub.cpp',
+                                'server/diffusion_backend.cpp',
                                 cli_matter_src,
                                 cli_scorer_src),
     include_directories : src_inc,

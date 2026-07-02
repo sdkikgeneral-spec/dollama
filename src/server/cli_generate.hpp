@@ -10,7 +10,8 @@
 //
 //   3 段:
 //     段1) OV アセット (tokenizer/encoder L/G + tokenizers.dll) + unet/vae/embeds が
-//          揃う → Txt2ImgGenerator (prompt を反映する本 txt2img・NPU 第一→失敗時 CPU)。
+//          揃う → make_backend(...) → BackendImageGenerator (prompt を反映する本 txt2img)。
+//          backend は env DOLLAMA_BACKEND で選択 (既定 "sdxl")。NPU 第一→失敗時 CPU。
 //     段2) unet/vae 重みのみ → PipelineGenerator (golden 埋め込み)。
 //     段3) いずれも無 → StubGenerator。
 //
@@ -19,8 +20,9 @@
 //        make_matter は OV 無効ビルドで stub が nullptr を返すためガード不要。
 //
 //   この宣言ヘッダ自体は CUDA を一切 include しない (PipelineGenerator の構築は
-//   make_pipeline_generator ファクトリ越し)。Txt2ImgGenerator のみ OV 依存のため
-//   HAVE_OPENVINO && HAVE_CUDA ガード内で参照する。
+//   make_pipeline_generator ファクトリ越し)。段1 の backend 実体 (SDXL) は OV+CUDA
+//   依存だが make_backend (diffusion_backend.cpp) の内側に隔離される。BackendImageGenerator
+//   は純 cpp ゆえ本ヘッダはガード不要で include できる (段1 の構築判定のみ OV&&CUDA でガード)。
 #pragma once
 
 #include <cstdint>
@@ -36,15 +38,13 @@
 #include <filesystem>
 #endif
 
+#include "server/backend_image_generator.hpp" // 純 cpp・IDiffusionBackend アダプタ (段1)
+#include "server/diffusion_backend.hpp"        // BackendConfig / make_backend (registry)
 #include "server/generator.hpp"
 #include "server/matter_runner.hpp"
 #include "server/scorer_runner.hpp"
 #include "server/pipeline_generator_factory.hpp"
 #include "server/stub_generator.hpp"
-
-#if defined(HAVE_OPENVINO) && defined(HAVE_CUDA)
-#include "server/txt2img_generator.hpp"
-#endif
 
 namespace dollama
 {
@@ -112,11 +112,11 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
     // ----------------------------------------------------------------
     // DI 3 段フォールバック:
     //   段1) OV アセット (tokenizer/encoder L/G + tokenizers.dll) + unet/vae 重みが
-    //        揃う → Txt2ImgGenerator (prompt を反映する本 txt2img)。
+    //        揃う → make_backend(...) → BackendImageGenerator (prompt を反映する本 txt2img)。
     //   段2) unet/vae 重みのみ (OV 無 / アセット欠) → PipelineGenerator (golden 埋め込み)。
     //   段3) いずれも無 → StubGenerator。
-    // Txt2ImgGenerator は HAVE_OPENVINO かつ runner (CUDA) が必要。両ガードが揃わない
-    // ビルドでは段1 をコンパイル時に丸ごと無効化し、段2/3 へ落ちる。
+    // 段1 の backend 実体 (SDXL) は HAVE_OPENVINO かつ runner (CUDA) が必要。両ガードが
+    // 揃わないビルドでは段1 をコンパイル時に丸ごと無効化し、段2/3 へ落ちる。
     // ----------------------------------------------------------------
 #if defined(HAVE_OPENVINO) && defined(HAVE_CUDA)
     {
@@ -136,6 +136,9 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
         // openvino_tokenizers.dll は env のみ (空なら段1 をスキップ)。
         const std::string tok_dll = resolve_path("DOLLAMA_OV_TOKENIZERS_DLL", "");
 
+        // backend 選択 (env 既定 "sdxl"・resolve_path と同流儀で getenv)。
+        const std::string backend_name = resolve_path("DOLLAMA_BACKEND", "sdxl");
+
         namespace fs = std::filesystem;
         const bool ov_ready =
             !tok_l.empty() && fs::exists(tok_l) &&
@@ -147,36 +150,54 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
 
         if (ov_ready)
         {
-            // NPU 第一・失敗時 CPU フォールバックで Txt2ImgGenerator を構築。
-            try
+            // BackendConfig を組み立てる共通ラムダ (device のみ差し替えて NPU→CPU する)。
+            auto make_cfg = [&](const std::string& device) -> BackendConfig
             {
-                gen = std::make_unique<dollama::Txt2ImgGenerator>(
-                    tok_l, tok_g, enc_l, enc_g, tok_dll,
-                    unet_w, vae_w, embeds, "NPU", "NPU");
-                log << "dollama HTTP server (txt2img generator — NPU)\n";
+                BackendConfig cfg;
+                cfg.backend_name = backend_name;
+                cfg.unet_weights = unet_w;
+                cfg.vae_weights  = vae_w;
+                cfg.embeds       = embeds;
+                cfg.tok_l        = tok_l;
+                cfg.tok_g        = tok_g;
+                cfg.enc_l        = enc_l;
+                cfg.enc_g        = enc_g;
+                cfg.tok_dll      = tok_dll;
+                cfg.device_l     = device;
+                cfg.device_g     = device;
+                return cfg;
+            };
+
+            // NPU 第一・失敗時 CPU フォールバックで backend を構築 → BackendImageGenerator。
+            //   make_backend は nullptr 契約 (未知名 / OV 無 / 構築失敗 → nullptr)。
+            std::unique_ptr<IDiffusionBackend> backend = make_backend(make_cfg("NPU"));
+            if (backend)
+            {
+                gen = std::make_unique<BackendImageGenerator>(std::move(backend));
+                log << "dollama HTTP server (" << backend_name
+                    << " backend — NPU)\n";
             }
-            catch (const std::exception& e)
+            else
             {
-                log << "[warn] NPU での Txt2ImgGenerator 構築に失敗 ("
-                    << e.what() << ") → CPU を試します。\n";
-                try
+                log << "[warn] NPU での backend '" << backend_name
+                    << "' 構築に失敗 → CPU を試します。\n";
+                backend = make_backend(make_cfg("CPU"));
+                if (backend)
                 {
-                    gen = std::make_unique<dollama::Txt2ImgGenerator>(
-                        tok_l, tok_g, enc_l, enc_g, tok_dll,
-                        unet_w, vae_w, embeds, "CPU", "CPU");
-                    log << "dollama HTTP server (txt2img generator — CPU)\n";
+                    gen = std::make_unique<BackendImageGenerator>(std::move(backend));
+                    log << "dollama HTTP server (" << backend_name
+                        << " backend — CPU)\n";
                 }
-                catch (const std::exception& e2)
+                else
                 {
-                    log << "[warn] CPU でも構築に失敗 (" << e2.what()
-                        << ") → 段2/3 へフォールバックします。\n";
+                    log << "[warn] CPU でも構築に失敗 → 段2/3 へフォールバックします。\n";
                 }
             }
         }
     }
 #endif
 
-    // 段2) Txt2ImgGenerator が立たなければ PipelineGenerator を試みる。
+    // 段2) 段1 が立たなければ PipelineGenerator を試みる。
     //   ファクトリは重み不在 / CUDA 無効なら nullptr (→ 段3)。本番なので deterministic=false。
     if (!gen)
     {

@@ -258,6 +258,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 |---|---|---|
 | 自作フル拡散 (2-6a) | 20step 1024² 84.07s → **11.30s** (2-6 最適化後・律速 UNet attn 4.60s) | test_diffusion |
 | 本番 txt2img (2-6b) | prompt→画像 dual encoder+CFG / var=2300 / NaN・Inf なし | test_txt2img |
+| 拡散 backend プラグイン枠 (2-6c) | `IDiffusionBackend` registry (`make_backend` "sdxl"/"sd35") + `BackendImageGenerator` 共通後処理 / 純 cpp・全 46 test 緑 | test_diffusion_backend |
 
 ## 次のタスク
 
@@ -279,6 +280,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - cpp-httplib OpenAI 互換 HTTP サーバー (生成は `IImageGenerator` 越し)
 - **2-6a** フル C++ 拡散統合 → **2-6 最適化** 84.07s→11.30s で一旦クローズ (律速 UNet attn 4.60s・以降はライブラリ余地で保留・本丸は Phase 4 へ)
 - **2-6b** prompt→画像 本結線 (dual encoder + CFG・`IDiffusionRunner` で OV/CUDA 隔離) ✅ — prompt 供給元は将来 Phase 4 A の自作 LM に差し替え
+- **2-6c** 拡散 backend プラグイン枠 ✅ — 品質天井は自作カーネルでなく拡散アーキ (重み) にあるため、prompt→RGB 境界を純 cpp interface `IDiffusionBackend` に切り出し registry (`make_backend`) 化。`SDXLBackend` (OV+CUDA 隔離) + `SD35Backend` (拡張点 stub・generate throw) + `BackendImageGenerator` (解像度 reject/seed/採点ログ/matting PNG 化の共通後処理を集約)。段1 DI を `Txt2ImgGenerator` から差し替え (env `DOLLAMA_BACKEND` で選択・既定 "sdxl")。ComfyUI 的 breadth は追わず「2D キャラ生成に要るアーキだけ芯を共有して差し替える」棲み分け ([[project-output-quality-over-features]])
 - 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
 
 **Phase 4 (自作タグ生成 LM + Model B) — 進行中**
