@@ -281,6 +281,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - **2-6a** フル C++ 拡散統合 → **2-6 最適化** 84.07s→11.30s で一旦クローズ (律速 UNet attn 4.60s・以降はライブラリ余地で保留・本丸は Phase 4 へ)
 - **2-6b** prompt→画像 本結線 (dual encoder + CFG・`IDiffusionRunner` で OV/CUDA 隔離) ✅ — prompt 供給元は将来 Phase 4 A の自作 LM に差し替え
 - **2-6c** 拡散 backend プラグイン枠 ✅ — 品質天井は自作カーネルでなく拡散アーキ (重み) にあるため、prompt→RGB 境界を純 cpp interface `IDiffusionBackend` に切り出し registry (`make_backend`) 化。`SDXLBackend` (OV+CUDA 隔離) + `SD35Backend` (拡張点 stub・generate throw) + `BackendImageGenerator` (解像度 reject/seed/採点ログ/matting PNG 化の共通後処理を集約)。段1 DI を `Txt2ImgGenerator` から差し替え (env `DOLLAMA_BACKEND` で選択・既定 "sdxl")。ComfyUI 的 breadth は追わず「2D キャラ生成に要るアーキだけ芯を共有して差し替える」棲み分け ([[project-output-quality-over-features]])
+- **2-6d** 実 checkpoint 差し替え = アニメ特化 SDXL を **3 preset 対応** (NoobAI-XL / Animagine XL 4.0 / Illustrious XL) 🔲 計画確定・未着手 — 3 つとも SDXL アーキゆえ `SDXLBackend` 無改修・`BackendConfig.preset` で重みセット選択。素 base 1.0 の質天井を超える最大レバー ([[project-generation-quality-bar]])。DL+変換+生成は GPU セッションで別途。詳細 roadmap 2-6d
 - 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
 
 **Phase 4 (自作タグ生成 LM + Model B) — 進行中**
