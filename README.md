@@ -1,314 +1,388 @@
 # dollama
 
-**English** | **[日本語](README_jp.md)**
+**[English](README_en.md)** | **日本語**
 
-**Using every piece of hardware in the box — CPU / NPU / iGPU / RTX5080 — to research a 2D-illustration–focused image generation pipeline.**
+**CPU / NPU / iGPU / RTX5080 — 搭載する全 HW を使い切る二次元特化の画像生成パイプライン研究**
 
-The goal is to make each device cooperate by playing to its strengths. Not the shortest path to a working
-generator, but the best *assignment* of work across heterogeneous hardware. Built from scratch in C++,
-without ML frameworks.
+各ハードウェアの特性を活かして協調させることが目的。最短実装ではなく、最適な HW 割り当てを探る。
+ML フレームワークに頼らず C++ でフルスクラッチ実装を目指す。
 
-> ⚠️ **Work in progress — research project, not a finished product.**
-> The full from-scratch C++ diffusion pipeline (custom UNet + Euler scheduler + VAE decode) now
-> **generates real 1024×1024 images from arbitrary text** (SDXL dual encoder with CLIP-G + CFG, task 2-6b),
-> and mats the result to a **cut-out transparent PNG** (iGPU ISNet-anime). Speed has been brought down from
-> an initial 84 s to **11.3 s for 20 steps** (im2col / Tensor-Core GEMM + cuBLAS fallbacks; ~3× of the
-> PyTorch/diffusers probe10 baseline of 3.80 s). The remaining kernel bottleneck is UNet attention, but the
-> from-scratch CUDA speed work is paused here — the research focus has moved to the **custom tag-generation
-> LM (Phase 4)**. APIs, file layout, and measurements will change. Published for transparency of the
-> research process, not for turnkey use.
+> ⚠️ **実装中 — 完成品ではなく研究中のプロジェクトです。**
+> フル C++ 拡散パイプライン (自作 UNet + Euler スケジューラ + VAE decode) が **任意テキストから実画像 1024×1024 を生成**し
+> (CLIP-G を加えた SDXL dual encoder + CFG・タスク 2-6b)、結果を **切り抜き済み透過 PNG** にマッティング (iGPU ISNet-anime) するようになりました。
+> 速度は当初の 84s から **20steps 11.3s** へ短縮済み (im2col / Tensor Core GEMM + cuBLAS フォールバック・probe10 の 3.80s 比 約3倍)。
+> 残るカーネル律速は UNet attention ですが、自作 CUDA の速度詰めはここで一旦打ち切り、研究の本丸を **自作タグ生成 LM (Phase 4)** に移しています。
+> API・ファイル構成・計測値は今後変わります。**研究プロセスの公開**を目的としており、すぐ使えるツールではありません。
 
-> **This research targets a specific machine: an Intel Core Ultra 9 285 (Intel AI Boost NPU + Intel Xe iGPU)
-> combined with an NVIDIA RTX 5080.** The NPU / iGPU usage (via OpenVINO) depends on Intel-platform
-> specifics, so all measurements and device choices assume this environment.
-
-> 📖 The full design notes, pipeline diagrams, and detailed tables are maintained in Japanese:
-> **[README_jp.md](README_jp.md)**. This page is a condensed English overview.
+> **本研究は Intel 環境 (Core Ultra 9 285 — Intel AI Boost NPU + Intel Xe iGPU) と
+> NVIDIA RTX5080 を組み合わせた構成で行っている。** NPU / iGPU の活用 (OpenVINO 経由) は
+> Intel プラットフォーム固有の特性に依存しており、計測値・デバイス選定はこの環境を前提とする。
 
 ---
 
-## Overview
+## 概要
 
-dollama is a research project that makes the **CPU, NPU, iGPU, and dGPU of a single machine cooperate as one
-inference pipeline** to generate 2D illustration / manga **character** images (no background, output as a
-pre-cut transparent PNG). It is built **entirely from scratch in C++** — from the inference kernels to the
-HTTP server — without ML frameworks like PyTorch or diffusers.
+dollama は、1 台のマシンに載った **CPU・NPU・iGPU・dGPU を 1 つの推論パイプラインとして協調**させ、
+2D イラスト/漫画の**キャラクター**画像 (背景なし・切り抜き済み透過 PNG) を生成する研究プロジェクト。
+PyTorch / diffusers などの ML フレームワークに頼らず、推論カーネルから HTTP サーバまで **C++ でフルスクラッチ実装**する。
 
-**Core idea — "temporal cooperation":** instead of wiring devices together with zero-copy interconnects,
-the seconds the GPU spends on diffusion are used to run the next request's CLIP embedding and tagging on the
-otherwise-idle NPU/CPU in parallel. Each device is **assigned the task it is best at**, and they fill each
-other's wait time.
+**コア・アイデア — "時間方向の協調":** HW を直結 (ゼロコピー) でつなぐのではなく、
+GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次のリクエストの CLIP 埋め込みやタグ抽出を
+並列で回す。各 HW を**得意なタスクに割り当て**、待ち時間を互いに埋め合う。
 
 ```
-[CPU]     LLM (prompt generation) / WD14 tagging
-[NPU]     CLIP text encoder (fastest on fixed shapes)
-[iGPU]    VAE encode (img2img input, parallel with CPU)
-[RTX5080] SDXL UNet 20 steps + VAE decode (the generator itself)
+[CPU] LLM (プロンプト生成) / WD14 タグ抽出
+[NPU] CLIP text encoder (固定形状に最速)
+[iGPU] VAE encode (img2img 入力、CPU と並列)
+[RTX5080] SDXL UNet 20steps + VAE decode (生成本体)
 ```
 
-**Current status:**
+**現在の進捗:**
 
-| Phase | Scope | Status |
+| フェーズ | 内容 | 状態 |
 |---|---|---|
-| Phase 1 | C++ pipeline skeleton (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/threads) | ✅ Done (9.13 frames/s) |
-| Phase 2 | CUDA kernels + safetensors + VAE decode + SDXL UNet + Euler + full diffusion wiring | ✅ Done (generates real 1024² images — optimized to **11.3 s / 20 steps**) |
-| Phase 2-6b | Arbitrary text → image (SDXL dual encoder with CLIP-G + CFG + negative prompt) + matting → transparent PNG | ✅ Done (prompt → real 1024² transparent PNG end-to-end) |
-| Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
-| Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ In progress — dense LM trains & infers in C++ (CPU/GPU, golden corr 1.0; GPU 87.5×, INT8 / AVX2 paths), identity conditioning (A) closed (retention 0.975), input-diversification (B) promoted to mainline, quality scorer (Model B) distilled over 8 anatomy axes |
+| Phase 1 | C++ パイプライン骨格 (Tensor/Allocator/Queue/CLIP-NPU/WD14-CPU/スレッド骨格) | ✅ 完了 (9.13 frames/s) |
+| Phase 2 | 自作 CUDA カーネル + safetensors + VAE decode + SDXL UNet + Euler + フル拡散パイプライン結線 | ✅ 完了 (実画像 1024² を生成・**20steps 11.3s** へ最適化) |
+| Phase 2-6b | 任意テキスト → 画像 (CLIP-G を加えた SDXL dual encoder + CFG + negative prompt) + マッティング → 透過 PNG | ✅ 完了 (prompt → 実画像 1024² 透過 PNG を一気通貫) |
+| Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
+| Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ 進行中 — dense LM が C++ で訓練・推論 (CPU/GPU・golden corr 1.0・GPU 87.5x・INT8 / AVX2 経路)、同一性条件付け (A) はクローズ (retention 0.975)、入力多様化 (B) は本線昇格、品質スコアラ (Model B) は解剖 8 軸で蒸留済 |
 
-> **Next up:** the research focus is now the **custom tag-generation LM (Phase 4)** — replacing the interim
-> Qwen2 prompt stage with a 33M from-scratch model (text → danbooru tags, identity-conditioned) and closing
-> the Model B anime quality-feedback loop. Swapping in a more recent anime-specialized SDXL checkpoint
-> (no kernel changes needed) remains the single biggest lever on output quality.
+> **次の本丸**: 研究の焦点は **自作タグ生成 LM (Phase 4)** — 暫定 Qwen2 段を 33M フルスクラッチモデル
+> (自然文 → danbooru タグ・同一性条件付き) に置き換え、Model B のアニメ品質フィードバックループを閉じる。
+> 出力品質への最大レバーは、より新しいアニメ特化 SDXL checkpoint への差し替え (カーネル無改修)。
 
-> Full roadmap in [`docs/roadmap.md`](docs/roadmap.md); the rationale behind the HW roles is in
-> "What we learned" below.
+> 詳細なロードマップは [`docs/roadmap.md`](docs/roadmap.md)、HW 役割の根拠は下記「何が分かったか」を参照。
 
 ---
 
-## What we learned (probe summary)
+## 何が分かったか (probe 結果サマリ)
 
-Key takeaways from 10 probes plus the Phase 2 hand-written kernels. **Conclusions first, numbers second:**
+10 本の probe と Phase 2 の自作カーネル実装で得た要点。**数字より結論を先に**:
 
-1. **Device selection is decided by "task × architecture fit" — intuition is unreliable.**
-   The NPU is fastest for a fixed-shape encoder (CLIP-L, 77 tokens): 7.85 ms, 2.5× faster than CPU.
-   Yet for *the same kind of inference* on WD14 SwinV2 (window attention) the NPU is the **slowest**
-   (268 ms vs. 101 ms on CPU), and an autoregressive LLM (dynamic KV-cache) **won't even compile**.
-   "NPU = fast" is wrong; "NPU = fast *only* for fixed-shape pure-GEMM chains" is right.
-   → We measured every model before assigning it.
+1. **HW 選定は「タスク × アーキテクチャの相性」で決まる — 事前予想は当てにならない。**
+   NPU は固定形状の encoder (CLIP-L 77token) では CPU の 2.5 倍速 (7.85ms) で最速。
+   一方、同じ "推論" でも WD14 SwinV2 (Window Attention) では NPU が **最遅** (268ms、CPU 101ms)、
+   LLM の自己回帰 (動的 KV-cache) は**コンパイルすら通らない**。「NPU = 速い」ではなく
+   「固定形状の純粋 GEMM チェーンだけ速い」。→ 全モデルを実測してから割り当てた。
 
-2. **Zero-copy device-to-device sharing is impossible on this setup; CPU pinned memory is the practical path.**
-   There is no CUDA↔NPU interop API, and the iGPU is hidden from DXGI by BIOS settings (no D3D12
-   cross-adapter). The remaining route — transfers through CPU pinned memory — costs only **3.4%** overhead,
-   fully hideable behind GPU diffusion with multithreading. Chasing direct interconnects was unnecessary.
+2. **HW 間のゼロコピー直結は (この構成では) 不可能。CPU pinned 経由が現実解。**
+   CUDA↔NPU の interop API は存在せず、iGPU は BIOS 設定で DXGI に非表示 (D3D12 クロスアダプター不可)。
+   残った CPU pinned memory 経由の転送オーバーヘッドは **3.4%** で、GPU 拡散処理に対し
+   マルチスレッドで完全に隠蔽できる → 直結に固執する必要はなかった。
 
-3. **The iGPU is useful *directionally*.** Large convolutions (VAE decode) run 8× slower than CPU and are a
-   dead end, but VAE **encode** (img2img) is faster on the iGPU (**79 ms** vs. 117 ms on CPU) — and it runs
-   in parallel with the CPU's ~2 s LLM step, so it costs zero wall-clock time on the img2img path.
+3. **iGPU は "方向" で使い分ける。** 大規模 Conv (VAE decode) は CPU の 8 倍遅く使い物にならないが、
+   VAE **encode** (img2img) では CPU 117ms に対し **79ms** と速い。しかもこれは CPU の LLM 生成 (~2s) と
+   並列に走るため img2img パスでは待ち時間ゼロ。
 
-4. **The RTX 5080 (Blackwell / sm_120) runs SDXL at 3.80 s/image** (1024², 20 steps), peak VRAM 10.49 GB
-   of 16 GB — leaving headroom up to ~1536px long edge. The generator lives on the GPU while the NPU/CPU
-   fill its idle time with CLIP encoding and tagging in parallel.
+4. **RTX5080 (Blackwell/sm_120) は SDXL を 3.80s/枚 (1024², 20steps) でこなし、VRAM ピークは 10.49GB**。
+   16GB 中なので長辺 ~1536px まで余裕。生成本体は GPU に集約し、NPU/CPU は生成中の遊休時間に
+   CLIP・タグ抽出を並列で回す構成が成立する。
 
-5. **A full diffusion pipeline of hand-written CUDA kernels (no ML framework) runs and produces real images.**
-   Phase 2 implements GEMM / activation / GroupNorm / Conv2d / Attention from scratch, each validated
-   against a CPU reference with golden tests (GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS).
-   On top of those, a custom VAE decode (final SSIM 0.999992) and custom SDXL UNet (noise_pred SSIM 0.999998)
-   are wired to the Euler scheduler to **generate a real 1024² image from arbitrary text in 20 steps**.
-   Speed was optimized from an initial 84 s down to **11.3 s** (im2col / Tensor-Core GEMM + cuBLAS
-   fallbacks; ~3× of probe10); the remaining bottleneck is UNet attention, and the research focus has
-   since moved on to the custom tag-generation LM (Phase 4).
+5. **ML フレームワーク無しの自作 CUDA カーネルでフル拡散パイプラインが動き、実画像が出た。**
+   Phase 2 で GEMM / 活性化 / GroupNorm / Conv2d / Attention をフルスクラッチ実装し、
+   CPU 参照とのゴールデンテストで正当性を確認 (GEMM 4730 GFLOPS / Conv2d 1807 GFLOPS / Attention 1631 GFLOPS)。
+   その上で自作 VAE decode (final SSIM 0.999992) と自作 SDXL UNet (noise_pred SSIM 0.999998) を実装し、
+   Euler スケジューラと結線して **20steps で実画像 1024² を生成 (84s)**。正しさは出た — 速度 (direct conv +
+   naive attention 律速で probe10 比 22倍) が次の課題で、Tensor Core / flash 化が本丸。
 
-→ **"Use all the hardware" is not wishful thinking — measurements show it holds.** The key is not direct
-interconnects but *temporal* cooperation: assign each device the task it's best at, and fill the GPU's
-generation window with NPU/CPU work.
+→ 結論: **「全 HW を使い切る」は理想論ではなく、実測に基づけば成立する。** 鍵は直結ではなく
+"各 HW を得意タスクに割り当て、GPU 生成中の遊休を NPU/CPU で埋める" 時間方向の協調にある。
 
 ---
 
-## Target environment
+## ターゲット環境
 
-| Component | Detail |
+| コンポーネント | 詳細 |
 |---|---|
 | CPU / NPU | Intel Core Ultra 9 285 (NPU = Intel AI Boost, DEVICE_ARCHITECTURE: 3720) |
-| GPU | NVIDIA GeForce RTX 5080 (Blackwell / sm_120, CUDA 12.8, 15.9 GB VRAM) |
-| iGPU | Intel Xe Graphics (OpenVINO GPU.0, shares system RAM) |
+| GPU | NVIDIA GeForce RTX 5080 (Blackwell / sm_120, CUDA 12.8, VRAM 15.9GB) |
+| iGPU | Intel Xe Graphics (OpenVINO GPU.0、システム RAM 共有) |
 | OS | Windows 11 |
-| Investigation phase | Python 3.14 + OpenVINO / diffusers (probe scripts) |
-| Implementation | C++ + Meson, STL + CUDA API + Winsock2 only (no ML frameworks) |
+| 調査フェーズ | Python 3.14 + OpenVINO / diffusers (probe スクリプト) |
+| 本実装 | C++ + Meson、STL + CUDA API + Winsock2 のみ (ML フレームワーク不使用) |
 
 ---
 
-## Hardware role assignment (all measured)
+## HW 役割分担 (全て計測済み)
 
-| HW | Task | Measured |
+| HW | 担当タスク | 計測値 |
 |---|---|---|
-| **NPU** | CLIP-L text encoder (fixed 77 tokens) | **7.85 ms** — 2.5× faster than CPU |
-| **NPU** | WD14 SwinV2 tagger (448×448, fixed) | 268 ms (runs in parallel during GPU generation) |
-| **iGPU** | VAE encode — img2img only (image → latent) | **79 ms** — faster than CPU's 117 ms |
-| **CPU** | LLM prompt generation (Qwen2-1.5B for now → custom tag-generation LM bitnet.hpp later) | 64–71 tok/s |
-| **RTX5080** | SDXL UNet (20 steps) + VAE decode | **3.80 s** / 1024×1024 |
+| **NPU** | CLIP-L text encoder (77token 固定) | **7.85ms** ← CPU の 2.5倍速 |
+| **NPU** | WD14 SwinV2 tagger (448×448 固定) | 268ms (GPU 生成中に並列実行) |
+| **iGPU** | VAE encode — img2img 用 (入力画像→latent) | **79ms** ← CPU 117ms より速い |
+| **CPU** | LLM プロンプト生成 (暫定 Qwen2-1.5B → 将来 自作タグ生成 LM bitnet.hpp) | 64-71 tok/s |
+| **RTX5080** | SDXL UNet (20steps) + VAE decode | **3.80s** / 1024×1024 |
 
-### Device selection rationale
+### NPU の得意 / 不得意
 
-| Model | CPU | iGPU | NPU | Chosen | Reason |
-|---|---|---|---|---|---|
-| CLIP-L text encoder | 20 ms | 14 ms | **7.85 ms** | NPU | Pure GEMM chain |
-| WD14 SwinV2 tagger | **101 ms** | 104 ms | 268 ms | CPU | Window attention is a poor NPU fit |
-| VAE decode | 126 ms | 995 ms | – | RTX5080 | iGPU is 8× slower |
-| VAE encode (img2img) | 117 ms | **79 ms** | – | iGPU | The encode direction favors the iGPU |
+| モデル | アーキテクチャ | NPU 結果 | 理由 |
+|---|---|---|---|
+| CLIP-L text encoder | 標準 MHA、固定 77token | **7.85ms 最速** | 純粋 GEMM チェーン |
+| WD14 SwinV2 | Window Attention | 268ms (CPU 101ms より遅い) | gather/scatter 操作が多い |
+| LLM (Qwen2 等) | 自己回帰 KV-cache | ❌ コンパイル失敗 | 動的形状、NPU 設計外 |
 
 ---
 
-## Pipeline
+## パイプライン構想
 
 ### txt2img
 
 ```
-[CPU] Qwen2-1.5B (interim) / later: custom tag-generation LM (bitnet.hpp 33M, GPU-first via custom CUDA kernels / CPU ok / NPU excluded)
-  natural language → danbooru tag list (~2s / future <10ms)
+[CPU] Qwen2-1.5B (暫定) / 将来: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)
+  自然文 → danbooru タグ列 (~2s / 将来 <10ms)
     │
     ▼
 [NPU] CLIP-L text encoder (7.85ms)
-  text → embedding [1, 77, 768]
+  テキスト → embedding [1, 77, 768]
     │
     ▼
-[RTX5080] SDXL UNet × 20 steps + VAE decode (3.80s / 1024×1024)
+[RTX5080] SDXL UNet × 20steps + VAE decode (3.80s / 1024×1024)
     │
-    ├─ [CPU] WD14 SwinV2 tagger (101ms) ← runs in parallel during GPU generation
-    │         generated image → danbooru tags → LLM feedback loop
-    └─→ [iGPU] matting (ISNet-anime, ~100ms) → α extraction → transparent PNG
+    ├─ [CPU] WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列実行
+    │         生成画像 → danbooru タグ → LLM フィードバックループ
+    └─ 出力画像
 ```
 
-### img2img (additional path)
+### img2img (追加パス)
 
 ```
-input image
-    ├─→ [iGPU] VAE encode (79ms)    ─→ latent ─┐
+入力画像
+    ├─→ [iGPU] VAE encode (79ms)   ─→ latent ─┐
     │                                           │
-    └─→ [CPU]  LLM text generation (~2s) ───────┤ (parallel)
+    └─→ [CPU]  LLM テキスト生成 (~2s) ─────────┤ (並列)
                                                │
                                     [NPU] CLIP (7.85ms)
                                                │
                                     [RTX5080] SDXL UNet + VAE decode (3.80s)
                                                │
-                                           output image
+                                           出力画像
 ```
 
-The iGPU's VAE encode (79 ms) runs in parallel with the CPU's LLM generation (~2 s), so it adds zero wait.
+iGPU の VAE encode (79ms) は CPU の LLM 生成 (~2s) と並列に走るため、待ち時間ゼロ。
+
+### デバイス選定根拠
+
+| モデル | CPU | iGPU | NPU | 採用 | 理由 |
+|---|---|---|---|---|---|
+| CLIP-L text encoder | 20ms | 14ms | **7.85ms** | NPU | 純粋 GEMM チェーン |
+| WD14 SwinV2 tagger | **101ms** | 104ms | 268ms | CPU | Window Attention が NPU に不向き |
+| VAE decode | 126ms | 995ms | - | RTX5080 | iGPU は 8倍遅い |
+| VAE encode (img2img) | 117ms | **79ms** | - | iGPU | encode 方向は iGPU が有利 |
 
 ---
 
-## Measurement baseline (probe results)
+## 出力画像サイズ
 
-| Metric | Value | probe |
+デフォルト **1024×1024** px。起動引数 `--width` / `--height` またはリクエストの `size` フィールドで変更可能。
+
+SDXL の訓練解像度に合わせた推奨サイズ一覧 (8の倍数であれば任意指定も可):
+
+| サイズ | アスペクト比 | 用途 |
 |---|---|---|
-| CPU→VRAM (100 MB) | 3.46 ms / 30.3 GB/s | probe2 |
-| NPU inference (512-dim MLP) | 0.88 ms | probe2 |
-| NPU output → GPU | 0.031 ms (3.4%) | probe2 |
-| iGPU VAE decode stub | 995 ms (8× slower than CPU ❌) | probe4 |
-| iGPU VAE encode (1024→128) | **79 ms** (faster than CPU's 117 ms ✅) | probe5 |
-| Qwen2-1.5B INT4 CPU tok/s | 64–71 tok/s | probe7 |
-| **WD14 SwinV2 (448×448)** | CPU 101 ms / iGPU 104 ms / **NPU 268 ms** | probe8 |
-| **CLIP-L text encoder (77 tokens)** | CPU 20 ms / iGPU 14 ms / **NPU 7.85 ms** | probe9 |
-| **SDXL 20 steps 1024×1024** | **3.80 s** / 5.3 it/s / peak VRAM 10.49 GB | probe10 |
+| **1024×1024** | 1:1 | 正方形 (デフォルト、probe10 計測済み) |
+| 1152×896 / 896×1152 | 9:7 | 横長 / 縦長 |
+| 1216×832 / 832×1216 | 3:2 | |
+| **832×1216** | 2:3 | 縦長ポートレート (2D イラスト向け) |
+| 1344×768 / 768×1344 | 16:9 | ワイドスクリーン |
+| 1536×640 / 640×1536 | 12:5 | 超横長 / 縦長 |
 
-### Hand-written CUDA kernels (Phase 2, RTX5080)
+RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。1536×640 程度まで余裕あり。
 
-| Kernel | Measured |
-|---|---|
-| FP16 GEMM (shared-mem tiling, FP32 accum) | 1024³ **4730 GFLOPS** / SDXL Linear transB 4208 GFLOPS |
-| SiLU / GeLU activation | FFN 544 GB/s |
-| GroupNorm (1 group = 1 block, single-pass) | UNet 73–75 GB/s |
-| Conv2d (direct, FP32 accum) | UNet C320 64² 3×3 **1807 GFLOPS** / VAE C128 512² 3×3 1667 GFLOPS |
-| Attention (per-(b,h,row) block, FP32 softmax) | self 1024² Dh80 **1631 GFLOPS** / cross Sk77 1748 GFLOPS |
+### Stable Diffusion 各世代の学習解像度と品質上限
+
+| モデル | 学習解像度 | 品質を維持できる上限 | 超えると |
+|---|---|---|---|
+| SD 1.x | 512×512 | ~512px | 破綻しやすい |
+| SD 2.x | 768×768 | ~768px | 同上 |
+| **SDXL (本プロジェクト採用)** | **1024×1024** | **長辺 ~1536px** | 同構図の繰り返しアーティファクト |
+
+ソフト的な上限はなく VRAM 次第で任意サイズを指定できるが、学習解像度を大きく超えると品質が劣化する。  
+4K 相当 (4096×4096 等) が必要な場合は **1024×1024 生成 → AI アップスケーラー (Real-ESRGAN / waifu2x) で 4× 拡大** が現実的な構成。
 
 ---
 
-## Implementation approach (C++ from scratch)
+## 計測ベースライン (probe 実測値)
+
+| 指標 | 値 | probe |
+|---|---|---|
+| CPU→VRAM (100MB) | 3.46ms / 30.3 GB/s | probe2 |
+| NPU 推論 (512dim MLP) | 0.88ms | probe2 |
+| NPU 出力 → GPU | 0.031ms (3.4%) | probe2 |
+| system RAM → RTX5080 latent (256KB) | 0.030ms / 8.7 GB/s | probe4 |
+| system RAM → RTX5080 image (12MB) | 0.254ms / 49.6 GB/s | probe4 |
+| iGPU VAE decode stub | 995ms (CPU 比 8倍遅い ❌) | probe4 |
+| iGPU VAE encode (1024→128) | **79ms** (CPU 117ms より速い ✅) | probe5 |
+| Qwen2-1.5B INT4 CPU tok/s | 64-71 tok/s | probe7 |
+| **WD14 SwinV2 (448×448)** | CPU 101ms / iGPU 104ms / **NPU 268ms** | probe8 |
+| **CLIP-L text encoder (77token)** | CPU 20ms / iGPU 14ms / **NPU 7.85ms** | probe9 |
+| **SDXL 20steps 1024×1024** | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
+
+---
+
+## LLM の将来像 — 自作タグ生成 LM
+
+汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) を目的特化の超軽量モデルに置き換える。
+核は `src/models/bitnet.hpp` (decoder-only LLaMA 系 **33M**, モデル定義+ホスト参照は実装済)。
+語彙はタグ単位完全一致トークナイザ `src/io/tokenizer.hpp` (vocab.json 駆動・実装済, Phase 4-3) が担う。
+
+| | Qwen2-1.5B (現状) | 自作タグ生成 LM (目標) |
+|---|---|---|
+| パラメータ | 1.5B | 33M (30-100M) |
+| サイズ | 873MB | ~66MB (FP16) / ~20MB (ternary 実験時) |
+| デバイス | CPU | GPU 主 (CUDA カーネル流用) / CPU 可・NPU 不可 |
+| レイテンシ | ~2s | 目標 <10ms |
+| タスク | 汎用 | user text → danbooru タグ特化 |
+
+訓練データ: Danbooru タグ共起 + Qwen2 / DanTagGen 蒸留 (先行実装 DanTagGen 400M / TIPO を教師・品質基準に)
+
+**ternary (b1.58) は圧縮の研究軸** (目的ではない): まず FP16/INT8 dense で品質を出し、
+重み W ∈ {-1,0,+1} (≈1.58bit, `y = x_pos − x_neg` で乗算不要) は後段の圧縮実験として
+被せる (`src/kernels/ternary_gemm.cu`)。33M 規模では旨味は限定的。
+
+**2D 特化の独自性**: ① キャラ同一性条件付きタグ生成 (character-bible 入力・DanTagGen に無い)
+② アニメ品質スコアラ (NPU・固定形状)。詳細は `docs/roadmap.md` Phase 4。
+
+---
+
+## 確定済み設計判断
+
+### ゼロコピー調査結果 (probe1-4)
+
+| ルート | 結果 | 理由 |
+|---|---|---|
+| CUDA Virtual Memory + Win32ハンドル → NPU | ❌ | OpenVINO NPU に CUDA ハンドル import API なし |
+| D3D12 クロスアダプター (RTX5080 → iGPU → NPU) | ❌ | Intel iGPU が DXGI に非表示 |
+| CPU pinned memory | ✅ 採用 | オーバーヘッド 3.4%、マルチスレッドで隠蔽可能 |
+
+---
+
+## 実装方針 (C++ フルスクラッチ)
+
+実装済み (✅) と計画中 (⏳) を区別して記載 (実装中のため随時変化する):
 
 ```
 src/
-├── core/        — Tensor (STL-based), allocator (CPU / pinned / VRAM), CharacterBible + prompt compose + color mode
-├── kernels/     — GEMM, activation, GroupNorm, Conv2d, Attention, VAE decode (custom CUDA) + ternary GEMM (compression experiment, planned)
-├── infer/       — CLIP (NPU, OpenVINO), WD14 (CPU), SDXL UNet, Euler scheduler, full diffusion loop
-├── io/          — safetensors loader, PNG character-metadata round-trip, tokenizer (tag-level exact-match)
-└── server/      — cpp-httplib + OpenAI-compatible API, PipelineGenerator (DI with stub fallback)
+├── core/
+│   ├── tensor.hpp        ✅ 独自 Tensor (STL ベース)
+│   ├── allocator.hpp     ✅ CPU / pinned / VRAM メモリ管理
+│   ├── queue.hpp         ✅ SPSC ロックフリーキュー
+│   ├── character.hpp     ✅ キャラ台帳 (CharacterBible) + プロンプト合成 + カラーモード
+│   └── affinity.hpp      ✅ CPU コアアフィニティ
+├── infer/
+│   ├── clip.hpp          ✅ CLIP-L text encoder (NPU / OpenVINO)
+│   ├── wd14.hpp          ✅ WD14 SwinV2 tagger (CPU / OpenVINO)
+│   ├── scheduler.hpp     ✅ EulerDiscreteScheduler (SDXL)
+│   ├── unet.cu/.cuh      ✅ SDXL UNet 全段 (noise_pred SSIM 0.999998)
+│   └── diffusion.cu/.cuh ✅ フル拡散ループ結線 (UNet×Nstep + Euler + VAE)
+├── kernels/              ✅ 自作 CUDA カーネル (Phase 2)
+│   ├── gemm.cu           ✅ dense FP16 GEMM
+│   ├── activation.cu     ✅ SiLU / GeLU
+│   ├── groupnorm.cu      ✅ GroupNorm
+│   ├── conv2d.cu         ✅ direct Conv2d
+│   ├── attention.cu      ✅ scaled dot-product attention (self / cross)
+│   ├── vae_decode.cu     ✅ SDXL VAE decode (final SSIM 0.999992)
+│   └── ternary_gemm.cu   ⏳ ternary GEMM 圧縮実験 (Phase 4)
+├── io/
+│   ├── safetensors.hpp   ✅ safetensors 重みローダー (golden 突合)
+│   ├── png_meta.hpp      ✅ PNG キャラ設定メタ往復 (tEXt 焼き込み)
+│   └── tokenizer.hpp     ✅ タグ単位完全一致トークナイザ (vocab.json 駆動, Phase 4-3)
+├── server/              ✅ cpp-httplib + OpenAI 互換 API (Phase 3)
+│   ├── api.cpp           ✅ /v1/images/generations 他
+│   ├── png.hpp           ✅ PNG エンコード
+│   ├── stub_generator.hpp        ✅ ダミー生成器 (フォールバック)
+│   └── pipeline_generator.hpp    ✅ 本生成器 (DiffusionPipeline を IImageGenerator 化)
+├── pipeline.hpp          ✅ マルチスレッド骨格
+├── main.cpp              ✅ エントリポイント (生成器をフォールバック付き DI)
+└── models/bitnet.hpp     ✅ タグ生成 LM 定義+ホスト参照 (Phase 4-2) / 推論 ⏳
 ```
 
-**Used:** STL / CUDA API / Winsock2 — **Not used:** PyTorch / OpenVINO (probes only) / diffusers / llama.cpp.
-
-For the future custom tag-generation LM (bitnet.hpp 33M; ternary {-1, 0, +1} is a later compression experiment, not the goal), the pipeline structure,
-character-consistency design, and full roadmap, see **[README_jp.md](README_jp.md)** and `docs/`.
+**使うもの**: STL / CUDA API / Winsock2 (HTTP/JSON はヘッダオンリーの定番ライブラリ)  
+**使わないもの**: PyTorch / OpenVINO (probe のみ) / diffusers / llama.cpp 等の ML フレームワーク
 
 ---
 
-## Build (C++)
+## ビルド (C++)
 
-> Status: builds today include the core, CLIP (NPU) / WD14 (CPU) inference glue, the threaded pipeline
-> skeleton, the full Phase 2 CUDA stack (kernels + VAE decode + SDXL UNet + Euler scheduler + diffusion
-> loop), the OpenAI-compatible HTTP server, and matting → transparent PNG, all with tests.
-> **End-to-end image generation from arbitrary text works** (11.3 s / 20 steps).
+> 現状ビルドできるもの: core・CLIP(NPU)/WD14(CPU) 推論グルー・スレッド骨格・Phase 2 CUDA カーネル群・
+> 自作 VAE decode / SDXL UNet / Euler スケジューラ・フル拡散パイプライン・OpenAI 互換 HTTP サーバ、と各テスト。
+> **golden 埋め込みからの end-to-end 画像生成は動きます** (20steps 84s)。任意テキストからの生成は 2-6b で結線予定。
 
-### One-shot installer (Windows, recommended)
+### 一括インストーラー (Windows・推奨)
 
-On a fresh Windows box you can install everything the build/run needs (VS Build Tools / CUDA /
-OpenVINO / Python deps) in one go via winget + pip:
+まっさらな Windows 機なら、必要なライブラリ一式 (VS Build Tools / CUDA / OpenVINO / Python 依存) を
+winget + pip で一括導入できます:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install_windows.ps1
 ```
 
-- Installs the CUDA Toolkit and torch=cu128 only when an NVIDIA dGPU is detected; otherwise it skips
-  CUDA, installs CPU torch, and recommends `-Dwith_cuda=false`.
-- Flags: `-DryRun` (print commands only), `-CheckOnly` (probe only), `-SkipCuda`, `-SkipSdk`,
-  `-PythonExe <path>`, `-Force`.
-- It prints a **recommended `meson setup` command** tailored to the detected environment at the end.
+- NVIDIA dGPU 検出時のみ CUDA Toolkit を導入し torch=cu128。無ければ自動でスキップし torch=CPU・`-Dwith_cuda=false` を案内します。
+- `-DryRun` (実行せずコマンド表示) / `-CheckOnly` (存在チェックのみ) / `-SkipCuda` / `-SkipSdk` / `-PythonExe <path>` / `-Force` を指定可能。
+- 最後に環境に合わせた **推奨 `meson setup` コマンド**を出力します。
 
-Prefer to set things up by hand? Follow the prerequisites and steps below.
+手動で揃える場合は以下の前提・手順に従ってください。
 
-**Prerequisites**
+**前提**
 
-- [Meson](https://mesonbuild.com/) + Ninja, and a C++20 compiler (tested with MSVC on Windows 11)
-- **CUDA Toolkit 13.x** (`nvcc`) for the kernels — RTX 5080 needs `sm_120` (CUDA 12.8+). Put `nvcc` on `PATH`.
-- **OpenVINO 2024.x+** runtime for the CLIP/WD14 NPU paths (optional; toggle with `-Dwith_openvino`)
+- [Meson](https://mesonbuild.com/) + Ninja、C++20 コンパイラ (Windows 11 + MSVC で検証)
+- **CUDA Toolkit 13.x** (`nvcc`) — RTX5080 は `sm_120` (CUDA 12.8+) が必須。`nvcc` を `PATH` に通す。
+- **OpenVINO 2024.x+** ランタイム — CLIP/WD14 の NPU パス用 (任意、`-Dwith_openvino` で切替)
 
-**Build & test**
+**ビルド & テスト**
 
 ```bash
-# configure (point the options at your local toolkits)
+# 構成 (各ツールキットのパスを自環境に合わせる)
 meson setup build \
   -Dwith_cuda=true     -Dgpu_sdk_root="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3" \
   -Dwith_openvino=true -Dnpu_sdk_root="C:/Program Files (x86)/Intel/openvino_2024"
 
 meson compile -C build
-meson test -C build            # runs all unit tests + kernel golden tests/benchmarks
+meson test -C build            # 全単体テスト + カーネルのゴールデンテスト/ベンチを実行
 ```
 
-CUDA support can be disabled with `-Dwith_cuda=false` (the `.cu` tests are then skipped). See
-[`docs/testing.md`](docs/testing.md) for the per-test breakdown.
+`-Dwith_cuda=false` で CUDA を無効化できる (その場合 `.cu` テストはスキップ)。
+テスト内訳は [`docs/testing.md`](docs/testing.md) を参照。
 
 ---
 
-## Models
+## モデル
 
-Model weights are **not included** in this repository (`models/` is git-ignored). To run the CLIP / WD14 /
-SDXL stages you must obtain and convert the models yourself:
+モデル重みは本リポジトリに **含まれません** (`models/` は Git 管理外)。CLIP / WD14 / SDXL を動かすには
+各自で取得・変換が必要:
 
-- **CLIP-L text encoder** and **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU), converted via the scripts in
-  `scripts/` (see the probe scripts) using `optimum-intel` / OpenVINO.
-- **Qwen2-1.5B (INT4)** for the interim LLM prompt stage.
-- **SDXL** for the diffusion stage (the custom CUDA kernels generate images from text end-to-end).
-- **ISNet-anime** (anime-segmentation) for matting → transparent PNG (iGPU; optional, falls back to opaque PNG).
+- **CLIP-L text encoder** / **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU) に `scripts/` の probe スクリプト
+  (`optimum-intel` / OpenVINO 経由) で変換。
+- 暫定 LLM の **Qwen2-1.5B (INT4)**。
+- 拡散段の **SDXL** (自作 CUDA カーネルで画像生成可能。任意テキストからの本結線は 2-6b)。
 
-The project **code** is Apache-2.0 (below), but each model's **weights are governed by their own upstream
-licenses**. You are responsible for complying with those terms.
+本リポジトリの **コードは Apache-2.0** だが、各モデルの **重みは配布元それぞれのライセンスに従う**。
+利用者がその条件の遵守に責任を負う。
 
-### Third-party model attribution
+### 第三者モデルのライセンス表記
 
-| Model | Role | Upstream license |
+| モデル | 役割 | 配布元ライセンス |
 |---|---|---|
-| SDXL | Diffusion (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (per checkpoint) |
-| CLIP-L / CLIP-bigG | Text encoder (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
-| WD14 SwinV2 tagger v3 | Tagging (CPU) | Apache-2.0 |
-| Qwen2-1.5B | Interim LLM prompt stage | Apache-2.0 |
-| ISNet-anime (anime-segmentation) | Matting / transparent PNG (iGPU) | Apache-2.0 |
-| TIPO-200M (KBlueLeaf) | Distillation teacher experiments (4-D6, not in production) | Apache-2.0 |
-| **Eugeoter/waifu-scorer-v4-beta** | **Model B quality scorer — aesthetic teacher (default; label generation only)** | **Apache-2.0** |
-| deepghs/anime_aesthetic | Model B quality scorer — alternative aesthetic teacher (switchable) | OpenRAIL |
+| SDXL | 拡散 (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (checkpoint による) |
+| CLIP-L / CLIP-bigG | テキストエンコーダ (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
+| WD14 SwinV2 tagger v3 | タグ抽出 (CPU) | Apache-2.0 |
+| Qwen2-1.5B | 暫定 LLM プロンプト段 | Apache-2.0 |
+| ISNet-anime (anime-segmentation) | マッティング / 透過 PNG (iGPU) | Apache-2.0 |
+| TIPO-200M (KBlueLeaf) | 蒸留教師の実験 (4-D6・本番不採用) | Apache-2.0 |
+| **Eugeoter/waifu-scorer-v4-beta** | **Model B 品質スコアラ — 美的教師 (既定・ラベル生成のみ)** | **Apache-2.0** |
+| deepghs/anime_aesthetic | Model B 品質スコアラ — 代替の美的教師 (切替可) | OpenRAIL |
 
-> **On the Model B aesthetic teacher:** the default teacher (waifu-scorer-v4-beta) is Apache-2.0.
-> A switchable alternative (deepghs/anime_aesthetic) is OpenRAIL, which permits commercial use,
-> redistribution and modification — its only restrictions are the behavioral use-based prohibitions in
-> the license appendix (no illegal / discriminatory / harmful uses). In either case dollama uses the model
-> **only as a teacher to generate soft labels** that are distilled into our own from-scratch ScorerNet;
-> the teacher weights themselves are **not redistributed** by this project.
+> **Model B 美的教師について:** 既定教師 (waifu-scorer-v4-beta) は Apache-2.0。切替可能な代替
+> (deepghs/anime_aesthetic) は OpenRAIL で、商用利用・再配布・改変を許可し、制限は付属書の行動ベース
+> 禁止条項のみ (違法 / 差別 / 加害的用途の禁止)。いずれの場合も dollama はモデルを **教師として soft
+> ラベルを生成する用途のみ**に使い、その出力を自作 ScorerNet へ一から蒸留する。教師モデルの重み自体は
+> 本プロジェクトでは **再配布しない**。
 
 ---
 
-## Setup (investigation phase / Python probes)
+## セットアップ (調査フェーズ / Python probe)
 
-On Windows, `install_windows.ps1` (above) also installs these pip dependencies for you
-(driven by `requirements.txt`; torch's index is auto-selected by GPU presence). To install by hand:
+Windows なら上記の `install_windows.ps1` が以下の pip 依存もまとめて導入します
+(`requirements.txt` 基準・torch は GPU 有無で index 自動分岐)。手動で入れる場合:
 
 
 ```bash
@@ -320,6 +394,37 @@ pip install huggingface_hub
 
 ---
 
-## License
+## ファイル構成
 
-Licensed under the [Apache License 2.0](LICENSE). See the [`LICENSE`](LICENSE) file for details.
+```
+dollama/
+  scripts/
+    dollma_probe8_wd14.py      # WD14 SwinV2 NPU/iGPU/CPU 比較 → NPU 268ms
+    dollma_probe9_clip.py      # CLIP-L text encoder → NPU 7.85ms (最速)
+    dollma_probe10_sdxl.py     # SDXL RTX5080 → 3.80s/image
+    archives/                  # probe1-7b (完了済み調査スクリプト)
+  src/                         # C++ 本実装 (構築中)
+  models/                      # 変換済みモデル (Git 管理外)
+    clip-l-text-encoder/       # OV IR (NPU 用)
+    qwen2-1.5b-int4-npu/       # 暫定 LLM
+    wd14-swinv2-tagger-v3/     # OV IR (NPU 用)
+  outputs/                     # 生成画像 (Git 管理外)
+  logs/                        # probe 実行ログ
+  docs/
+    roadmap.md                 # 実装ロードマップ (Phase 1-4)
+    character-bible-spec.md    # キャラ設定データ構造 (同一性/シーン/出力層・カラーモード)
+    http-api-spec.md           # OpenAI 互換 HTTP API 仕様
+    pipeline-spec.md           # パイプライン構成
+    tensor-spec.md             # Tensor 仕様
+    cpu-topology.md            # CPU コアトポロジ / アフィニティ
+    testing.md                 # テスト規約
+    archives/
+      investigation-log.md     # probe1-10 の詳細調査ログ
+  CLAUDE.md                    # Claude Code 向けコンテキスト
+```
+
+---
+
+## ライセンス
+
+[Apache License 2.0](LICENSE) の下で公開。詳細は [`LICENSE`](LICENSE) を参照。
