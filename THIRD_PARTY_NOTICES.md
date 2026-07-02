@@ -26,6 +26,9 @@ ScorerNet 等) に寄与する。
 | **ISNet-anime (anime-segmentation)** | SkyTNT (skytnt) | Apache-2.0 | マッティング (α 抽出・透過 PNG) | 確認済 (docs) |
 | **waifu-scorer-v4-beta** | Eugeoter | Apache-2.0 | 美的品質スコアラ教師 (Model B quality head・primary) | 確認済 (重み README) |
 | **anime_aesthetic** | deepghs | OpenRAIL | 美的品質スコアラ教師 (評価/アンサンブル候補・使用制限条項あり) | 確認済 (docs) |
+| **NoobAI-XL** | Laxhar Lab | fair-ai-public-license-1.0-sd | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
+| **Animagine XL 4.0** | Cagliostro Research Lab | Fair AI Public License 1.0-SD | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
+| **Illustrious XL** | OnomaAI Research | **版依存** (0.1=Fair AI Public License 1.0-SD / 1.0+ = Illustrious License) | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
 
 **ScorerNet (自作 11.18M) について**: 上記 waifu-scorer-v4 / deepghs の採点を soft target
 として蒸留した派生物。蒸留教師となった美的モデルのライセンス (Apache-2.0 / OpenRAIL) を
@@ -58,6 +61,10 @@ ScorerNet 等) に寄与する。
   (有害・違法・差別的用途等の禁止) の範囲内で利用すること。dollama の用途
   (2D キャラクターイラスト生成・美的品質採点) はこれらの制限に該当しない。
 - 各 RAIL ライセンス全文は配布時に同梱する (または該当 model card への参照を明示する)。
+- **Fair AI Public License 1.0-SD** (NoobAI-XL / Animagine XL 4.0): 帰属を条件に商用可。
+  コピーレフト条項 (改変/マージ版を**公開配布**する場合に同ライセンス+重み公開) は、dollama が
+  checkpoint を**自ホスト参照するのみで重みを再配布しない**運用では非トリガー → 帰属表示で足りる。
+  **Illustrious XL は版依存** (1.0+ は独自 Illustrious License) ゆえ導入版の条項を個別確認する。
 
 ## 更新方針
 
