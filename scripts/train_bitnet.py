@@ -18,11 +18,154 @@ data/bitnet/pairs.train.jsonl で hard CE 訓練、重みを safetensors 出力�
 """
 
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
+import shutil
+import sys
 import time
+
+
+# ==============================================================
+# 正典アセット搬送 (--copy / --publish) : torch 非依存・コピーのみ
+# ==============================================================
+# git 管理外の正典アセット (重み4本 / golden 6ファイル / a12k データ2本) を
+# マシン間で exact バイトコピーする2方向モード。パスは実行時引数のみ (社内パスを
+# repo に残さない)。cross-GPU で重みは bit 非一致ゆえ再生成不可 → バイトコピー必須。
+#   --copy <src>    : src(リモート base) -> ローカル --data-dir へ取得。
+#   --publish <dst> : ローカル --data-dir -> dst(リモート base) へ配置。
+# torch より前 (下の import torch より上) で _maybe_transport() を呼び、指定時は
+# ここで sys.exit(0) する。未指定時は即 return → 既存経路の torch import タイミング不変。
+# vocab.json / pairs.val / pairs.train.diverse_b2000 / pairs.eval_diverse_{a,b} は
+# git 追跡済ゆえ搬送対象外 (git pull で届く)。
+_TRANSPORT_FIXED = [
+    "bitnet_dense.safetensors",
+    "bitnet_dense_fp32.safetensors",
+    "bitnet_dense_identity.safetensors",
+    "bitnet_dense_identity_fp32.safetensors",
+    "pairs.identity.train.a12k.jsonl",
+    "pairs.identity.val.a12k.jsonl",
+]
+
+
+def _transport_sha256(path):
+    """ファイルの sha256 hex (torch 非依存・stdlib のみ)。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _transport_targets(source_base):
+    """搬送対象の相対パス一覧。golden/ はハードコードせず source 側の実在ファイルを列挙
+    (logits_golden/gen_golden/manifest の base/_identity 版・版差異/欠損に頑健)。"""
+    rels = list(_TRANSPORT_FIXED)
+    gdir = os.path.join(source_base, "golden")
+    if os.path.isdir(gdir):
+        for name in sorted(os.listdir(gdir)):
+            if os.path.isfile(os.path.join(gdir, name)):
+                rels.append(os.path.join("golden", name))
+    return rels
+
+
+def _transport_copy_one(src, dst):
+    """src->dst を exact コピー。sha256+size 照合・冪等 (同一 skip)・差分/上書きログ。
+    返り値 (status, ok_bool)。silent 上書きしない (旧値をログに出す)。"""
+    if not os.path.exists(src):
+        return ("MISSING_SRC", None)
+    ssha = _transport_sha256(src)
+    ssize = os.path.getsize(src)
+    prefix = "NEW"
+    old = ""
+    if os.path.exists(dst):
+        dsha = _transport_sha256(dst)
+        dsize = os.path.getsize(dst)
+        if dsha == ssha and dsize == ssize:
+            return (f"SKIP_SAME sha={ssha[:12]} size={ssize}", True)
+        prefix = "OVERWRITE"
+        old = f" old(sha={dsha[:12]} size={dsize}) ->"
+    d = os.path.dirname(dst)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    shutil.copyfile(src, dst)
+    vsha = _transport_sha256(dst)
+    vsize = os.path.getsize(dst)
+    ok = (vsha == ssha and vsize == ssize)
+    tag = "OK" if ok else "VERIFY_FAIL"
+    return (f"{prefix} {tag}{old} new(sha={ssha[:12]} size={ssize})", ok)
+
+
+def _run_transport(mode, remote_base, data_dir):
+    """mode='copy' (remote_base->data_dir) / 'publish' (data_dir->remote_base)。torch 非依存。
+    golden 列挙は常に source 側 (copy=remote / publish=local) の実在ファイルに基づく。"""
+    if mode == "copy":
+        source_base, dest_base = remote_base, data_dir
+    else:
+        source_base, dest_base = data_dir, remote_base
+    print(f"[transport] mode={mode} source={os.path.abspath(source_base)} "
+          f"dest={os.path.abspath(dest_base)}")
+    if not os.path.isdir(source_base):
+        raise SystemExit(f"[transport] source ディレクトリが無い: {source_base}")
+    os.makedirs(dest_base, exist_ok=True)
+    rels = _transport_targets(source_base)
+    n_ok = n_skip = n_miss = n_fail = 0
+    for rel in rels:
+        status, ok = _transport_copy_one(os.path.join(source_base, rel),
+                                         os.path.join(dest_base, rel))
+        if status == "MISSING_SRC":
+            n_miss += 1
+            print(f"[transport] WARN skip (source 不在): {rel}")
+            continue
+        if status.startswith("SKIP_SAME"):
+            n_skip += 1
+        elif ok:
+            n_ok += 1
+        else:
+            n_fail += 1
+        print(f"[transport] {rel}: {status}")
+    print(f"[transport] done: copied={n_ok} skipped_same={n_skip} "
+          f"missing={n_miss} verify_fail={n_fail} (total_targets={len(rels)})")
+    if n_fail:
+        raise SystemExit(f"[transport] VERIFY_FAIL {n_fail} 件 (sha/size 不一致)")
+
+
+def _maybe_transport():
+    """torch import より前に呼ぶ。--copy/--publish 指定時のみコピーを実行し sys.exit(0)。
+    未指定なら何もせず return (stdlib のみ・torch 非依存・既存経路の import タイミング不変)。"""
+    argv = sys.argv[1:]
+
+    def _get(name):
+        for i, a in enumerate(argv):
+            if a == name:
+                return argv[i + 1] if i + 1 < len(argv) else ""
+            if a.startswith(name + "="):
+                return a[len(name) + 1:]
+        return None
+
+    copy_src = _get("--copy")
+    publish_dst = _get("--publish")
+    if copy_src is None and publish_dst is None:
+        return  # 通常経路: 何もしない (この下の import torch へ進む)
+    if copy_src is not None and publish_dst is not None:
+        raise SystemExit("[transport] --copy と --publish は同時指定不可")
+    data_dir = _get("--data-dir") or "data/bitnet"
+    if copy_src is not None:
+        if not copy_src:
+            raise SystemExit("[transport] --copy <src> にパスが必要")
+        _run_transport("copy", copy_src, data_dir)
+    else:
+        if not publish_dst:
+            raise SystemExit("[transport] --publish <dst> にパスが必要")
+        _run_transport("publish", publish_dst, data_dir)
+    sys.exit(0)
+
+
+# --copy/--publish 指定時はここで搬送して終了 (torch を import しない)。
+# 未指定時は即 return し、以降の torch import は現行と同一タイミング。
+_maybe_transport()
 
 import torch
 import torch.nn as nn
@@ -2071,6 +2214,13 @@ def dump_golden_identity(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/bitnet")
+    # 搬送モード (torch import 前の _maybe_transport で処理・argparse には --help 用に定義)。
+    ap.add_argument("--copy", default=None, metavar="SRC_DIR",
+                    help="搬送: SRC_DIR(git 管理外アセット base) -> ローカル --data-dir へ "
+                         "exact コピーのみ実行して終了 (torch 非依存・訓練しない)。")
+    ap.add_argument("--publish", default=None, metavar="DST_DIR",
+                    help="搬送: ローカル --data-dir -> DST_DIR へ exact コピーのみ実行して "
+                         "終了 (torch 非依存・訓練しない・--copy の逆方向)。")
     ap.add_argument("--vocab", default=None)
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=32)

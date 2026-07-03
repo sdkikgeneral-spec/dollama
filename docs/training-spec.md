@@ -1287,3 +1287,28 @@ python scripts/train_bitnet.py --data-dir data/bitnet/_merge_ba \
 
 研究機 RTX5080 (sm_120・`with_cuda=true`) で test_bitnet_gpu の GPU golden corr 1.0 を merged 基準で
 再確認 (開発機は sm_61 で CPU 版 BitNetDenseInfer のみ確認済・corr 1.0)。
+
+### 17.6 正典アセットのマシン間搬送 (`--copy` / `--publish`)
+
+git 管理外の正典アセット (重み4本 `bitnet_dense{,_fp32}` / `bitnet_dense_identity{,_fp32}`・
+`golden/` 6ファイル・a12k データ `pairs.identity.{train,val}.a12k.jsonl`) をマシン間で運ぶ2方向モード。
+cross-GPU では重みが bit 非一致になり再生成で揃わないため **exact バイトコピー**する。パスは実行時引数
+のみで受け、社内パスを repo に残さない。**torch 非依存** (`import torch` より前で処理して終了) ゆえ torch
+未導入マシンでも動く。`vocab.json` / `pairs.val` / `pairs.train.diverse_b2000` / `pairs.eval_diverse_{a,b}`
+は git 追跡済ゆえ搬送対象外 (`git pull` で届く)。
+
+```
+# 取得: リモート base(NAS/USB 等・到達先パスは実行時に指定) -> ローカル --data-dir
+python scripts/train_bitnet.py --copy <到達先パス>/bitnet_assets --data-dir data/bitnet
+
+# 配置: ローカル --data-dir -> リモート base(配置先パスは実行時に指定) を source of truth に更新
+python scripts/train_bitnet.py --publish <配置先パス>/bitnet_assets --data-dir data/bitnet
+```
+
+- 両モードとも **訓練せずコピーのみで終了**。コピー後に sha256 + サイズを照合し、冪等 (既存が同一なら
+  `SKIP_SAME`)・差分ありは旧→新をログ (`--publish` は上書き方向ゆえ silent 上書き禁止・`OVERWRITE old(...)->new(...)`)。
+- source 不在の対象は `WARN skip` で継続 (件数は `missing=` に集計)。`golden/` はハードコードせず source 側の
+  実在ファイルを列挙 (版差異/欠損に頑健)。`--copy` と `--publish` の同時指定はエラー。
+- テスト: `scripts/test_dollma_train_copy.py` (小ダミーファイルで copy→sha照合→冪等→往復→上書きログ→
+  torch 非依存(偽 torch shim)→同時指定エラーを検証・6/6 緑・torch 不要)。
+
