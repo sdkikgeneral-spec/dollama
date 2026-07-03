@@ -240,6 +240,8 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 評価作り直し (4-C) | recall@10 退役 → **diverse 生成 set-F1 を主指標**化 | test_dollma_eval_diverse |
 | 入力多様化 (4-B 500/2k/10k) | diverse-F1 +0.06→+0.15 で **~2,000 件飽和**・本線昇格決裁済 (`[B-merge-at-A]`) | (train_bitnet.py) |
 | 蒸留 D5(KL)/D6(TIPO 外部教師) | 両不採用 (過学習抑制のみ・recall 非寄与) | (train_bitnet.py) |
+| 容量増 33M→80M (4-D) | **陰性クローズ・80M 不採用/勝者=33M** (F1 seed ノイズ・retention 3/4 床割れ・in-dist 微退行) | (dollma_d_seedsweep) |
+| 正典化まとめ焼き (`[B-merge-at-A]`) | 勝者33Mで B(b2000)∧A(a12k identity) を merged 1本に正典化✅・ゲート4指標全通過 (retention 0.9807/diverse_a F1 0.3332/diverse_b F1 0.3804/in-dist 0.4552・各単体参照を全軸超)・正典差し替え+golden 再生成・corr 1.0/meson 25/25 | test_bitnet_infer |
 
 **Phase 4 Model B 品質スコアラ + マッティング (詳細は measurements-log.md)**
 
@@ -288,7 +290,9 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - 自作 LM: tokenizer ✅ / 訓練 #1 (hard CE 6ep, 本線) ✅ / 推論 CPU・GPU・AVX2・INT8 ✅ / 同一性条件付き A (retention 0.975 頑健) ✅
 - 評価: recall@10 退役 → **diverse 生成 set-F1 が主指標** (4-C) ✅
 - 入力多様化 B: ~2,000 件で飽和・本線昇格決裁済 (出荷リトレイン `[B-merge-at-A]` で A と一括焼き) ✅
+- **正典化 `[B-merge-at-A]` 完了 (2026-07-03)**: 勝者 33M で B(b2000)∧A(a12k identity) を merged 1本にまとめ焼き・ゲート4指標全通過 (retention 0.9807/diverse_a F1 0.3332/diverse_b F1 0.3804/in-dist 0.4552 で各単体参照を全軸超) → 正典 `bitnet_dense{,_fp32}`/identity を merged と同一バイトへ差し替え・golden 再生成・test_bitnet_infer corr 1.0/meson 25/25 緑・legacy アンカーを #1→新本線へ (training-spec §17 / dataset-spec §19)。follow-up=研究機で test_bitnet_gpu GPU golden 再確認 ✅
 - 蒸留 D2/D4/D5/D6: 全不採用 (過学習抑制のみ・recall 非寄与) ✅
+- 容量増 D (33M→80M): **陰性クローズ・80M 不採用/勝者=33M** (4seed sweep で F1 は seed ノイズ・retention 3/4 床割れ・in-dist 微退行) ✅ — diverse-val F1 を頑健に押し上げたのは B(~2,000 飽和) のみで、A(retention 専)/D(陰性)/蒸留4路線(非寄与) は F1 非寄与と確定
 - Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ) / **Q-1 quality ラベル実採点 ✅** (waifu_scorer_v4 apache-2.0・quality=null は実行ギャップで解消・分布 0.0/med0.061/0.178 std0.0753・非退化だが [0,0.18] 圧縮 → Q-2 で head 凍結解除・raw_waifu から再正規化)
 - 品質 FB ループ F: **F-0a 計装 ✅ + 実走 80/80 ✅ → 信号ゲート判定 = 信号弱 (補強してから) ✅** = reward std0.038 / best−worst0.203 (両方 PL 閾値 std>0.1・>0.3 に未達)。argmax **Limbs 77/80**・他7軸ほぼ死 (ScorerNet の分解能が Limbs のみ生存)。worst 帯は多人数/背景/mecha/文字焼き込み等**スコープ外題材**への発火が主 (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし **clean vs clutter prompt で |r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の prompt 品質勾配あり (flat noise ではない=飽和 -1 帯でもない)
 - **残 (F-0b 保留・補強を先に)**: ① **quality head 有効化 (Q-2, waifu 再正規化/deepghs 合流)** で reward に生存中の直交軸を足す (最小・最大レバー) ② **7 死軸の分解能診断** (B 側 ScorerNet: anatomy が Limbs 以上になれるか) ③ 補強後 F-0a smoke 再走で std→>0.1 or 分離維持を確認 → **F-0b SFT** / 残低帯域は A 実ペア増・D 容量増 / ternary GEMM は圧縮実験

@@ -398,20 +398,23 @@ static bool test_identity_generate_from_tags()
     Tokenizer tok(VOCAB_PATH);
 
     // manifest_identity.json の 5 ケースの identity_tags / scene_text。
-    // scene_text は ASCII ケース (1/4) を採用 (CP932 文字化け回避)。
-    // 日本語 scene_text のケース (0/2/3) は scene が語彙外でほぼ空になり、
+    // scene_text は ASCII ケース (2/3) を採用 (CP932 文字化け回避)。
+    // 日本語 scene_text のケース (0/1/4) は scene が語彙外でほぼ空になり、
     // prompt 組み立てが golden と一致することは golden 直行テストでカバー済みのため、
     // ここでは ASCII ケースで end-to-end (tag_to_id + scene greedy + 2-<sep>) を検証する。
+    // ([B-merge-at-A] 正典昇格で golden を再生成した際、ASCII だったケースが 1/4 →
+    //  2/3 に変わったため追随。値は data/bitnet/golden/manifest_identity.json より。)
     const IdentityCase cases[2] = {
-        // case 1
-        { {"1girl", "short hair", "black hair", "red eyes", "animal ears",
-           "pink hair", "multicolored hair"},
-          "Please draw a girl: short hair, black hair, red eyes, animal ears." },
-        // case 4
-        { {"1girl", "breasts", "brown hair", "medium hair", "pink eyes"},
-          "a girl having breasts, brown hair, medium hair, pink eyes." },
+        // case 2
+        { {"short hair", "blue eyes", "blonde hair", "ahoge", "male focus",
+           "multiple boys", "green hair"},
+          "several boys having short hair, blue eyes, blonde hair, ahoge." },
+        // case 3
+        { {"1girl", "twintails", "green eyes", "grey hair", "pointy ears", "elf"},
+          "a girl with twintails, green eyes, grey hair, pointy ears, blush, "
+          "white background." },
     };
-    const int case_idx[2] = {1, 4};
+    const int case_idx[2] = {2, 3};
 
     for (int k = 0; k < 2; ++k)
     {

@@ -229,6 +229,7 @@ html, body
 /* 右ペイン: 生成画像プレビュー専任 */
 .canvas
 {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -281,8 +282,17 @@ textarea:focus, select:focus
     border-color: var(--accent);
 }
 
+/* ── 生成ボタン行 (本番 + 下書き高速プレビューの 2 ボタン横並び) ── */
+.gen-actions
+{
+    display: flex;
+    gap: 12px;
+}
+
 .generate
 {
+    /* 2 ボタンを等幅で横並びにする */
+    flex: 1;
     background: var(--accent);
     color: #0b1220;
     border: none;
@@ -291,6 +301,22 @@ textarea:focus, select:focus
     font-weight: 700;
     font-size: 15px;
     cursor: pointer;
+}
+
+/* 下書きボタンは accent 塗りでなく outline 控えめ配色で本番と視覚区別する */
+.generate.secondary
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.generate.secondary:hover:not(:disabled)
+{
+    border-color: var(--accent);
+    color: var(--accent);
 }
 
 .generate:disabled
@@ -307,6 +333,24 @@ textarea:focus, select:focus
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 13px;
+}
+
+/* ── 直近プレビューのモードバッジ (右ペイン左上・本番/下書き + 解像度) ── */
+.gen-mode
+{
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1;
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 /* プレビュー枠は右ペイン (.canvas) を埋める */

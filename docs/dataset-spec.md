@@ -1001,3 +1001,50 @@ Phase 2 (再訓練 + eval) は **a12k のみ** を 4 seed sweep で評価し、A
 diverse-val が seed ノイズである以上、25k で符号反転が安定化する見込みは薄く、計算コストに
 見合わない。生成済 `pairs.identity.{train,val}.a25k.jsonl` / `stats.identity.a25k.json` は
 将来 (A/D 容量増と束ねた再評価・retention のスケール検証等) のため§17.6 の成果物としてそのまま残す。
+
+## 18. Phase 4-D 容量増 sweep のデータ (新規データ無し・既存流用)
+
+施策 D (容量増 33M→80M・training-spec §16) は**新規データセットを一切作らない**。c33/d80 両
+アームとも完全同一レシピ = b2000 多様化 train (§15.6 `pairs.train.diverse_b2000.jsonl`) ∧ a12k
+identity (§17.6 `pairs.identity.{train,val}.a12k.jsonl`)・凍結 diverse-val (§14) で、唯一の差分は
+モデル容量 (`--arch d80m`) のみ。`scripts/dollma_d_seedsweep.py` の `setup_sweep_dir()` が上記
+正準ファイルを `data/bitnet/_seedsweep_d80m/` へ sha 一致確認付きコピーするだけ (A/B sweep と同手)。
+
+**結論 (D クローズ・陰性確定・training-spec §16)**: 容量倍増では diverse-val F1 が seed ノイズ内
+(across 平均わずかに負・c33 分散帯 sd 以下)・retention 3/4 seed 床割れ・in-dist 微退行 →
+**80M 不採用・勝者 = 33M (b2000 ∧ a12k identity)**。diverse-val F1 を頑健に押し上げたのは入力
+多様化 (B・~2,000 飽和) のみで、蒸留 (D5/D6)・実ペア増 (A)・容量 (D) は非寄与/seed ノイズと確定。
+sweep 成果物は `_seedsweep_d80m/` 配下のみ (gitignore)・本番データ無改変。
+
+## 19. 正典化まとめ焼き `[B-merge-at-A]` のデータ (新規データ無し・既存流用・2026-07-03)
+
+正典化まとめ焼き (training-spec §17) は **新規データセットを一切作らない**。既存の正準ファイルを
+`data/bitnet/_merge_ba/` へ正準名でステージし、B(多様化) train を `--train-file` で足すだけ。
+
+### 19.1 _merge_ba ステージング (正準名コピー・ソース read-only)
+
+`scripts/dollma_a_seedsweep.py` の `_copy_canonical` 作法を踏襲し、以下を正準名でコピー (行数照合済)。
+
+| dst (正準名・_merge_ba) | src | 行数 |
+|---|---|---|
+| vocab.json | data/bitnet/vocab.json | 29985 |
+| pairs.val.jsonl | data/bitnet/pairs.val.jsonl (不変アンカー) | 500 |
+| pairs.identity.train.jsonl | data/bitnet/pairs.identity.train.**a12k**.jsonl (§17) | 10800 |
+| pairs.identity.val.jsonl | data/bitnet/pairs.identity.val.**a12k**.jsonl (§17) | 1200 |
+| pairs.eval_diverse_a.jsonl | data/bitnet/pairs.eval_diverse_a.jsonl (§14 凍結物差し) | 1500 |
+| pairs.eval_diverse_b.jsonl | data/bitnet/pairs.eval_diverse_b.jsonl (§14 凍結物差し) | 1500 |
+
+B の train (`pairs.train.diverse_b2000.jsonl`・§15.6・4500 行) は dir に入れず、まとめ焼き時に
+`--train-file` へ絶対パスで渡す (train_bitnet が syn を diverse_b2000 に差し替え、`--identity` が
+identity_cond を足す既存挙動 = diverse_b2000 ∪ identity)。
+
+### 19.2 混合実態 (訓練時ログ)
+
+- MIXED train=**15300** = diverse_b2000 4500 (synthetic 2500 + Claude 著述 2000) ∪ a12k identity 10800
+- val=**1700** = synthetic 500 (pairs.val) + identity_cond 1200 (a12k identity val)
+
+### 19.3 結論
+
+新規データ無し・既存データ (§14 凍結 diverse-val / §15.6 b2000 / §17 a12k identity) をそのまま流用。
+まとめ焼き成果物は `data/bitnet/_merge_ba/` 配下 (gitignore・再生成可)。正典昇格後の重み/golden は
+merged 基準 (training-spec §17.3)・凍結 eval セットと本番 train/val ソースは無改変。a25k は未使用保持。

@@ -138,6 +138,62 @@ conv probe 次第。
 
 ---
 
+## Phase 5 — ポージング・パース (コマ単位の自由な画角)
+
+**動機 (確定)**: 漫画は**コマごとに角度・パース (あおり/俯瞰/前後の圧縮 = foreshortening)・
+ダイナミックポーズ**が変わる。これがクリエイティブの核なのに、拡散モデルが最も苦手とする
+領域 (ユーザー指摘 2026-06-29)。
+
+**問題の切り分け (なぜタグ生成 LM では解けないか)**: 「学習にないパターン」には ①未見の
+**組み合わせ** (補間・合成、生成可) と ②分布の**外** (外挿、基本不可) があり、創造性の実体は
+①。パース崩壊の原因は 2 つ:
+
+- **データ分布の偏り**: danbooru は「立ち・正面・目線・バストアップ」に激しく偏り、`from_below` /
+  `foreshortening` / `dynamic_pose` 等の語彙は**存在するが学習サンプルが桁違いに少ない** →
+  タグ LM が emit しにくく (施策 B の diverse-val 汎化問題と同型)、与えても拡散が崩す。
+- **拡散は 3D 構造を持たない**: SDXL は 2D 画像統計の補間で、カメラ・骨格・奥行きの内部モデルが
+  無い。極端な角度ほど補間近傍が枯れて解剖が破綻する。これは**幾何の問題で、タグでは解けない** →
+  **構造を外から与える**のが筋 (industry 標準 = structural conditioning)。
+
+**3 段の依存連鎖 (5-1 → 5-2 → 5-3、独立メニューではない)**:
+
+```text
+   5-1 崩壊境界の実測 (probe) ──── まず「どの画角でどれだけ崩れるか」を地図化・低コスト
+        │ これが 5-2/5-3 の必要量と投資判断を決める (Aで足りるか / Bまで要るか)
+        ▼
+   5-2 img2img 幾何注入 ────────── 安い・既存パス (iGPU VAE encode 79ms) 流用・新カーネル不要
+        │ 5-2 で救えない強パースが実需として残るなら…
+        ▼
+   5-3 構造条件付け (ControlNet) ── 重い本丸・自作 UNet に制御ブランチ増設 (2-5 相当の中規模)
+```
+
+| 段 | # | 実装物 | 内容 / 流用 | 状態 |
+|---|---|---|---|---|
+| 実測 | 5-1 | **崩壊境界 probe** | 固定キャラ × 画角/パースタグ (`from_above`/`from_below`/`dutch_angle`/`foreshortening`/`perspective`/`dynamic_pose`/`reaching_towards_viewer`) の直積を自作 SDXL で生成 → **既存 QualityGate (Phase 4 B Stage 1) の異常タグ hit 率** (`bad_anatomy`/`extra_arms`/`extra_digits`/`multiple_heads`) を崩壊スコアとして画角別に集計 → ヒートマップ。**採点器は新規不要** (WD14→QualityGate を流用)。`scripts/dollma_probe_pose_breakage.py` 想定 | ⏳ 未着手 (起点) |
+| 安価解 | 5-2 | **img2img 幾何注入ワークフロー** | 3D ソフト/ラフ (DesignDoll/Blender/VRoid) のアタリで構図・パース・骨格を**幾何で固定** → img2img 下絵に投入 → 拡散は清書に専念 + タグ LM は同一性 (Phase 4 A) + 質感。**研究の核心 = denoising strength のスイートスポット** (低すぎ=下絵のラフさ残存 / 高すぎ=描き直して崩壊)。「ポーズ保存度 vs 清書品質」のトレードオフ曲線を実測。img2img パスは既存 (新カーネル不要・設計とパラメータ詰めが主) | ⏳ 未着手 (5-1 後) |
+| 本丸 | 5-3 | **構造条件付け (ControlNet)** | 下絵すら無しで骨格 (OpenPose) / 深度 (depth) / 線画 (lineart) で構造強制。自作 UNet CUDA に**制御ブランチ** (各 down/mid の residual に制御信号を加算) を増設 + ControlNet 重みを既存 safetensors ローダーで読む + 制御入力 (骨格/深度推定) を OV グルーで 1 段 (CLIP/WD14/ISNet と同立ち位置)。VRAM: SDXL ControlNet 1 本 ~+1.2GB → 10.49+1.2 で 16GB 内。既存自作 conv/attention カーネル流用は効く | ⏳ 未着手 (5-2 で不足が確認されたら正式タスク化・決裁要) |
+
+**他段との関係**:
+
+- **Phase 4 B (QualityGate)**: 5-1 の自動採点器として直接流用。レア構図で崩れる前提で**後段で破綻コマを弾く/再生成**する §11 の発想と一致。
+- **Phase 4 A (同一性条件付け)**: 角度を振っても顔・特徴が別人化しないための軸。5-2/5-3 と直交補完 (構造=幾何、同一性=タグ条件)。
+- **LoRA (本線)**: 見た目/画風ロックは LoRA、ポーズ/構図/画角は本 Phase。これも直交。
+- **「ポーズデータ取得方針」(下記バックログ)**: 5-3 ControlNet OpenPose の条件入力辞書/§11 記憶層 pose バイアス源。本命は **3D モーション (Mixamo/VRM/MMD)** からの (2D ポーズ + 参照画像) 合成 (法務・実写ギャップの整理済)。
+- **character-bible §11 解剖メタ整合検査**: NPU 部位検出で「数・位相」のみ照合 (角度・比率・ポーズ自然さは見ない=パース誤検出回避)。5-1/5-3 の破綻検出と地続き。
+
+⚠️ **HW 前提**: SDXL 実走は研究機 (RTX5080) が必須。本開発 PC (GTX1080Ti) は SDXL 本走に不向き
+([[dev-pc-hardware]])。probe/スクリプトはここで書けるが**実走は研究機**。
+
+**着手順 (推奨)**: ① **5-1 を最初にプラン化** (崩壊地図なしに 5-2 の denoise 詰めも 5-3 の投資判断も
+勘になる) → ② 結果を見て 5-2 の denoise スイートスポット実験 → ③ 5-2 の残課題を見て 5-3 ControlNet を
+正式タスク化するか決裁。実装着手は CLAUDE.md ルール (プランモード設計→承認→PL 振り分け) に従う。
+
+**Phase 5 完了の定義**: コマ単位で指定した画角・パース・ポーズの透過キャラ PNG が、解剖破綻を
+QualityGate 許容内に抑えて出力できること。最低ラインは 5-1 (崩壊地図) + 5-2 (img2img で強パースを
+実用品質に救えることの実証)。5-3 ControlNet は 5-2 で不足が出た場合の拡張。
+
+---
+
 ## キャラクター品質・一貫性 (画像生成後の段、Phase 2+ で並行)
 
 キャラを「コマ間でブレさせない」「手指を崩さない」ための段。設計は
@@ -162,6 +218,7 @@ conv probe 次第。
 | **M2** | Phase 2 完了: フル C++ で画像生成 | SDXL カーネル完成後 |
 | **M3** | Phase 3 完了: HTTP 経由で画像生成 | サーバー完成後 |
 | **M4** | Phase 4 完了: 自作タグ生成 LM (dense) + A 同一性条件付け + B 品質スコアラ込みの end-to-end | dense 訓練 → A/B 後 |
+| **M5** | Phase 5: コマ単位の画角・パース指定で解剖破綻を抑えた透過キャラ出力 | 5-1 崩壊地図 + 5-2 img2img 実証 (5-3 は拡張) |
 
 ---
 
@@ -220,10 +277,11 @@ LoRA 選択 / 強度のチップ・プリセット機構を流用できる。
 | **MCP 公開 / Claude 連携** | (a) dollama を **MCP サーバとして公開** → Claude 等が画像生成をツール呼び出し。Phase 3 の OpenAI 互換 HTTP サーバ (cpp-httplib) の薄いラッパで済み、自作・単一バイナリの美学と両立。(b) **プロンプト解析を Claude に**やらせる案は研究コア (自作 BitNet) の代替ではなく、BitNet の**訓練データ収集 / 品質上限の評価基準**として位置づける (Qwen2 蒸留と同じ役割)。 | (a) ◎ Phase 3 / (b) Phase 4 のデータ・評価文脈 |
 | **タグ生成 LM 学習強化プログラム (C/B/A/D/F)** | 蒸留 4 路線が全滅 (recall は学習レシピでなくデータ/容量で頭打ち・training-spec §10–12) した後の、recall 底上げの統合プログラム。**5 施策は独立メニューでなく依存連鎖**。詳細は下記サブセクション。 | ◎ 本命 (Phase 4 継続・C が起点) |
 | **ガヤ (群衆) 複数人出力** | 漫画/イラストの背景モブを出したい用途。**まず案 B = 1人ずつ生成 → 各自を既存 ISNet 単一前景マッティングで透過 PNG 化 → 下流 (CLIP Studio) で重ねる**。dollama の芯 (単一キャラ + 透過切り抜き) にそのまま乗り、新規モデル不要・各キャラが完全立ち絵・分離/前後/配置自由・オクルージョン問題なし。実装は主にオーケストレーション (UI に枚数指定 → N 生成 → N 枚透過出力)。**足りなくなったら案 A = instance segmentation で 1 枚の群衆を人物分離**を追加方向で (アニメ向け instance-seg のモデル成熟度低・縁再仕上げ・隠れ部分は inpainting 必要=ハード)。一体感のある群衆を 1 枚で出しつつ分離もしたい場合のみ A。**起点は B 確定** (ユーザー判断 2026-06-24)。 | ◯ (B は低コスト・時期未定) |
-| **HW 環境抽象化 / 実行モード (`--cpu` `--npu` `--dgpu` 等)** | dollama を Intel 研究機以外（**Ryzen 無印 + NVIDIA dGPU** など）でも動かすため、搭載 HW を宣言して各処理段のデバイス割り当てを切り替えるモード/フラグ体系。**NVIDIA dGPU を保つ限り CUDA 研究コアは無傷**（sm_86 再コンパイルのみ）だが、**NPU/iGPU は Intel 提供ゆえ非 Intel 環境で消える** → `--npu=none`/`--igpu=none` を宣言でき、NPU/iGPU 段を CUDA/CPU へ自動退避（フォールバックチェーン）させる。`--vram=6g` で SDXL を自動ダイエット（1024²→512²/offload）。3 層構成（HW 宣言 / 環境プロファイル / 段ごと上書き）+ 起動時解決ロジック。既存の散在 env（`DOLLAMA_MATTING_DEVICE` 等）を統一デバイス計画に集約。**AMD Radeon (ROCm) は対象外**（フラグ予約のみ・CUDA→HIP 移植は別途巨大タスク）。設計詳細・対応環境マトリクスは [docs/hw-environment-spec.md](hw-environment-spec.md)。 | ◯ (Ryzen+NVIDIA 対応の核・段階導入可・時期未定) |
+| **HW 環境抽象化 / 実行モード (`--cpu` `--npu` `--dgpu` 等)** | dollama を Intel 研究機以外（**Ryzen 無印 + NVIDIA dGPU** など）でも動かすため、搭載 HW を宣言して各処理段のデバイス割り当てを切り替えるモード/フラグ体系。**NVIDIA dGPU を保つ限り CUDA 研究コアは無傷**（sm_86 再コンパイルのみ）だが、**NPU/iGPU は Intel 提供ゆえ非 Intel 環境で消える** → `--npu=none`/`--igpu=none` を宣言でき、NPU/iGPU 段を CUDA/CPU へ自動退避（フォールバックチェーン）させる。`--vram=6g` で SDXL を自動ダイエット（1024²→512²/offload）。3 層構成（HW 宣言 / 環境プロファイル / 段ごと上書き）+ 起動時解決ロジック。既存の散在 env（`DOLLAMA_MATTING_DEVICE` 等）を統一デバイス計画に集約。**AMD Radeon (ROCm) は対象外**（フラグ予約のみ・CUDA→HIP 移植は別途巨大タスク）。設計詳細・対応環境マトリクスは [docs/hw-environment-spec.md](hw-environment-spec.md)。下行「遠隔 HW ノード」は本抽象を**LAN 越しの別マシン**まで延伸した姉妹テーマ（こちらは 1 台内のデバイス計画）。 | ◯ (Ryzen+NVIDIA 対応の核・段階導入可・時期未定) |
+| **遠隔 HW ノード (LAN 越し第 2 マシンの協調)** | 余剰ノート PC (**Ryzen 7 5700/5800 = Zen3 8C/16T + RTX3060 Laptop = sm_86 / VRAM 6GB + 64GB RAM・2.5GbE LAN・NPU なし**) をプロジェクトに足す案 (ユーザー 2026-06-29)。**まず原則の切り分け**: ❌ **密結合 (1 画像の step 内でモデルを機械間分割) は不可** — attention だけ別機等は per-layer 往復でネットワークレイテンシ律速。⭕ **粗粒度 (モデル 1 個 = 1 stage を機械にまたいで置く / ジョブ単位) は成立**。**帯域は非ボトルネック**: 2.5GbE 実効 ~280 MB/s で stage 間ペイロード (latent [1,4,128,128] FP16 128KB ~0.5ms / CLIP embeds 308KB ~1ms / 1024² PNG ~1MB ~4ms) は全部 ms 級・重み 5.1GB は起動時 1 回常駐で per-request では流さない。残る制約はレイテンシ (層単位分割不可) と「5080 が速すぎて laptop に振る価値のある stage が限られる」点。**64GB RAM が VRAM 6GB の壁をほどく**: sequential offload で 6GB の 3060 でも SDXL 1024² 本番がフル解像度で回る (遅いが落ちない) → 下書き専任に縛られず本番ノード化可。**共通土台 = `RemoteNode` 抽象** (Phase 3 の cpp-httplib/json を流用し laptop を dollama 常駐サーバ化 + 主機にクライアント。上行 L278/L221「HW 環境抽象化」を *remote HW* まで延伸した形)。**設計前提 (ユーザー必須要件 2026-06-29): 協調 PC のあり・なしを簡単に切替できること** — 遠隔ノードは**完全 opt-in で既定は単機 (遠隔なしで全機能成立・現状の挙動は無改変)**、宣言 1 つ (例 `--remote-node=host:port` / 既定 `none`) で足す/外す。**不在時は遠隔に振る予定だった stage/ジョブをローカル HW へ自動フォールバック** (L278 のフォールバックチェーンと同一哲学・遠隔の有無でコードパスを分岐させず「デバイス計画に remote ノードが居るか」だけの差にする)。これにより laptop は「**無くても全機能が動き、有れば正確性が増す**」加速器であって依存先にはならない (ユーザー意図 2026-06-29: **遠隔ノードの本命は速度でなく "精度の上乗せ"**・後述③ critic の深度が遠隔の有無で graceful に劣化するだけで生成は常に成立)。その上に 2 つの消費者が乗る (排他でなく ①→③ の一本道): **① 訓練/sweep 分散 (即効・最大効率・③の de-risking)** — 3060 (Ampere/TensorCore/FP16 フル) は開発機 GTX1080Ti (Pascal・FP16 1:64 で実質 FP32 強制・[[dev-pc-hardware]]) より小型 LM 訓練が素直に速く混合精度も使える。D 容量増 80M (~3.8h・eval 律速) や 4 seed sweep は機械間通信ゼロで割れる典型 → 2 台分散で壁時計 ~半減・npz 集約は無負荷。これが sm_86 ビルド (自作 CUDA・wmma 含む) と LAN ジョブ配管を枯らし③の足場を兼ねる。**③ レビュー/critic ノード (研究本命・遠隔ノードの本命用途) = 生成は研究機 / 講評は遠隔** — producer/critic を 2 台に分離した形で、Phase 4 F (品質フィードバック学習) の *機械間* 版・MoE×HW (L271) の「アービタ = 品質スコアラ」を機械間に出した形。研究機が batch 生成 → PNG (~1MB/~4ms) を送る → 遠隔が採点 (異常 flag / 同一性照合 / **解剖・ポーズの整合**) → verdict (極小) を返す → 不合格を再生成 / 報酬で LM fine-tune。pipeline 化 (N+1 生成の裏で N を採点) も batch offline (F 訓練) も両対応・レイテンシ非律速。**RTX3060 Laptop はそれなりの計算力**ゆえ critic は安直ヒューリスティックに留まらず **DWPose 等の keypoint 抽出 / 学習済み解剖・ポーズ分類器 / 小型 VLM 講評 (64GB offload) といった本物の学習済みレビュアーを載せられる** (ユーザー指摘 2026-06-29)。**旗艦例 = 解剖/ポーズ critic を 3 Tier で段階化**し、遠隔の有無で**レビュー深度が graceful degradation する** (上記必須要件の具体形・遠隔なしでも生成は動き精度だけ下がる): **Tier A 数・位相** (指/四肢の本数・重複・欠損・左右対称) = WD14/QualityGate で軽く **研究機の遊休 NPU 常駐**・遠隔不要。**Tier B 骨格レベル** (DWPose 等で 2D keypoint 抽出 → 連結・本数・四肢貫通/関節の粗い不可能を判定) = 重い・**遠隔 (3060 で実走可)**。**Tier C 物理的妥当性** (3D リフト / 学習済み解剖 prior / VLM critic で「このカメラでこのポーズは物理的にありうるか」) = 最重・誤検出しやすい研究フロンティア・**遠隔**。**§11 解剖メタ整合検査 (L274) の線引きを継承**: A は確定スコープ、B/C は §11 が *意図的に避けた* 角度・比率・ポーズ自然さ領域 → **foreshortening/デフォルメを罰しない設計が必須** (強い 2D パースを「崩壊」と誤検出すると Phase 5 の攻めた画角を殺す)。**Phase 5 5-1 の採点器を格上げ**: 現 5-1 は QualityGate 異常タグ hit 率で崩壊スコア化 (タグ粒度) → B/C critic はより強い崩壊検出器になり 5-1→5-2/5-3 の投資判断を支える。増分は stage 分割プロトコル + scheduler (5080 が拡散で詰まる裏の遊休へ何を逃がすか = 芯「全 HW 使い切り」の機械間版)。**着手順 ①→③** (① が独立した見返りを持ちつつ③の sm_86 ビルド/LAN 配管リスクを潰す)。**HW 前提**: SDXL 本走は研究機 (RTX5080) 必須だが、① の小型 LM 訓練・sweep と ③ の critic は 3060 laptop で可。 | ◎ (①即効・③=遠隔の本命は精度の上乗せ・無くても動く graceful degradation・①→③一本道・時期未定) |
 | **CPU 側 LM 推論の速度最適化** | ✅ **Tier 1 完了 (2026-06-25)**。**「lm_head 律速」仮説は実測で否定**: `prof_bitnet`(`src/tests/prof_bitnet.cpp`・本番重み・i7-10700)で区間分解したところ、律速は [src/infer/bitnet.hpp](../src/infer/bitnet.hpp) の `linear()`(double 蓄積・単スレッド・SIMD なし三重ループ)で **FFN ~67% + attention ~25% = ~92%**、lm_head はわずか **~7.5%**。対策はデュアルパス: `forward()`/`linear()`(double=golden 参照)を**完全無改変で温存**し、本番 `generate*()` を新設 `forward_fast()`/`linear_fast()`(float32 蓄積 + AVX2/FMA 明示 intrinsics + 末尾スカラ・lm_head は generate 時 last_only)に差し替え。**全 seq ~5x**(seq8 263→54.9ms 4.79x / seq32 1038→187.7ms 5.53x / seq63 2028→380.5ms 5.33x)。golden 非回帰(logit corr 1.0 / greedy synthetic 5/5・identity 5/5 / 新 double-vs-fast サブテスト max_abs ~5e-6・corr 1.0)。**Tier 2 はデータ駆動で設計確定 + 今は実装見送り**(下記バックログへ): トポロジ自動検出ベンチ(`src/core/cpu_topology.hpp` / `prof_cpu_topology`)で実測 — ① per-thread クリーン基準(seq8 51/seq32 186/seq63 364ms)が affinity 未固定 Tier 1 値と同帯 = **Tier 1 ~5x は実質1スレッド速度**と確定。② 独立 forward の物理コア並列スループットは N=5–7 で ~5x 飽和・N=8 は膨張(帯域/OS 競合)。③ HT 兄弟は別物理2本の 68–83% = disjoint 物理コア割当が基本。これらから **当初案「linear 内 out_dim 分割」(単一 forward レイテンシ削減)は却下** — ② が測ったのはレイテンシでなくスループットで、CPU LM の役割(拡散の裏で複数フレーム先行生成)では単発レイテンシは GPU 版(#6-GPU 87.5x)が担うため動機なし・同期コスト無駄。**Tier 2 確定設計 = (A) 独立 forward ワーカー方式**(linear 内は Tier 1 単スレッドのまま・複数フレームの forward を disjoint 物理コア(上限 5–6・HT 非動員)に pin した embarrassingly parallel)。**実装見送りは憶測でなく構造的事実**: (A) が効くのは複数フレーム同時投入時だが `pipeline.hpp` にその駆動側が無く(LM 段は stub・フレーム逐次)使用箇所ゼロ → 今コミットは保守コスト先払い。**発動条件 = pipeline に複数フレーム先行生成が実装されボトルネック化したとき**(下行バックログ)。BitLinear 再量子化排除/int8 GEMM は別タスク(圧縮実験)。 | ✅ Tier 1 完了 (~5x・golden 維持)・Tier 2 設計確定/留保 |
 | **LM 複数フレーム先行生成 + Tier 2(A) 独立 forward ワーカー** | CPU LM 推論 Tier 2(上行 Tier 1 = AVX2 単スレッド ~5x の続き)の**確定設計 = (A) 独立 forward ワーカー方式**: `linear` 内は Tier 1 単スレッドのまま、複数フレームの forward を **disjoint 物理コア(`cpu_topology.hpp` 自動検出・上限 5–6・HT 兄弟は非動員)に pin した embarrassingly parallel ワーカー**で回す(プールは forward 単位のタスク投入・linear 内分割はしない)。実測ベンチ(②独立 forward スループットが物理コア ~5x まで素直にスケール・③HT 非効率)が裏付け。**当初案「linear 内 out_dim 分割」は却下**(単一 forward レイテンシは GPU 版が担う・役割に動機なし)。**着手は `pipeline.hpp` に複数フレーム先行生成(LM で N+1/N+2 を拡散の裏で生成する駆動側)が実装されボトルネック化したとき** — 現状その駆動側が無く実装しても使用箇所ゼロゆえ留保。L221「HW 環境抽象化」で決め打ちマスクを `cpu_topology.hpp` 自動検出へ置換する際に (A) の物理コア割当も同基盤へ束ねる。MoE × HW 分散検討とも地続き。**【2026-06-28 計測クローズ】駆動側を `src/core/multi_frame_pipeline.hpp` (MultiFramePipeline・複数フレーム先行生成の汎用骨格) として実装しテスト+並列ベンチを与えた (test_multi_frame_pipeline・42/42 全緑)。実デバイス比率スタブで実測した結果、発動条件 (LM 段ボトルネック化) は単一 GPU 構成では成立しない**: per_frame 3879.8ms ≈ SDXL 単段 3800ms (理論 GPU 上限の 98% = GPU バウンド)・`queue_bclip_to_bsdxl` 待ち 0.0002ms ≈0 (GPU 飢餓なし)・LM (404ms) は SDXL の裏に完全隠蔽。QueueDepth {2,4,8} スイープも 2 で飽和 (look-ahead 既定 2 が最適)。**= 単一 GPU では stage A は飢餓を起こさず Tier 2(A) の動機なし。留保継続を計測で裏取り。再評価は SDXL がライブラリ fallback 等で桁違いに速くなった世界のみ** (CLAUDE.md 計測ベースライン表参照)。 | ◯ (設計確定・**計測で留保継続を裏取り 2026-06-28**・発動条件は単一 GPU で不成立) |
-| **プレビュー用低解像度ドラフトモード** | UI のプロンプト/タグ試行錯誤を速くする用途。**本番と同じ SDXL 重み・同じステップ数のまま、解像度だけ下げて**軽い下書きを出す (例: プレビュー 768²／本番 1024²)。狙いは「タグの当たり付け」専用で、**本番との完全一致は狙わない** (解像度が変わると SDXL は構図が変わる・512² は人物複製等で崩れやすいので 768² 推奨)。**うちの律速 (UNet attention) に特に効く**: self-attention は空間トークン数の 2乗なので 1024²→512² でトークン 1/4・attention コスト 1/16。**ステップ削減は不採用** (最終出力が変わるため・ユーザー判断 2026-06-25)。**latent preview (本番生成の途中 decode で忠実プレビュー) も今回は見送り** (同上)。実装は UI 側 ([ui/Components/Pages/Generate.razor](../ui/Components/Pages/Generate.razor) のサイズ切替にプレビュー/本番モードを足すだけ・C++ 無改修)・配管は既存。 | ◯ (UI のみ・低コスト・時期未定) |
+| **プレビュー用低解像度ドラフトモード** | UI のプロンプト/タグ試行錯誤を速くする用途。**本番と同じ SDXL 重み・同じステップ数のまま、解像度だけ下げて**軽い下書きを出す (例: プレビュー 768²／本番 1024²)。狙いは「タグの当たり付け」専用で、**本番との完全一致は狙わない** (解像度が変わると SDXL は構図が変わる・512² は人物複製等で崩れやすいので 768² 推奨)。**うちの律速 (UNet attention) に特に効く**: self-attention は空間トークン数の 2乗なので 1024²→512² でトークン 1/4・attention コスト 1/16。**ステップ削減は不採用** (最終出力が変わるため・ユーザー判断 2026-06-25)。**latent preview (本番生成の途中 decode で忠実プレビュー) も今回は見送り** (同上)。実装は UI 側 ([ui/Components/Pages/Generate.razor](../ui/Components/Pages/Generate.razor) のサイズ切替にプレビュー/本番モードを足すだけ・C++ 無改修)・配管は既存。 | ✅ **完了 (2026-06-29)**: 2 ボタン方式 (「生成」=選択サイズ・「下書き(高速プレビュー)」=768² 固定)。送信サイズ決定は純ロジック `ui/Services/DraftPreview.cs` `ResolveDraftSize` (幅>768→768²・≤768 据え置き・パース不能→768²・例外なし) に切出し ui.Tests でカバー。`GenerateAsync(bool draft)` で draft 時のみ `req.Size` をローカル上書き (`_size` 本体・`Steps` は不変)・直近モードを `.gen-mode` バッジ表示。DTO/クライアント/C++ 無改修。`dotnet build ui` 0 エラー・`dotnet test ui.Tests` 39 緑 (DraftPreviewTests 7 ケース含む) |
 | **成人向け後処理: モザイク/バー修正** | 同人誌頒布用途。日本の成人向け頒布は無修正不可 (刑法175条) なので頒布前提なら**事実上必須**。dollama 本体にコンテンツフィルタは無く、生成可否は載せる SDXL チェックポイント次第 (danbooru 系 fine-tune は対応)。修正は matting と同じ後処理段に **2 パーツで乗る**: ① **NSFW 領域検出** = アニメ向け検出モデルを OV グルーで 1 段 (ISNet/WD14/CLIP と同じ立ち位置・**山はモデル選定**)、② **修正処理** = モザイク (領域ブロック平均) or バー (黒/白塗り)・**モデル不要の純画像処理**・粗さは法的慣行 (画素数基準) / プラットフォーム規定 (DLsite/FANZA 等) に合わせて可変。`OutputSpec` に `censor: none/mosaic/bar` + ブロックサイズを追加。タグでの擬似修正 (`mosaic censoring` 等は vocab にあり) は位置・粗さ不定で頒布要件を満たさない。**絶対線: 成人キャラのみ (未成年不可)**。(ユーザー判断 2026-06-24 で積む) | ◯ (修正処理は低コスト・検出モデル選定が前提・時期未定) |
 
 **共通の制約**: NPU は静的形状のみ → 古典的な token-level dynamic routing は不可。
@@ -244,6 +302,16 @@ Qwen2 文多様化が「過学習悪化」に見えたのも、LLM 文が val �
 **proxy 由来の見かけ**だった可能性が高い。→ **0.777 を 0.79 にする作業の研究価値は薄い**
 (素の text→tags は DanTagGen が実現済・新規性が薄いと §Phase4 レビューでも確認)。上げるべきは
 proxy 数値でなく**実用品質**。
+
+**プログラム結論 (2026-06-29・C/B/A/D 決着)**: C (評価作り直し) で据えた diverse-val 生成
+set-F1 の上で B/A/D を 4 seed paired sweep で測った結果、**diverse-val F1 を頑健に押し上げたのは
+施策 B (入力多様化) のみ**で、しかも **~2,000 件で飽和** (B-3・training-spec §14.9)。**施策 A
+(実ペア増) は diverse-val F1 に seed ノイズで非寄与**だが identity retention 0.975 を頑健に成立
+させる機能基盤 (§9.10)。**施策 D (容量増 33M→80M) は陰性確定** — F1 は seed ノイズ内 (符号反転)・
+retention 床割れ・in-dist 微退行で 80M 不採用 (§16・勝者 = 33M b2000∧identity)。**蒸留 4 路線
+(D2/D4/D5/D6) も全て recall/F1 非寄与**。→ **データ件数でも容量でもない別軸 (データ多様性の質・
+アーキ・損失設計、そして本命 F の実品質オンライン信号) が残る diverse-val 低帯域
+(diverse_a ~0.31 / diverse_b ~0.36) を取りに行く次のフロンティア**。
 
 **5 施策と依存連鎖** (独立メニューではない):
 
@@ -266,7 +334,7 @@ proxy 数値でなく**実用品質**。
 | **C** 評価作り直し | テンプレ外の多様な val (LLM/人手・**タグは実 danbooru のまま**=LLM にタグを推測させない不変方針) で set-F1 / recall@k / Jaccard。**生成ベース** (greedy 生成タグ集合 vs gold) も測る (現行は teacher-forcing recall)。固定 val 500 は**不変**で残し**加算的**に追加 (#1/D5/D6 突合の再現性保全) | ✅ **完了** (C-1〜C-4 / training-spec §13 / dataset-spec §14) |
 | **B** 入力多様化 | タグ集合固定 (tags-stay-real) で自然文を多様化。テンプレ 3 種の偏りを解消し実世界汎化を狙う。`source:"llm_distill"` スキーマ (dataset-spec §12/§15) 流用 | ✅ **件数拡大まで完了** (Claude 著述 Replace **500→2,000→10,000**・diverse F1 は seed 頑健に正だが **~2,000 で飽和** (2,000→10,000 は平坦・B-3 で「頭打ちなし」を訂正・training-spec §14.9)・著者交絡は D2 で否定・**本線昇格=レシピ既定化を確定 (今後の訓練 A/D/F は多様化入力=tags-stay-real を既定)・アーティファクト本体 (`bitnet_dense{,_fp32}.safetensors`) と C++ 推論 golden (test_bitnet_infer/gpu) の差し替えは A 実ペアと束ねる次の出荷リトレインまで遅延** (2026-06-24 ユーザー決裁) / training-spec §14 / dataset-spec §15) |
 | **A** 実ペア増 | danbooru harvest 8,200→数万 posts。**a12k 4 seed sweep でクローズ (二分結論・training-spec §9.10)**: diverse-val 生成 F1 は **12k で seed ノイズ** (4 set/metric 判定 NO・seed 42 のみ反転・~2,000 飽和の B と整合) → **diverse F1 を上げる手ではない**。一方 **identity retention は頑健に 0.975** (across-seed 0.9748±0.0010・全 seed) = **同一性条件付けの機能基盤**。a25k は回さず未使用保持。recall 天井底上げは D 容量増側で取りに行く | ✅ **a12k で評価完了・クローズ** (本番 #1 即時差し替えなし・**法務/ToS ゲート** dataset-spec §1.3 / `[B-merge-at-A]` 遅延タスク=下記注記でまとめ焼き) |
-| **D** 容量増 | 33M→60-100M (設計レンジ §LLM の将来像 内・RTX5080 で訓練)。A で天井を上げてから取りに行く | A 必須 (単独は過学習) |
+| **D** 容量増 | 33M→**80M** (`DOLLAMA_BITNET_ARCH=d80m`・N_LAYERS 8→16 / FFN_DIM 1792→2464 = 79.91M)。両アーム同一レシピ (b2000 ∧ a12k identity)・`--arch` だけ差・4 seed 6ep paired sweep で diverse-val F1 優位の seed 頑健性を測定。**陰性確定・80M 不採用 (training-spec §16)**: diverse-val F1/Jaccard は 4 set/metric とも判定 NO (seed 20260620 で負・seed 7 で正と符号反転・across 平均 −0.002〜−0.004 で c33 seed 分散帯 sd 以下 = A12k/D6 と同型の seed ノイズ)・retention は 3/4 seed が床 0.975 割れ・in-dist 微退行。**容量 (33M→80M) では diverse-val F1 は取れない (データ律速・施策 B ~2,000 飽和と整合)** → **勝者 = c33 (33M・b2000 ∧ a12k identity) = #1 超え出荷候補**。80M は forward ~2x の対価に見合う実利なし | ✅ **陰性確定・クローズ** (打ち切り基準どおり 80M 不出荷・正典化は `[B-merge-at-A]` で勝者 33M を 1 回まとめ焼き) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
 | **F-0a** 信号ゲート | **✅ 実走 80/80 → 判定 = 信号弱 (補強してから)** (2026-07-02・研究機 gpu-benchmarker)。reward std 0.0377 / best−worst 0.2031 (PL 閾値 std>0.1 かつ best−worst>0.3 に未達)。worst-axis argmax **Limbs 77/80** で他 7 軸ほぼ死 (ScorerNet dynamic range が Limbs 単軸) + worst 帯は多人数/背景/mecha/文字焼き込み等スコープ外題材への confound (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし生成 prompt の clean vs clutter で **|r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の勾配源・−1 飽和帯ではない (checkpoint エスカレーション不要)。詳細 measurements-log.md | ✅ 実走・判定済 |
 | **F-0b** SFT | **保留 (F-0a 補強後)**。最小補強順: ① **quality head 有効化 (Q-2 waifu 再正規化 / deepghs 合流)** で生存中の直交軸を reward に足す (最小・最大レバー) → ② **7 死軸の分解能診断** (B 側 ScorerNet) → ③ 補強後 F-0a smoke 再走で std→>0.1 or clean/clutter 分離維持を確認 → 立てば SFT 着手 | ⏸ 補強待ち |
@@ -358,6 +426,22 @@ proxy 数値でなく**実用品質**。
 > **この1回で**差し替える。③ C++ 推論 golden (test_bitnet_infer / test_bitnet_gpu・corr 1.0 突合) を**同時に**再生成する。
 > ④ legacy 非回帰アンカー (pairs.val recall ~0.777) の役割を「#1 アンカー」→「新本線アンカー」へ変更する。
 > ⑤ **A (同一性条件付け) も同じこの1回で焼く** (2026-06-26 A クローズ後の追記): A は a12k 4 seed sweep で評価完了し (training-spec §9.10)、効果は diverse-val F1 でなく **identity retention 0.975 (全 seed 頑健)** と確定。よってこの出荷リトレインは `--identity` で b2000 多様化 + identity_cond 混合を同時に焼き、retention を持つ本線を 1 回で作る (A の実ペアは a12k を使用・a25k は未使用保持)。出荷重み = B(多様化) ∧ A(identity 条件付け) のまとめ焼き 1 本。
+>
+> **✅ 完了 (2026-07-03) — `[B-merge-at-A]` クローズ**: 上記①〜⑤を1回のまとめ焼きで実施済。勝者 33M で
+> B(b2000) ∧ A(a12k identity) を merged 混合1本に訓練 (MIXED train=15300 [diverse_b2000 4500 ∪ a12k
+> identity 10800] / val=1700 [synthetic 500 + identity_cond 1200]・6ep FP32・val_loss ep3 底 1.9996・
+> train 203.1s・param 32,976,896)。**ゲート4指標** (seed 20260620・`data/bitnet/_merge_ba/eval_report_merged.json`):
+> identity retention **0.9807** / diverse_a 生成 macro F1 **0.3332** / diverse_b 生成 macro F1 **0.3804** /
+> in-dist pairs.val 生成 macro F1 **0.4552** — 各単体参照 (a12k retention 0.9748 / b2000 diverse_a 0.3212 /
+> diverse_b 0.3670) を全軸で上回り合格。① `--train-file=diverse_b2000` + `--identity` の merged 分岐で train
+> ソース多様化 + identity 混合。② 正典 `bitnet_dense{,_fp32}` / `bitnet_dense_identity{,_fp32}` を merged と
+> 同一バイトへ差し替え (sha256 FP16 5780fe10 / FP32 5043772d・旧は .pre_merge 退避)。③ C++ 推論 golden 再生成
+> (`data/bitnet/golden/` 6 ファイル merged 基準・旧 golden_pre_merge/ 退避)・test_bitnet_infer corr 1.0 /
+> greedy 5/5 (synthetic+identity)・meson test 25/25 緑。④ legacy 非回帰アンカー (pairs.val recall) の役割を
+> 「#1 アンカー」→「新本線 (merged) アンカー」へ変更。⑤ A(identity) を同回で焼成 (a12k 使用・a25k 未使用保持)。
+> `--train-file` default は None 据え置きのまま、正典再現は明示コマンドで行う (training-spec §17 再現手順)。
+> **follow-up (非ブロッキング)**: 研究機 RTX5080 (sm_120・`with_cuda=true`) で test_bitnet_gpu の GPU golden
+> corr 1.0 再確認 (CPU 版 BitNetDenseInfer は確認済)。詳細 training-spec §17 / dataset-spec §19。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 

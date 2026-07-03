@@ -1131,3 +1131,184 @@ dense INT8 で 33M dense LM の量子化耐性を測った。ternary GEMM (#5) �
 - **GPU INT8** (device 上の int8 GEMM) は別タスク。
 - **ternary GEMM (#5・`src/kernels/ternary_gemm.cu`)** は乗算削減の別実験軸。
 - **INT4** (4bit 重み) も別タスク。本節は CPU・重みのみ INT8 dense に限定する。
+
+
+## 16. 施策 D — 容量増 (33M → 80M) seed sweep (D クローズ・陰性確定)
+
+施策 B (入力多様化) が ~2,000 件で飽和 (§14.9)・施策 A (実ペア増) が diverse-val F1 に
+seed ノイズで非寄与 (§9.10) と判明した後、残る diverse-val F1 の伸びしろを **容量** に賭けて
+測った。`src/models/bitnet_config.hpp` の `DOLLAMA_BITNET_ARCH=d80m` (N_LAYERS 8→16 /
+FFN_DIM 1792→2464・D_MODEL/heads/HEAD_DIM/vocab/max_seq 据え置き = **79,908,864 params**)
+ビルド時切替と `train_bitnet.py --arch d80m` は配線済 (改修ゼロで焼ける)。
+
+**設計 (A/B/D5/D6 と同一作法)**: 2 アーム **c33(33M) / d80(80M)** とも完全同一レシピ =
+b2000 多様化 train (`--train-file`) ∧ a12k identity (`--identity`)。唯一の差分は `--arch d80m`
+の有無 (= 容量のみ)。4 seed (20260620 / 20260621 / 42 / 7)・6ep paired を
+`scripts/dollma_d_seedsweep.py` (`--only-seed` 小出し・`_results/*.npz` 冪等 skip) で回し、
+`dollma_d_seedsweep_analyze.py` で 3 軸判定。出力は `data/bitnet/_seedsweep_d80m/` 配下のみ
+(本番 `bitnet_dense*`/golden・#1 本線 pairs・凍結 eval を一切無改変)。delta = d80 − c33・
+band は **c33 の seed 分散** (A の base band と同じ役割)。
+
+**着手前に明文化した打ち切り基準**: 主指標 = diverse-val 生成 set-F1 を 3 軸
+((a)全 seed 符号一貫 (b)delta 平均が c33 seed 分散帯 sd 超え (c)各 seed paired 95%CI が 0 除外) で
+測り、**不成立なら陰性確定 (データ律速で容量効かず)・80M は出荷しない**。retention(≥0.975 床) /
+in-dist pairs.val F1 はガードレール (非退行の床であって D の成否ではない)。
+
+### 16.1 主指標 diverse-val 生成 F1/Jaccard = seed ノイズ (全 4 set/metric 判定 NO)
+
+delta = d80(80M) − c33(33M)・per-seed paired (n=1500/seed)。
+
+| set / metric | per-seed delta (20260620 / 20260621 / 42 / 7) | across 平均 ± sd | c33 band sd | (a)符号 | (b)>band | (c)CI除外 | 頑健 |
+|---|---|---|---|---|---|---|---|
+| diverse_a / F1 | −0.0240 / −0.0047 / −0.0008 / **+0.0133** | −0.0040 ± 0.0154 | 0.0114 | NO (seed7 反転) | NO | Y/N/N/Y | **NO** |
+| diverse_a / Jaccard | −0.0169 / −0.0041 / −0.0007 / **+0.0091** | −0.0032 ± 0.0107 | 0.0079 | NO | NO | Y/Y/N/Y | **NO** |
+| diverse_b / F1 | −0.0264 / −0.0042 / **+0.0064** / **+0.0156** | −0.0021 ± 0.0181 | 0.0131 | NO | NO | Y/N/Y/Y | **NO** |
+| diverse_b / Jaccard | −0.0207 / −0.0046 / **+0.0048** / **+0.0115** | −0.0023 ± 0.0140 | 0.0098 | NO | NO | Y/Y/Y/Y | **NO** |
+
+全 4 set/metric で判定 NO。**seed 20260620 で大きく負 (−0.024〜−0.026)・seed 7 で正
+(+0.013〜+0.016) と符号が反転**し、across 平均は −0.002〜−0.004 (むしろわずかに負) で c33
+自身の seed 分散帯 sd 以下に埋もれる。各 seed 内では paired CI が 0 を除外することがある
+(per-sample n=1500・|t| 大) が seed を跨ぐと安定しない = **A12k (§9.10)・D6 (§12.5) と同型の
+seed ノイズ**。施策 B の ~2,000 飽和 (§14.9) と整合し、**diverse-val F1 の頭打ちはデータ律速で、
+容量 (33M→80M) では取れない**ことが確定した。
+
+### 16.2 ガードレール — 80M はむしろ床割れ気味
+
+| seed | c33 retention | d80 retention | c33 in-dist F1 | d80 in-dist F1 |
+|---|---|---|---|---|
+| 20260620 | 0.9807 | 0.9744 | 0.4552 | 0.4516 |
+| 20260621 | 0.9800 | 0.9739 | 0.4629 | 0.4570 |
+| 42 | 0.9752 | 0.9771 | 0.4605 | 0.4609 |
+| 7 | 0.9755 | 0.9711 | 0.4612 | 0.4559 |
+| **across** | **0.9778 ± 0.0029 (全 seed ≥0.975 ✅)** | **0.9741 ± 0.0025 (3/4 seed 床割れ ❌)** | 0.4599 | 0.4564 (微退行) |
+
+c33 は retention 床 0.975 を全 seed クリア・in-dist も健全。**d80 は retention が 4 seed 中 3 seed
+(0.9744/0.9739/0.9711) で床割れ**し、in-dist pairs.val F1 もわずかに退行。80M を採る理由はガード
+レール側にも無い。
+
+### 16.3 判定 — D 陰性確定 (80M 不採用・勝者 = c33 33M)
+
+着手前の打ち切り基準にそのまま該当 (3 軸不成立)。**容量倍増 (33M→80M) で diverse-val F1 は
+seed ノイズ内 (平均わずかに負)・retention 床割れ・in-dist 微退行** → **80M は出荷しない**。
+80M は CPU/GPU forward が ~2x (matmul 律速) になるが、その対価を払うロバストな F1 実利が無い。
+
+**勝者 = c33 (33M・b2000 多様化 ∧ a12k identity) = #1 超え出荷候補**。施策 A/B/D5/D6/D の
+探索を通じ、**diverse-val F1 を頑健に押し上げたのは入力多様化 (B・~2,000 で飽和) のみ**で、
+蒸留 (D5/D6)・実ペア増 (A)・容量 (D) はいずれも非寄与か seed ノイズと確定した。残る低帯域
+(diverse_a ~0.31 / diverse_b ~0.36) を取りに行く次のフロンティアは、容量でもデータ件数でもない
+別軸 (データ多様性の質・アーキ・損失設計など) に求める必要がある。
+
+正典差し替え (`bitnet_dense.safetensors` 置換 + C++ golden 再生成) は `[B-merge-at-A]` 遅延条項
+どおり**勝者 33M (b2000 ∧ identity) で 1 回だけ**まとめ焼きする (別途プランモードで設計)。
+
+### 16.4 検証・非回帰 (ルール#4・Python のため C++ meson test 対象外)
+
+- `scripts/test_dollma_d_seedsweep.py` 構造テスト **8/8 緑** (2 アーム c33/d80・両 arm 同一
+  レシピ・d80 のみ `--arch d80m` が train/eval 両方に連動・SEEDS/COMMON/setup コピー対象)。
+- sweep 出力は `data/bitnet/_seedsweep_d80m/` 配下のみ (gitignore)。本番重み/golden/凍結 eval/
+  #1 本線 train/val を一切無改変。`--identity` 駆動の重みは arch 非依存固定名
+  `bitnet_dense_identity*` に出るため、各 arm は train 直後に即 eval→`_results/` 退避で衝突回避。
+
+### 16.5 再現手順
+
+```
+# 全 4 seed (~3.8h・GTX1080Ti FP32・eval-only 律速)
+py -3.12 scripts/dollma_d_seedsweep.py
+# seed 小出し (冪等再開可)
+py -3.12 scripts/dollma_d_seedsweep.py --only-seed 20260620
+# 集計・3 軸判定
+py -3.12 scripts/dollma_d_seedsweep_analyze.py
+```
+
+## 17. 正典化まとめ焼き `[B-merge-at-A]` (勝者 33M・2026-07-03 完了)
+
+蒸留 4 路線 (D2/D4/D5/D6・§10-§12) 不採用、施策 B (入力多様化・§14) が diverse-val 生成 F1 を
+頑健に押し上げる唯一の手 (~2,000 で飽和・§14.9)、施策 A (実ペア増・§9.10) は diverse-val F1 に
+seed ノイズで非寄与だが identity retention 0.975 の機能基盤、施策 D (容量増・§16) は陰性で 33M が
+勝者 — これらを踏まえ、`[B-merge-at-A]` (roadmap 遅延条項・2026-06-24 決裁 + 2026-06-26 A クローズ追記)
+のまとめ焼きを **1 回** 実施し、正典を差し替えた。誇張なし・実測値そのまま。
+
+### 17.1 まとめ焼きレシピ (COMMON = D/A/B sweep と一致)
+
+勝者 = 33M (`--arch base`・param 32,976,896) で B(多様化) ∧ A(identity) を混合 1 本に焼く。
+`train_bitnet.py` に **`--identity` かつ `--train-file` が両方真のとき** の出力分岐を追加
+(base=`bitnet_dense_merged` / stats=`train_stats_merged`)。単独 `elif args.identity:` より前・
+distill 系分岐より後に置き、既存 3 経路 (無フラグ / `--identity` 単独 / `--train-file` 単独) は
+bitwise 非回帰 (命名 if 連鎖の抽出テストで 6 combo 検証済)。データ混合ロジック (§9.x の
+diverse_b2000 ∪ identity) は無改変。
+
+- MIXED train=**15300** (diverse_b2000 4500 [synthetic 2500 + Claude 著述 2000] ∪ a12k identity 10800)
+- val=**1700** (synthetic 500 + identity_cond 1200)
+- 6ep FP32 GTX1080Ti・batch 32・lr 3e-4 cosine・seed 20260620・val_loss ep3 底 **1.9996** (ep 別
+  2.4808 → 2.1896 → 2.0490 → 1.9996 → 2.0184 → 2.0433)・final top10_recall 0.8377・train **203.1s**。
+
+### 17.2 昇格ゲート (PL 確定バンド・単一 seed floor 判定・全 4 項目合格)
+
+`train_bitnet.py --eval-only` で merged FP32 を凍結 diverse-val + identity retention (a12k val) で採点。
+出力 = `data/bitnet/_merge_ba/eval_report_merged.json` (seed 20260620・device cuda・greedy 決定的)。
+
+| 指標 | 実測 (merged) | バンド | 単体参照 | 判定 |
+|---|---|---|---|---|
+| identity retention (a12k val・n=1200) | **0.9807** | ≥0.970 (目標0.975) | a12k 0.9748 | ✅ |
+| diverse_a 生成 macro F1 (n=1500) | **0.3332** | ≥0.30 (参照0.32) | b2000 0.3212 | ✅ |
+| diverse_b 生成 macro F1 (n=1500) | **0.3804** | ≥0.35 (参照0.37) | b2000 0.3670 | ✅ |
+| in-dist pairs.val 生成 macro F1 (n=500) | **0.4552** | ≥0.44 (参照~0.46) | — | ✅ |
+
+**B∧A はクリーンに合成された** — merged は 4 指標すべてで各単体参照を上回り、干渉 (retention と F1 の
+トレードオフ等) は観測されなかった。legacy TF top10_recall = 0.7881 (synthetic val) / 全体 0.8377。
+
+### 17.3 正典昇格 (cpp-implementer 実施・golden 再生成)
+
+- 正典 `bitnet_dense{,_fp32}.safetensors` と `bitnet_dense_identity{,_fp32}.safetensors` を **すべて
+  merged と同一バイト**へ差し替え (sha256 FP16 `5780fe10` / FP32 `5043772d`)、旧は `.pre_merge` 退避。
+  正典 = merged 単一モデル (#1 と identity 別名を統合)。
+- C++ 推論 golden を merged 基準に再生成 (`--dump-golden` / `--dump-golden-identity`・
+  `data/bitnet/golden/` 6 ファイル・旧 `golden_pre_merge/` 退避)。test_bitnet_infer corr=1 /
+  greedy 5/5 (synthetic+identity)・meson test **25/25 緑**。
+- `test_bitnet_infer.cpp` を golden 再生成に追随して 1 箇所更新 (identity end-to-end の ASCII scene
+  ケース選択が 1/4→2/3 に変化・アサーションロジックは無改変)。
+- **legacy 非回帰アンカー**: pairs.val recall の役割を「#1 アンカー」→「新本線 (merged) アンカー」へ変更。
+
+### 17.4 正典再現コマンド (固定記載)
+
+`--train-file` default は None 据え置き (=#1 経路・遅延条項の非回帰維持)。正典 merged は以下の明示
+コマンドで再現する:
+
+```
+# 事前に _merge_ba に正準名でステージ:
+#   vocab.json / pairs.val.jsonl / pairs.identity.{train,val}.jsonl(←a12k) /
+#   pairs.eval_diverse_{a,b}.jsonl
+python scripts/train_bitnet.py --data-dir data/bitnet/_merge_ba \
+  --train-file <abs>/data/bitnet/pairs.train.diverse_b2000.jsonl \
+  --identity --arch base --epochs 6 --loss-mode tags --batch-size 32 --lr 3e-4 --seed 20260620
+```
+
+### 17.5 follow-up (非ブロッキング)
+
+研究機 RTX5080 (sm_120・`with_cuda=true`) で test_bitnet_gpu の GPU golden corr 1.0 を merged 基準で
+再確認 (開発機は sm_61 で CPU 版 BitNetDenseInfer のみ確認済・corr 1.0)。
+
+### 17.6 正典アセットのマシン間搬送 (`--copy` / `--publish`)
+
+git 管理外の正典アセット (重み4本 `bitnet_dense{,_fp32}` / `bitnet_dense_identity{,_fp32}`・
+`golden/` 6ファイル・a12k データ `pairs.identity.{train,val}.a12k.jsonl`) をマシン間で運ぶ2方向モード。
+cross-GPU では重みが bit 非一致になり再生成で揃わないため **exact バイトコピー**する。パスは実行時引数
+のみで受け、社内パスを repo に残さない。**torch 非依存** (`import torch` より前で処理して終了) ゆえ torch
+未導入マシンでも動く。`vocab.json` / `pairs.val` / `pairs.train.diverse_b2000` / `pairs.eval_diverse_{a,b}`
+は git 追跡済ゆえ搬送対象外 (`git pull` で届く)。
+
+```
+# 取得: リモート base(NAS/USB 等・到達先パスは実行時に指定) -> ローカル --data-dir
+python scripts/train_bitnet.py --copy <到達先パス>/bitnet_assets --data-dir data/bitnet
+
+# 配置: ローカル --data-dir -> リモート base(配置先パスは実行時に指定) を source of truth に更新
+python scripts/train_bitnet.py --publish <配置先パス>/bitnet_assets --data-dir data/bitnet
+```
+
+- 両モードとも **訓練せずコピーのみで終了**。コピー後に sha256 + サイズを照合し、冪等 (既存が同一なら
+  `SKIP_SAME`)・差分ありは旧→新をログ (`--publish` は上書き方向ゆえ silent 上書き禁止・`OVERWRITE old(...)->new(...)`)。
+- source 不在の対象は `WARN skip` で継続 (件数は `missing=` に集計)。`golden/` はハードコードせず source 側の
+  実在ファイルを列挙 (版差異/欠損に頑健)。`--copy` と `--publish` の同時指定はエラー。
+- テスト: `scripts/test_dollma_train_copy.py` (小ダミーファイルで copy→sha照合→冪等→往復→上書きログ→
+  torch 非依存(偽 torch shim)→同時指定エラーを検証・6/6 緑・torch 不要)。
+
