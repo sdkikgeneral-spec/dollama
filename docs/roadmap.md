@@ -422,6 +422,22 @@ retention 床割れ・in-dist 微退行で 80M 不採用 (§16・勝者 = 33M b2
 > **この1回で**差し替える。③ C++ 推論 golden (test_bitnet_infer / test_bitnet_gpu・corr 1.0 突合) を**同時に**再生成する。
 > ④ legacy 非回帰アンカー (pairs.val recall ~0.777) の役割を「#1 アンカー」→「新本線アンカー」へ変更する。
 > ⑤ **A (同一性条件付け) も同じこの1回で焼く** (2026-06-26 A クローズ後の追記): A は a12k 4 seed sweep で評価完了し (training-spec §9.10)、効果は diverse-val F1 でなく **identity retention 0.975 (全 seed 頑健)** と確定。よってこの出荷リトレインは `--identity` で b2000 多様化 + identity_cond 混合を同時に焼き、retention を持つ本線を 1 回で作る (A の実ペアは a12k を使用・a25k は未使用保持)。出荷重み = B(多様化) ∧ A(identity 条件付け) のまとめ焼き 1 本。
+>
+> **✅ 完了 (2026-07-03) — `[B-merge-at-A]` クローズ**: 上記①〜⑤を1回のまとめ焼きで実施済。勝者 33M で
+> B(b2000) ∧ A(a12k identity) を merged 混合1本に訓練 (MIXED train=15300 [diverse_b2000 4500 ∪ a12k
+> identity 10800] / val=1700 [synthetic 500 + identity_cond 1200]・6ep FP32・val_loss ep3 底 1.9996・
+> train 203.1s・param 32,976,896)。**ゲート4指標** (seed 20260620・`data/bitnet/_merge_ba/eval_report_merged.json`):
+> identity retention **0.9807** / diverse_a 生成 macro F1 **0.3332** / diverse_b 生成 macro F1 **0.3804** /
+> in-dist pairs.val 生成 macro F1 **0.4552** — 各単体参照 (a12k retention 0.9748 / b2000 diverse_a 0.3212 /
+> diverse_b 0.3670) を全軸で上回り合格。① `--train-file=diverse_b2000` + `--identity` の merged 分岐で train
+> ソース多様化 + identity 混合。② 正典 `bitnet_dense{,_fp32}` / `bitnet_dense_identity{,_fp32}` を merged と
+> 同一バイトへ差し替え (sha256 FP16 5780fe10 / FP32 5043772d・旧は .pre_merge 退避)。③ C++ 推論 golden 再生成
+> (`data/bitnet/golden/` 6 ファイル merged 基準・旧 golden_pre_merge/ 退避)・test_bitnet_infer corr 1.0 /
+> greedy 5/5 (synthetic+identity)・meson test 25/25 緑。④ legacy 非回帰アンカー (pairs.val recall) の役割を
+> 「#1 アンカー」→「新本線 (merged) アンカー」へ変更。⑤ A(identity) を同回で焼成 (a12k 使用・a25k 未使用保持)。
+> `--train-file` default は None 据え置きのまま、正典再現は明示コマンドで行う (training-spec §17 再現手順)。
+> **follow-up (非ブロッキング)**: 研究機 RTX5080 (sm_120・`with_cuda=true`) で test_bitnet_gpu の GPU golden
+> corr 1.0 再確認 (CPU 版 BitNetDenseInfer は確認済)。詳細 training-spec §17 / dataset-spec §19。
 
 ### ポーズデータ取得方針 (探索テーマの補足)
 

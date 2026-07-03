@@ -1219,3 +1219,71 @@ py -3.12 scripts/dollma_d_seedsweep.py --only-seed 20260620
 # 集計・3 軸判定
 py -3.12 scripts/dollma_d_seedsweep_analyze.py
 ```
+
+## 17. 正典化まとめ焼き `[B-merge-at-A]` (勝者 33M・2026-07-03 完了)
+
+蒸留 4 路線 (D2/D4/D5/D6・§10-§12) 不採用、施策 B (入力多様化・§14) が diverse-val 生成 F1 を
+頑健に押し上げる唯一の手 (~2,000 で飽和・§14.9)、施策 A (実ペア増・§9.10) は diverse-val F1 に
+seed ノイズで非寄与だが identity retention 0.975 の機能基盤、施策 D (容量増・§16) は陰性で 33M が
+勝者 — これらを踏まえ、`[B-merge-at-A]` (roadmap 遅延条項・2026-06-24 決裁 + 2026-06-26 A クローズ追記)
+のまとめ焼きを **1 回** 実施し、正典を差し替えた。誇張なし・実測値そのまま。
+
+### 17.1 まとめ焼きレシピ (COMMON = D/A/B sweep と一致)
+
+勝者 = 33M (`--arch base`・param 32,976,896) で B(多様化) ∧ A(identity) を混合 1 本に焼く。
+`train_bitnet.py` に **`--identity` かつ `--train-file` が両方真のとき** の出力分岐を追加
+(base=`bitnet_dense_merged` / stats=`train_stats_merged`)。単独 `elif args.identity:` より前・
+distill 系分岐より後に置き、既存 3 経路 (無フラグ / `--identity` 単独 / `--train-file` 単独) は
+bitwise 非回帰 (命名 if 連鎖の抽出テストで 6 combo 検証済)。データ混合ロジック (§9.x の
+diverse_b2000 ∪ identity) は無改変。
+
+- MIXED train=**15300** (diverse_b2000 4500 [synthetic 2500 + Claude 著述 2000] ∪ a12k identity 10800)
+- val=**1700** (synthetic 500 + identity_cond 1200)
+- 6ep FP32 GTX1080Ti・batch 32・lr 3e-4 cosine・seed 20260620・val_loss ep3 底 **1.9996** (ep 別
+  2.4808 → 2.1896 → 2.0490 → 1.9996 → 2.0184 → 2.0433)・final top10_recall 0.8377・train **203.1s**。
+
+### 17.2 昇格ゲート (PL 確定バンド・単一 seed floor 判定・全 4 項目合格)
+
+`train_bitnet.py --eval-only` で merged FP32 を凍結 diverse-val + identity retention (a12k val) で採点。
+出力 = `data/bitnet/_merge_ba/eval_report_merged.json` (seed 20260620・device cuda・greedy 決定的)。
+
+| 指標 | 実測 (merged) | バンド | 単体参照 | 判定 |
+|---|---|---|---|---|
+| identity retention (a12k val・n=1200) | **0.9807** | ≥0.970 (目標0.975) | a12k 0.9748 | ✅ |
+| diverse_a 生成 macro F1 (n=1500) | **0.3332** | ≥0.30 (参照0.32) | b2000 0.3212 | ✅ |
+| diverse_b 生成 macro F1 (n=1500) | **0.3804** | ≥0.35 (参照0.37) | b2000 0.3670 | ✅ |
+| in-dist pairs.val 生成 macro F1 (n=500) | **0.4552** | ≥0.44 (参照~0.46) | — | ✅ |
+
+**B∧A はクリーンに合成された** — merged は 4 指標すべてで各単体参照を上回り、干渉 (retention と F1 の
+トレードオフ等) は観測されなかった。legacy TF top10_recall = 0.7881 (synthetic val) / 全体 0.8377。
+
+### 17.3 正典昇格 (cpp-implementer 実施・golden 再生成)
+
+- 正典 `bitnet_dense{,_fp32}.safetensors` と `bitnet_dense_identity{,_fp32}.safetensors` を **すべて
+  merged と同一バイト**へ差し替え (sha256 FP16 `5780fe10` / FP32 `5043772d`)、旧は `.pre_merge` 退避。
+  正典 = merged 単一モデル (#1 と identity 別名を統合)。
+- C++ 推論 golden を merged 基準に再生成 (`--dump-golden` / `--dump-golden-identity`・
+  `data/bitnet/golden/` 6 ファイル・旧 `golden_pre_merge/` 退避)。test_bitnet_infer corr=1 /
+  greedy 5/5 (synthetic+identity)・meson test **25/25 緑**。
+- `test_bitnet_infer.cpp` を golden 再生成に追随して 1 箇所更新 (identity end-to-end の ASCII scene
+  ケース選択が 1/4→2/3 に変化・アサーションロジックは無改変)。
+- **legacy 非回帰アンカー**: pairs.val recall の役割を「#1 アンカー」→「新本線 (merged) アンカー」へ変更。
+
+### 17.4 正典再現コマンド (固定記載)
+
+`--train-file` default は None 据え置き (=#1 経路・遅延条項の非回帰維持)。正典 merged は以下の明示
+コマンドで再現する:
+
+```
+# 事前に _merge_ba に正準名でステージ:
+#   vocab.json / pairs.val.jsonl / pairs.identity.{train,val}.jsonl(←a12k) /
+#   pairs.eval_diverse_{a,b}.jsonl
+python scripts/train_bitnet.py --data-dir data/bitnet/_merge_ba \
+  --train-file <abs>/data/bitnet/pairs.train.diverse_b2000.jsonl \
+  --identity --arch base --epochs 6 --loss-mode tags --batch-size 32 --lr 3e-4 --seed 20260620
+```
+
+### 17.5 follow-up (非ブロッキング)
+
+研究機 RTX5080 (sm_120・`with_cuda=true`) で test_bitnet_gpu の GPU golden corr 1.0 を merged 基準で
+再確認 (開発機は sm_61 で CPU 版 BitNetDenseInfer のみ確認済・corr 1.0)。

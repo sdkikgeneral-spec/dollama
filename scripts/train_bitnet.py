@@ -2485,6 +2485,14 @@ def main():
     elif args.distill:
         base = "bitnet_dense_distill"
         stats_base = "train_stats_distill"
+    elif args.identity and args.train_file:
+        # [B-merge-at-A] 正典化まとめ焼き: B(--train-file=diverse_b2000 で syn を差し替え)
+        #   と A(--identity で identity_cond を混合) の両方が真のとき merged 別名へ出す。
+        #   単独 elif args.identity: より必ず前に置く (identity 分岐が先勝ちすると
+        #   A 単体別名 bitnet_dense_identity* に落ちて衝突するため)。distill 系との
+        #   優先順位 (distill_ext/distill_kl/identity+distill/distill) は不変。
+        base = "bitnet_dense_merged"
+        stats_base = "train_stats_merged"
     elif args.identity:
         base = "bitnet_dense_identity"
         stats_base = "train_stats_identity"

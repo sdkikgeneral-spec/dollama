@@ -241,6 +241,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 入力多様化 (4-B 500/2k/10k) | diverse-F1 +0.06→+0.15 で **~2,000 件飽和**・本線昇格決裁済 (`[B-merge-at-A]`) | (train_bitnet.py) |
 | 蒸留 D5(KL)/D6(TIPO 外部教師) | 両不採用 (過学習抑制のみ・recall 非寄与) | (train_bitnet.py) |
 | 容量増 33M→80M (4-D) | **陰性クローズ・80M 不採用/勝者=33M** (F1 seed ノイズ・retention 3/4 床割れ・in-dist 微退行) | (dollma_d_seedsweep) |
+| 正典化まとめ焼き (`[B-merge-at-A]`) | 勝者33Mで B(b2000)∧A(a12k identity) を merged 1本に正典化✅・ゲート4指標全通過 (retention 0.9807/diverse_a F1 0.3332/diverse_b F1 0.3804/in-dist 0.4552・各単体参照を全軸超)・正典差し替え+golden 再生成・corr 1.0/meson 25/25 | test_bitnet_infer |
 
 **Phase 4 Model B 品質スコアラ + マッティング (詳細は measurements-log.md)**
 
@@ -285,10 +286,11 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - 自作 LM: tokenizer ✅ / 訓練 #1 (hard CE 6ep, 本線) ✅ / 推論 CPU・GPU・AVX2・INT8 ✅ / 同一性条件付き A (retention 0.975 頑健) ✅
 - 評価: recall@10 退役 → **diverse 生成 set-F1 が主指標** (4-C) ✅
 - 入力多様化 B: ~2,000 件で飽和・本線昇格決裁済 (出荷リトレイン `[B-merge-at-A]` で A と一括焼き) ✅
+- **正典化 `[B-merge-at-A]` 完了 (2026-07-03)**: 勝者 33M で B(b2000)∧A(a12k identity) を merged 1本にまとめ焼き・ゲート4指標全通過 (retention 0.9807/diverse_a F1 0.3332/diverse_b F1 0.3804/in-dist 0.4552 で各単体参照を全軸超) → 正典 `bitnet_dense{,_fp32}`/identity を merged と同一バイトへ差し替え・golden 再生成・test_bitnet_infer corr 1.0/meson 25/25 緑・legacy アンカーを #1→新本線へ (training-spec §17 / dataset-spec §19)。follow-up=研究機で test_bitnet_gpu GPU golden 再確認 ✅
 - 蒸留 D2/D4/D5/D6: 全不採用 (過学習抑制のみ・recall 非寄与) ✅
 - 容量増 D (33M→80M): **陰性クローズ・80M 不採用/勝者=33M** (4seed sweep で F1 は seed ノイズ・retention 3/4 床割れ・in-dist 微退行) ✅ — diverse-val F1 を頑健に押し上げたのは B(~2,000 飽和) のみで、A(retention 専)/D(陰性)/蒸留4路線(非寄与) は F1 非寄与と確定
 - Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ)
-- **残**: Model B 実スコアラ→FB ループ (B-5 消費者 F) / 残低帯域は容量・件数でなく別軸 (多様性の質・アーキ・損失・本命 F) で取る / 正典化は `[B-merge-at-A]` で勝者 33M をまとめ焼き / ternary GEMM は圧縮実験
+- **残**: Model B 実スコアラ→FB ループ (B-5 消費者 F) / 残低帯域は容量・件数でなく別軸 (多様性の質・アーキ・損失・本命 F) で取る / ternary GEMM は圧縮実験 (正典化 `[B-merge-at-A]` は上記のとおり完了)
 
 ## 実装作業のルール
 
