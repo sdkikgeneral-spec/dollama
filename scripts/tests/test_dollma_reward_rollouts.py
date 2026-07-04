@@ -198,6 +198,72 @@ def test_main_plan_does_not_raise():
     cr.main(["--n", "6"])
 
 
+
+# ============================================================
+# Package E: quality 供給を CLIP image→QualityMLP に差し替え (Q-2 直交軸)
+# ============================================================
+def test_l2_normalize_np():
+    try:
+        import numpy as np
+    except Exception:
+        print("  (numpy 無し → skip)"); return
+    v = cr.l2_normalize_np(np.array([[3.0, 4.0]], dtype=np.float32))
+    assert abs(float((v ** 2).sum() ** 0.5) - 1.0) < 1e-6   # L2 norm=1
+
+
+def test_compute_quality_clip_mock():
+    # 実 OV/CLIP をロードせず、preprocess/clip_ov/qmlp_ov をモックして配管を検証。
+    try:
+        import numpy as np
+        import torch
+        from PIL import Image
+    except Exception:
+        print("  (torch/PIL/numpy 無し → skip)"); return
+    import tempfile
+
+    class _FakeOV:
+        def __init__(self, out_arr):
+            self._out = object()
+            self._arr = out_arr
+        def __call__(self, x):
+            return {self._out: self._arr}
+        def output(self, i):
+            return self._out
+
+    preprocess = lambda im: torch.zeros(3, 224, 224)     # [3,224,224] を返すだけ
+    clip_ov = _FakeOV(np.ones((1, 768), dtype=np.float32))  # 適当な embed
+    with tempfile.TemporaryDirectory() as d:
+        img = os.path.join(d, "x.png")
+        Image.new("RGB", (8, 8), (128, 128, 128)).save(img)
+        # logit 0 → quality 0.5・logit 大正 → ~1・大負 → ~0 (sigmoid 単調)。
+        q_mid = cr.compute_quality_clip(img, preprocess, clip_ov, _FakeOV(np.array([[0.0]], np.float32)))
+        q_hi = cr.compute_quality_clip(img, preprocess, clip_ov, _FakeOV(np.array([[5.0]], np.float32)))
+        q_lo = cr.compute_quality_clip(img, preprocess, clip_ov, _FakeOV(np.array([[-5.0]], np.float32)))
+    assert abs(q_mid - 0.5) < 1e-6
+    assert q_hi > 0.9 and q_lo < 0.1
+    assert q_lo < q_mid < q_hi                            # sigmoid 単調
+    assert 0.0 <= q_lo and q_hi <= 1.0                    # [0,1]
+
+
+def test_reward_quality_weight_path_numeric():
+    # quality 非 None → reward = (1-w)*anatomy + w*(quality-1.0) (w=QUALITY_WEIGHT)。
+    # 定数参照 (weight を変えても壊れない・現状 0.4)。
+    w = rw.QUALITY_WEIGHT
+    axes = [0.0] * 8                     # anatomy 完全良 → anatomy_reward=0
+    r = rw.reward_from_scorer(axes, quality=1.0)
+    assert abs(r - 0.0) < 1e-9           # quality=1.0 なら (1-1)=0 → reward 0
+    r2 = rw.reward_from_scorer(axes, quality=0.0)
+    # anatomy 0・quality 0 → w*(0-1) = -w。
+    assert abs(r2 - (-w)) < 1e-9
+    # anatomy 非ゼロでも凸結合式に一致 (定数参照で検証)。
+    axes2 = [0.2, 0.5, 0.1, 0.0, 0.3, 0.4, 0.15, 0.05]
+    anat = rw.reward_from_scorer(axes2, quality=None)     # anatomy のみ
+    q = 0.7
+    assert abs(rw.reward_from_scorer(axes2, q) - ((1.0 - w) * anat + w * (q - 1.0))) < 1e-9
+    # quality が高いほど reward は 0 方向へ (良化・単調)。
+    assert rw.reward_from_scorer(axes, 0.9) > rw.reward_from_scorer(axes, 0.1)
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

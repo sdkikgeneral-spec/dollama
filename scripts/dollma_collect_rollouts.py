@@ -42,13 +42,17 @@ ROOT = os.path.abspath(os.path.join(HERE, ".."))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from dollma_reward import reward_from_scorer  # noqa: E402  (純関数・依存なし)
+from dollma_reward import reward_from_scorer, QUALITY_WEIGHT  # noqa: E402  (純関数・依存なし)
 
 # 実走資産パス (研究機で存在を確認・開発機では不在→[SKIP])。
 # BitNet 重み/vocab は本線 #1 (dense hard CE 6ep) = data/bitnet/ 配下が実体。
 # 同一性版 bitnet_dense_identity_fp32.safetensors も同ディレクトリにあるが既定にしない
 # (アーキ差の可能性)。CLI (--bitnet-weights / --vocab) で上書き可 (定数是正 + CLI の二段構え)。
 SCORER_IR = os.path.join(ROOT, "models", "scorer-net", "model_ov_fp32.xml")
+# Package D/E: quality 供給元 = CLIP image encoder → QualityMLP (ScorerNet index0 は使わない)。
+# 蒸留忠実度優先で既定は FP32 IR / CPU (fp16/NPU は --*-device / --*-ir で切替可)。
+CLIP_IMAGE_IR = os.path.join(ROOT, "models", "clip-image", "model_ov_fp32.xml")
+QUALITY_MLP_IR = os.path.join(ROOT, "models", "quality-mlp", "model_ov_fp32.xml")
 BITNET_WEIGHTS = os.path.join(ROOT, "data", "bitnet", "bitnet_dense_fp32.safetensors")
 VOCAB_PATH = os.path.join(ROOT, "data", "bitnet", "vocab.json")
 DOLLAMA_EXE = os.path.join(ROOT, "build", "src", "dollama.exe")
@@ -118,6 +122,35 @@ def quality_from_logits(logits9, enabled=QUALITY_ENABLED):
     if not enabled:
         return None
     return sigmoid(float(logits9[0]))
+
+
+# ---- Package E: quality 供給を CLIP image→QualityMLP に差し替える (Q-2 直交軸) ----
+# ScorerNet index0 は Package A で anatomy 専用に凍結済 → quality はこの経路で供給する。
+# 教師 = renorm 済み quality [0,1] (quality_mlp_stats.json) ゆえ sigmoid(pred) がそのまま
+# quality[0,1] (追加 renorm 不要・訓練分布と厳密一致)。embed 空間は Package B/D で corr 1.0。
+def l2_normalize_np(v):
+    """[1,768] embed を最終次元で L2 正規化 (Package B/C の生徒/教師と同一処理)。"""
+    import numpy as np
+    v = np.asarray(v, dtype=np.float32)
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    return v / (n + 1e-12)
+
+
+def compute_quality_clip(img_path, preprocess, clip_ov, qmlp_ov):
+    """生成 PNG → open_clip preprocess[1,3,224,224] → CLIP image OV → embed[768]
+    → L2 正規化 → QualityMLP OV → logit → sigmoid → quality[0,1]。
+
+    preprocess は open_clip create_model_and_transforms の val 変換 (Package B/D と同一)。
+    """
+    import numpy as np
+    from PIL import Image
+
+    x = preprocess(Image.open(img_path).convert("RGB")).unsqueeze(0)  # [1,3,224,224]
+    x = np.ascontiguousarray(x.numpy(), dtype=np.float32)
+    emb = clip_ov(x)[clip_ov.output(0)]              # [1,768] (L2 前)
+    emb = l2_normalize_np(emb)                       # L2 正規化 (蒸留空間)
+    logit = qmlp_ov(np.ascontiguousarray(emb, dtype=np.float32))[qmlp_ov.output(0)]
+    return float(sigmoid(float(np.asarray(logit).reshape(-1)[0])))
 
 
 def rollout_row(input_text, prompt, seed, axes, quality, reward):
@@ -192,6 +225,10 @@ def _research_assets_status(args):
         reasons.append("torch 不在")
     if not os.path.isfile(SCORER_IR):
         reasons.append(f"ScorerNet IR 不在: {SCORER_IR}")
+    if not os.path.isfile(getattr(args, "clip_image_ir", CLIP_IMAGE_IR)):
+        reasons.append(f"CLIP image IR 不在: {getattr(args, 'clip_image_ir', CLIP_IMAGE_IR)}")
+    if not os.path.isfile(getattr(args, "quality_mlp_ir", QUALITY_MLP_IR)):
+        reasons.append(f"QualityMLP IR 不在: {getattr(args, 'quality_mlp_ir', QUALITY_MLP_IR)}")
     if not os.path.isfile(args.bitnet_weights):
         reasons.append(f"BitNet 重み不在: {args.bitnet_weights}")
     if not os.path.isfile(args.vocab):
@@ -259,6 +296,17 @@ def run_on_research_machine(args, input_texts):
     scorer = core.compile_model(core.read_model(SCORER_IR), args.scorer_device)
     print(f"[rollout] ScorerNet ロード完了 device={args.scorer_device}", file=sys.stderr)
 
+    # --- Package E: quality 供給 = CLIP image encoder(OV) → QualityMLP(OV) ---
+    # ScorerNet index0 は使わない (anatomy 専用に凍結済)。embed 空間は Package B/D で corr 1.0。
+    import open_clip
+    _cm, _, clip_preprocess = open_clip.create_model_and_transforms(
+        "ViT-L-14-quickgelu", pretrained="openai")
+    del _cm  # encode は OV IR が担う (torch tower は不要・メモリ節約)。preprocess のみ使う。
+    clip_ov = core.compile_model(core.read_model(args.clip_image_ir), args.clip_device)
+    qmlp_ov = core.compile_model(core.read_model(args.quality_mlp_ir), args.quality_device)
+    print(f"[rollout] quality 経路ロード完了 clip={args.clip_device} qmlp={args.quality_device} "
+          f"(教師=renorm quality・sigmoid(pred)=quality[0,1])", file=sys.stderr)
+
     # --- サーバ env (本 txt2img 有効化 + matting OFF) ---
     env = dict(os.environ)
     env["DOLLAMA_OV_TOKENIZERS_DLL"] = tok_dll
@@ -281,6 +329,8 @@ def run_on_research_machine(args, input_texts):
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
     rewards = []
+    _quality_log = []
+    _worst_log = []
     try:
         with open(args.out, "w", encoding="utf-8") as fout:
             for i, input_text in enumerate(input_texts):
@@ -301,11 +351,14 @@ def run_on_research_machine(args, input_texts):
                 x = preprocess_for_scorer(img_path)
                 logits = scorer(x)[scorer.output(0)][0]  # [9]
                 axes = axes_from_logits(logits)
-                quality = quality_from_logits(logits, QUALITY_ENABLED)
+                # quality = CLIP image→QualityMLP (ScorerNet index0 は使わない・Package E)
+                quality = compute_quality_clip(img_path, clip_preprocess, clip_ov, qmlp_ov)
 
                 # 4) 報酬
                 reward = reward_from_scorer(axes, quality)
                 rewards.append(reward)
+                _quality_log.append(quality)
+                _worst_log.append(max(axes))
 
                 # 5) JSONL 行 (seed = server 内 wall-clock・非再現 → provenance に明記)
                 row = rollout_row(input_text, prompt, args.seed, axes, quality, reward)
@@ -329,15 +382,34 @@ def run_on_research_machine(args, input_texts):
         rmin, rmax = min(rewards), max(rewards)
         rmean = sum(rewards) / len(rewards)
         var = sum((r - rmean) ** 2 for r in rewards) / len(rewards)
+        # quality/anatomy 内訳 (E-2 判定用)。quality[0,1] 分布と anatomy(worst) との相関。
+        quals = [r for r in _quality_log if r is not None]
+        worsts = _worst_log
+        def _corr(a, b):
+            if len(a) < 2:
+                return None
+            ma = sum(a) / len(a); mb = sum(b) / len(b)
+            num = sum((a[i] - ma) * (b[i] - mb) for i in range(len(a)))
+            da = sum((x - ma) ** 2 for x in a) ** 0.5
+            db = sum((x - mb) ** 2 for x in b) ** 0.5
+            return round(num / (da * db), 4) if da > 0 and db > 0 else None
+        qstd = (sum((x - sum(quals) / len(quals)) ** 2 for x in quals) / len(quals)) ** 0.5 if quals else None
         provenance = {
-            "stage": "F-0a rollout 収集",
+            "stage": "F-0a/E-2 rollout 収集 (quality 直交軸 = CLIP image→QualityMLP)",
+            "quality_source": "CLIP ViT-L image encoder(OV) -> QualityMLP(OV) -> sigmoid (renorm 済み教師)",
+            "quality_weight": QUALITY_WEIGHT,
+            "quality_min": round(min(quals), 4) if quals else None,
+            "quality_max": round(max(quals), 4) if quals else None,
+            "quality_mean": round(sum(quals) / len(quals), 4) if quals else None,
+            "quality_std": round(qstd, 4) if qstd is not None else None,
+            "corr_quality_vs_worstanatomy": _corr(quals, worsts) if quals else None,
             "n_rollouts": len(rewards),
             "reward_min": round(rmin, 4),
             "reward_max": round(rmax, 4),
             "reward_mean": round(rmean, 4),
             "reward_std": round(var ** 0.5, 4),
             "best_minus_worst": round(rmax - rmin, 4),  # 学習可能ギャップの粗指標
-            "quality_enabled": QUALITY_ENABLED,
+            "quality_enabled": True,
             "scorer_ir": os.path.relpath(SCORER_IR, ROOT).replace(os.sep, "/"),
             "bitnet_weights": os.path.relpath(args.bitnet_weights, ROOT).replace(os.sep, "/"),
             "out": args.out,
@@ -371,6 +443,14 @@ def main(argv=None):
                     help="BitNet LM 推論デバイス (cpu / cuda)")
     ap.add_argument("--scorer-device", dest="scorer_device", default="CPU",
                     help="ScorerNet OV デバイス (golden は CPU FP32)")
+    ap.add_argument("--clip-image-ir", dest="clip_image_ir", default=CLIP_IMAGE_IR,
+                    help="CLIP image encoder OV IR (Package D-2)")
+    ap.add_argument("--quality-mlp-ir", dest="quality_mlp_ir", default=QUALITY_MLP_IR,
+                    help="QualityMLP OV IR (Package D-1)")
+    ap.add_argument("--clip-device", dest="clip_device", default="CPU",
+                    help="CLIP image encoder OV デバイス (採用は NPU・蒸留忠実度優先は CPU FP32)")
+    ap.add_argument("--quality-device", dest="quality_device", default="CPU",
+                    help="QualityMLP OV デバイス")
     ap.add_argument("--health-timeout", dest="health_timeout", type=float, default=240.0)
     ap.add_argument("--gen-timeout", dest="gen_timeout", type=float, default=180.0)
     ap.add_argument("--no-matting-marker", dest="no_matting_marker", default="__no_matting__")

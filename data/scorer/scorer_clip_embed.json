@@ -1,0 +1,19 @@
+{
+  "created_utc": "2026-07-04T04:05:35Z",
+  "step": "Package B CLIP image embed harvest",
+  "backbone": "ViT-L-14-quickgelu",
+  "pretrained": "openai",
+  "normalize": "L2 (encode_image 後・aesthetic-predictor normalized 相当)",
+  "embed_dim": 768,
+  "n_rows": 180,
+  "n_images_unique": 180,
+  "elapsed_sec": 3.55,
+  "l2_norm_check": {
+    "min": 1.0,
+    "max": 1.0,
+    "mean": 1.0
+  },
+  "column_added": "clip_image_embed:[768] float (既存列は無改変)",
+  "backup": "scorer.{train,val}.noembed.bak.jsonl",
+  "note": "backbone は dollma_score_quality_v4.load_clip/score_image と厳密一致 (waifu 蒸留の教師/生徒で embed 空間統一)。"
+}

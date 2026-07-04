@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-07-04T04:13:38Z",
+  "model": "QualityMLP (dollama 自作・CLIP embed[768] → quality logit)",
+  "note": "Package C: 生ピクセル ScorerNet の quality 蒸留 (負相関/不安定) を CLIP 空間で立て直す",
+  "seed": 20260620,
+  "torch": "2.11.0+cu128",
+  "device": "cpu",
+  "arch": {
+    "in_dim": 768,
+    "hidden": [
+      64
+    ],
+    "dropout": 0.3,
+    "out": 1,
+    "activation": "ReLU"
+  },
+  "param_count": 49281,
+  "hparams": {
+    "epochs": 300,
+    "lr": 0.001,
+    "weight_decay": 0.1,
+    "loss": "mse",
+    "huber_delta": 0.1
+  },
+  "teacher": {
+    "source": "jsonl quality (Step① renorm 済み [0,1])",
+    "std_train": 0.2994,
+    "std_val": 0.283,
+    "val_range": [
+      0.1042,
+      0.864
+    ]
+  },
+  "result": {
+    "final_val_corr": 0.1566,
+    "best_val_corr": 0.1996,
+    "best_epoch": 5,
+    "final_pred_std": 0.2423,
+    "final_pred_range": [
+      0.0823,
+      0.8589
+    ],
+    "final_train_corr": 0.968
+  },
+  "oof_cv": {
+    "oof_corr": 0.5253,
+    "folds": 5,
+    "n": 180,
+    "pred_std": 0.2286,
+    "pred_range": [
+      0.1077,
+      0.9465
+    ],
+    "note": "train+val pool の out-of-fold corr = robust 主指標 (val=18 のノイズ回避)"
+  },
+  "vs_raw_pixel": "生ピクセル ScorerNet quality 蒸留は val corr -0.25〜+0.40 で不安定・逆相関だった",
+  "history_tail": [
+    {
+      "epoch": 295,
+      "train_loss": 0.007276501040905714,
+      "train_corr": 0.9671586751937866,
+      "val_corr": 0.15298298001289368,
+      "pred_std": 0.24158602952957153,
+      "pred_min": 0.08176366984844208,
+      "pred_max": 0.8557347655296326,
+      "pred_mean": 0.4884929060935974,
+      "loss": 0.11823812127113342
+    },
+    {
+      "epoch": 296,
+      "train_loss": 0.007088397163897753,
+      "train_corr": 0.9673852920532227,
+      "val_corr": 0.15342913568019867,
+      "pred_std": 0.24176651239395142,
+      "pred_min": 0.08172528445720673,
+      "pred_max": 0.8563146591186523,
+      "pred_mean": 0.4892791211605072,
+      "loss": 0.11829136312007904
+    },
+    {
+      "epoch": 297,
+      "train_loss": 0.007424418348819017,
+      "train_corr": 0.967601478099823,
+      "val_corr": 0.15442685782909393,
+      "pred_std": 0.24195587635040283,
+      "pred_min": 0.08190589398145676,
+      "pred_max": 0.8572853803634644,
+      "pred_mean": 0.4911380410194397,
+      "loss": 0.11833568662405014
+    },
+    {
+      "epoch": 298,
+      "train_loss": 0.006923376582562923,
+      "train_corr": 0.9678170084953308,
+      "val_corr": 0.15542881190776825,
+      "pred_std": 0.24212855100631714,
+      "pred_min": 0.08205194771289825,
+      "pred_max": 0.8581252694129944,
+      "pred_mean": 0.4928337633609772,
+      "loss": 0.1183694452047348
+    },
+    {
+      "epoch": 299,
+      "train_loss": 0.00717640295624733,
+      "train_corr": 0.9680278897285461,
+      "val_corr": 0.15658555924892426,
+      "pred_std": 0.24226881563663483,
+      "pred_min": 0.08230451494455338,
+      "pred_max": 0.8589448928833008,
+      "pred_mean": 0.49458396434783936,
+      "loss": 0.11837831884622574
+    }
+  ],
+  "inference": "CLIP ViT-L embed[768] (L2 正規化) → QualityMLP → sigmoid → quality [0,1]"
+}

@@ -37,7 +37,7 @@
       "8": "GlobalAnatomy"
     }
   },
-  "convert_ms": 413.0,
+  "convert_ms": 781.0,
   "accuracy": {
     "max_abs_pytorch_vs_ovfp32": 1.33514404296875e-05,
     "max_abs_ovfp32_vs_ovfp16": 0.00740814208984375,
@@ -46,31 +46,31 @@
   },
   "latency_median_ms": {
     "CPU": {
-      "median_ms": 11.7,
+      "median_ms": 11.03,
       "ir": "model_ov_fp32.xml",
       "max_abs_vs_ovfp32": 0.0
     },
     "GPU.0": {
-      "median_ms": 6.28,
+      "median_ms": 6.37,
       "ir": "model_ov_fp16.xml",
       "max_abs_vs_ovfp32": 0.045215606689453125
     },
     "GPU.1": {
-      "median_ms": 13.16,
+      "median_ms": 13.18,
       "ir": "model_ov_fp32.xml",
       "max_abs_vs_ovfp32": 1.1444091796875e-05
     },
     "NPU": {
-      "median_ms": 8.32,
+      "median_ms": 9.33,
       "ir": "model_ov_fp16.xml",
       "max_abs_vs_ovfp32": 0.011060714721679688
     }
   },
   "probe_4b": {
     "prediction": "NPU 512² 6.14ms / NPU/CPU 0.55x",
-    "measured_npu_ms": 8.32,
-    "measured_cpu_ms": 11.7,
-    "npu_over_cpu": 0.711
+    "measured_npu_ms": 9.33,
+    "measured_cpu_ms": 11.03,
+    "npu_over_cpu": 0.846
   },
   "golden": {
     "file": "golden_scorernet.safetensors",

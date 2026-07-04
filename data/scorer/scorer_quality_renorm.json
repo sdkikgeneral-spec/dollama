@@ -1,0 +1,84 @@
+{
+  "created_utc": "2026-07-04T02:30:54Z",
+  "step": "Q-2 Step1 quality 再正規化 (z-score -> sigmoid)",
+  "source_column": "raw_waifu",
+  "mapping": "quality = 1/(1+exp(-((raw_waifu - mean)/std) * k))",
+  "mean": 0.736672,
+  "std": 0.806333,
+  "k": 1.5,
+  "mean_std_source": "train+val 全 raw_waifu (母集団)",
+  "n_rows": 180,
+  "raw_waifu_stats": {
+    "min": -1.712492,
+    "median": 0.606135,
+    "max": 1.783583,
+    "mean": 0.736672,
+    "std": 0.806333
+  },
+  "quality_renorm_stats": {
+    "min": 0.010394,
+    "median": 0.439588,
+    "max": 0.875178,
+    "mean": 0.494977,
+    "std": 0.297999,
+    "n_clamped_to_0": 0
+  },
+  "histogram_quality": [
+    [
+      0.0,
+      0.1,
+      3
+    ],
+    [
+      0.1,
+      0.2,
+      13
+    ],
+    [
+      0.2,
+      0.3,
+      63
+    ],
+    [
+      0.3,
+      0.4,
+      5
+    ],
+    [
+      0.4,
+      0.5,
+      17
+    ],
+    [
+      0.5,
+      0.6,
+      7
+    ],
+    [
+      0.6,
+      0.7,
+      3
+    ],
+    [
+      0.7,
+      0.8,
+      5
+    ],
+    [
+      0.8,
+      0.9,
+      64
+    ],
+    [
+      0.9,
+      1.0,
+      0
+    ]
+  ],
+  "backup": "scorer.{train,val}.q018.bak.jsonl (旧 [0,0.18] quality を退避)",
+  "preserved_columns": [
+    "quality_waifu",
+    "raw_waifu"
+  ],
+  "note": "scorer_net.safetensors 等の再訓練は Step2 で別途。deepghs アンサンブルは raw/quality_waifu 残置で後付け可能。"
+}

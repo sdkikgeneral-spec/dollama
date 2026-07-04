@@ -114,3 +114,6 @@ data/scorer/*.qnull.bak.jsonl
 # F-0a rollout 収集の生成物 (dollma_collect_rollouts.py・研究機実走で再生成可・PNG 群で大容量)。
 # reward 分布/判定は docs (measurements-log/CLAUDE.md/roadmap) に記録済。
 data/rollouts/
+
+# Q-2 quality 枝: スクリプトが作る退避コピー (transient・元 jsonl は既に ignore)
+data/scorer/*.bak.jsonl
