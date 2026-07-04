@@ -30,10 +30,13 @@ quality head の前方互換 (重要):
 # 凸結合 reward = -((1-w)*worst + w*mean) のため、全 0/全 1 の境界は w に依らず正確。
 MEAN_TIE_WEIGHT = 0.05
 
-# 将来 quality head 凍結解除時に美的スコアを報酬へ混ぜる重み (現状は未発火)。
+# quality head 凍結解除後 (Package C/E) に美的スコアを報酬へ混ぜる重み。
 # quality は [0,1] で高い=良。anatomy_reward は [-1,0] で 0=良。両者の「良=大」方向を
 # 揃えるため quality を (quality-1.0) で [-1,0] へ写してから凸結合する。
-QUALITY_WEIGHT = 0.3
+# 0.3→0.4 (ユーザー決裁): anatomy は F-0a で 7/8 軸が死・Limbs のみ生存に対し、quality は
+# CLIP 空間 QualityMLP の OOF corr +0.53 の信頼軸ゆえ重みを上げる。かつ E-2 分散分解で
+# quality 寄与 0.4×std0.2575≈0.103 → reward std>0.1 の一次ゲートを越えるための引き上げ。
+QUALITY_WEIGHT = 0.4
 
 
 def reward_from_scorer(axes, quality=None):
@@ -53,7 +56,7 @@ def reward_from_scorer(axes, quality=None):
       anatomy_reward = -((1-MEAN_TIE_WEIGHT)*max(axes) + MEAN_TIE_WEIGHT*mean(axes))
         worst-axis 主・mean 従。境界: 全 0 → 0.0 / 全 1 → -1.0 (max==mean ゆえ正確)。
       quality が非 None のとき:
-        reward = (1-QUALITY_WEIGHT)*anatomy_reward + QUALITY_WEIGHT*(quality-1.0)
+        reward = (1-QUALITY_WEIGHT)*anatomy_reward + QUALITY_WEIGHT*(quality-1.0)  # w=0.4
         (美的が良いほど報酬を 0 方向へ押し上げる。anatomy のみは quality=None 経路)。
 
     集約器は差し替え可能 (worst-axis = 2D 全損という設計判断の表明であって不可侵ではない)。
