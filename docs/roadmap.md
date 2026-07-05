@@ -192,6 +192,47 @@ conv probe 次第。
 QualityGate 許容内に抑えて出力できること。最低ラインは 5-1 (崩壊地図) + 5-2 (img2img で強パースを
 実用品質に救えることの実証)。5-3 ControlNet は 5-2 で不足が出た場合の拡張。
 
+### 5-D — デッサンモード (トレース用あたり生成・5-3 の応用)
+
+**動機 (確定 2026-07-04)**: 本番キャラ生成とは別に、**下書きのトレース元**として使う
+「デッサン人形をポージングさせたあたり図」を出したい。CLIP STUDIO の 3D 人形モードは
+① ポーズ付けが 3D 操作で面倒 ② 出力が 3DCG 臭くアニメ絵の比率・タッチと合わない、で
+「いまいち」というのが起点。dollama の勝ち筋は **3D 人形をレンダリングせず、拡散で最初から
+アニメ絵の比率・タッチのあたりを出す**こと (5-3 ControlNet の直接応用)。
+
+**設計の芯 = 役割分離** (汎用 3D 人形に無い「そのキャラ比率のあたり」が新規性):
+
+| 要素 | 担保する場所 |
+|---|---|
+| プロポーション (頭身・骨長) | **スケルトンの幾何** ← character-bible 頭身スペックから骨長を自動生成 |
+| 同一性 (顔/髪/色) | bible タグ + 同一性条件付き LM (Phase 4 A, retention 0.975) |
+| ポーズ | OpenPose キーポイント (下記 3 入力すべてここに収束) |
+| 絵柄 (グレー人形) | 「gray mannequin / neutral figure」prompt preset |
+
+**ポーズ入力 3 種 (すべて対応・ユーザー確定)** → 共通中間表現 = **OpenPose キーポイント図**:
+
+- **2D スケルトン編集**: 棒人間を 2D ドラッグで関節操作 (3D 回転の煩わしさを回避)。Blazor UI 側。
+- **参照画像からポーズ抽出**: 写真/イラストを DWPose 等でキーポイント化 → そのポーズであたり生成。
+  新規 OV 推論モデル 1 段 (固定形状寄りで NPU/iGPU 配置候補・CLIP/WD14/ISNet と同立ち位置)。
+- **テキスト指定**: 自然文 → prompt 直行、またはポーズライブラリ (下記「ポーズデータ取得方針」の
+  Mixamo/VRM/MMD 由来) から選択。骨格を持てないので精度は上 2 つに劣る。
+
+**拘束方式の決定 = ControlNet-OpenPose 一択** (ユーザー決裁 2026-07-04): T2I-Adapter (軽いが
+精度落ち) は却下。デッサンでもポーズがふらつくと下書きに使えず、質優先 ([[project-output-quality-over-features]])。
+= Phase 5-3 の ControlNet 制御ブランチをそのまま使う (新方式の追加ではない)。
+
+**着手の段取り (質優先だが博打回避・probe→確認→実装の流儀)**:
+
+1. **質検証 probe** (軽・gpu-benchmarker): diffusers の ControlNet-OpenPose + アニメ特化 checkpoint +
+   「gray mannequin」prompt で、狙ったグレー人形のあたりが実際に出るか + 頭身をスケルトンで
+   拘束できるかを数枚で確認。
+2. probe 合格 → **本結線**: 5-3 の自作 CUDA UNet への ControlNet 統合 (制御ブランチ増設) +
+   グレー人形 preset + 頭身→骨長マッパー + (2D スケルトン編集器は Blazor UI) + ポーズ検出器 OV グルー。
+
+**他段との関係**: 5-3 ControlNet (基盤・同一)、Phase 4 A (同一性)、「ポーズデータ取得方針」
+バックログ (テキスト入力のライブラリ源)、ui/ Blazor (2D スケルトン編集器)。
+**着手は CLAUDE.md ルール準拠** (probe→質確認→プランモード設計→承認→PL 振り分け)。未着手 (5-3 に依存)。
+
 ---
 
 ## キャラクター品質・一貫性 (画像生成後の段、Phase 2+ で並行)
@@ -337,7 +378,7 @@ retention 床割れ・in-dist 微退行で 80M 不採用 (§16・勝者 = 33M b2
 | **D** 容量増 | 33M→**80M** (`DOLLAMA_BITNET_ARCH=d80m`・N_LAYERS 8→16 / FFN_DIM 1792→2464 = 79.91M)。両アーム同一レシピ (b2000 ∧ a12k identity)・`--arch` だけ差・4 seed 6ep paired sweep で diverse-val F1 優位の seed 頑健性を測定。**陰性確定・80M 不採用 (training-spec §16)**: diverse-val F1/Jaccard は 4 set/metric とも判定 NO (seed 20260620 で負・seed 7 で正と符号反転・across 平均 −0.002〜−0.004 で c33 seed 分散帯 sd 以下 = A12k/D6 と同型の seed ノイズ)・retention は 3/4 seed が床 0.975 割れ・in-dist 微退行。**容量 (33M→80M) では diverse-val F1 は取れない (データ律速・施策 B ~2,000 飽和と整合)** → **勝者 = c33 (33M・b2000 ∧ a12k identity) = #1 超え出荷候補**。80M は forward ~2x の対価に見合う実利なし | ✅ **陰性確定・クローズ** (打ち切り基準どおり 80M 不出荷・正典化は `[B-merge-at-A]` で勝者 33M を 1 回まとめ焼き) |
 | **F** 品質ループ | B 品質スコアラ (アニメ品質・NPU/CPU・§技術リスク表) を作り、生成プロンプト→SDXL 画像→採点→報酬で LM を fine-tune (CharacterMemory ループ)。recall でなく「良い絵を生む」方向に学習軸を移す | Phase 2 (済 11.3s) + B スコアラ実装 |
 | **F-0a** 信号ゲート | **✅ 実走 80/80 → 判定 = 信号弱 (補強してから)** (2026-07-02・研究機 gpu-benchmarker)。reward std 0.0377 / best−worst 0.2031 (PL 閾値 std>0.1 かつ best−worst>0.3 に未達)。worst-axis argmax **Limbs 77/80** で他 7 軸ほぼ死 (ScorerNet dynamic range が Limbs 単軸) + worst 帯は多人数/背景/mecha/文字焼き込み等スコープ外題材への confound (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし生成 prompt の clean vs clutter で **|r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の勾配源・−1 飽和帯ではない (checkpoint エスカレーション不要)。詳細 measurements-log.md | ✅ 実走・判定済 |
-| **F-0b** SFT | **保留 (F-0a 補強後)**。最小補強順: ① **quality head 有効化 (Q-2 waifu 再正規化 / deepghs 合流)** で生存中の直交軸を reward に足す (最小・最大レバー) → ② **7 死軸の分解能診断** (B 側 ScorerNet) → ③ 補強後 F-0a smoke 再走で std→>0.1 or clean/clutter 分離維持を確認 → 立てば SFT 着手 | ⏸ 補強待ち |
+| **F-0b** SFT | **✅ 完遂・不採用クローズ (2026-07-05・docs/f0b-rejection-sft-plan.md)**。前提の Q-2 (quality を CLIP-embed 枝に分離・自作 QualityMLP を CLIP image embed 上で waifu 蒸留 OOF corr+0.53・NPU 疎通・reward std 0.038→0.104 で信号ゲート通過・docs/q2-quality-branch-plan.md) 完了後、RAFT (best-of-8→top-1→SFT) を G-1 400ペア→G-2a SFT(正典から層状)→G-2b reward前後比→G-3 判定で end-to-end 実装・実走。**結果=不採用**: 便益 reward +0.017 (弱・60%正・~2.4σ・SDXL seed 交絡・ほぼ全量 quality由来) が コスト diverse set-F1 −0.017/−0.024 (構造的・全レシピ) を正当化できず。正典 bitnet_dense 無改変・SFT 重み隔離保存。知見: best-of-N reward(解剖+美的) と gold タグ set-F1 は非整合 / anatomy ほぼ死 / SDXL seed 非再現(SAC)が比較ノイズ源 / 日本語空条件。パイプライン再利用可。次レバー=reward設計/日本語条件付け改修/seed制御 | ✅ 不採用クローズ |
 
 **C と F は同じ軸の両端**: C = より良いオフライン proxy、F = 本物のオンライン信号 (良い絵か)。
 このプログラムの背骨は**物差しを proxy→実品質へ動かすこと**で、recall という枯れた数値から
