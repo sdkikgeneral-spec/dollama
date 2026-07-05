@@ -117,3 +117,7 @@ data/rollouts/
 
 # Q-2 quality 枝: スクリプトが作る退避コピー (transient・元 jsonl は既に ignore)
 data/scorer/*.bak.jsonl
+
+# F-0b G-2a set-F1 評価スクラッチ (eval レポート + 追跡済データセットの複製・再生成可)。
+# 判定数値は docs/f0b-rejection-sft-plan.md / roadmap に記録済。
+data/bitnet/_g2a_eval/
