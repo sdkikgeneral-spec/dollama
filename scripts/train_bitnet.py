@@ -1783,6 +1783,47 @@ def _greedy_generate(model, prompt_ids, device, max_len=MAX_SEQ_LEN):
     return generated
 
 
+@torch.no_grad()
+def _sample_generate(model, prompt_ids, device, generator, max_len=MAX_SEQ_LEN,
+                     temperature=1.0, top_k=0):
+    """GREEDY_STOP_RULE と同じ停止規則で、argmax の代わりに temperature/top-k
+    サンプリングする確率的デコーダ (F-0b best-of-N 用)。
+
+    _greedy_generate の決定的単一出力に対し、同一 prompt でも generator の乱数で
+    多様な候補が出る。**再現性は generator (torch.Generator) の seed で担保する**
+    (rollout 側が (input, candidate) ごとに固定 seed の generator を渡す)。
+
+    引数:
+      generator   : torch.Generator — サンプリング乱数源 (seed 固定で再現的)。
+      temperature : >0。1.0=素の分布 / <1=尖鋭化 / >1=平坦化。
+      top_k       : >0 のとき上位 k logit のみ残して sampling (0=無効=全語彙)。
+
+    返り値: 生成した tag id 列 (prompt を含まない・<eos> を含まない)。greedy と同じ。
+    """
+    if temperature <= 0.0:
+        raise ValueError("temperature は正でなければならない (greedy は _greedy_generate)")
+    seq = list(prompt_ids)
+    generated = []
+    while len(seq) < max_len:
+        inp = torch.tensor([seq], dtype=torch.long, device=device)
+        logits = model(inp)                        # [1, S, V] FP32
+        next_logits = logits[0, -1].float() / temperature   # [V]
+        if top_k and top_k > 0 and top_k < next_logits.numel():
+            # 上位 k 以外を -inf にして分布から除外する。
+            kth = torch.topk(next_logits, top_k).values[-1]
+            next_logits = torch.where(
+                next_logits < kth,
+                torch.full_like(next_logits, float("-inf")),
+                next_logits)
+        probs = torch.softmax(next_logits, dim=-1)
+        nxt = int(torch.multinomial(probs, num_samples=1, generator=generator).item())
+        if nxt == TOK_EOS:
+            break                                  # <eos> は出力に含めず停止
+        seq.append(nxt)
+        generated.append(nxt)
+    return generated
+
+
 def dump_golden(args):
     """bitnet_dense_fp32.safetensors をロードした BitNetDense で golden を dump。
 
@@ -1983,11 +2024,10 @@ ID_GEN_PATH = "gen_golden_identity.safetensors"
 ID_MANIFEST_PATH = "manifest_identity.json"
 
 
-def _load_dense_from_export(fp32_path, device):
-    """export_safetensors 命名の FP32 重みを BitNetDense にロードする (共通化)。"""
-    from safetensors.torch import load_file
-    sd = load_file(fp32_path)
-    model = BitNetDense().to(device)
+def _export_naming_to_state_dict(sd):
+    """export_safetensors 命名 (embed / layers.{i}.* / final_norm) の dict を
+    BitNetDense.state_dict() 命名 (embed.weight / layers.{i}.*.weight / final_norm.weight)
+    へ写す (共通化・_load_dense_from_export と SFT 層状ロードで唯一のマッパを共有)。"""
     new_sd = {}
     new_sd["embed.weight"] = sd["embed"]
     new_sd["final_norm.weight"] = sd["final_norm"]
@@ -1997,7 +2037,30 @@ def _load_dense_from_export(fp32_path, device):
         new_sd[p + "ffn_norm.weight"] = sd[p + "ffn_norm"]
         for w in ("wq", "wk", "wv", "wo", "w_gate", "w_up", "w_down"):
             new_sd[p + w + ".weight"] = sd[p + w]
-    model.load_state_dict(new_sd, strict=True)
+    return new_sd
+
+
+def _load_export_into_model(model, fp32_path):
+    """export_safetensors 命名の FP32 重みを既存 model へ strict ロードする (train/eval
+    モードは変えない)。SFT の「正典 bitnet_dense から層状 warm-start」で使う。
+    返り値: strict ロードしたキー数 (= state_dict のキー数)。"""
+    from safetensors.torch import load_file
+    sd = load_file(fp32_path)
+    new_sd = _export_naming_to_state_dict(sd)
+    # モデル param の dtype/device に合わせてから strict ロード (FP32 同士なら no-op)。
+    ref = model.state_dict()
+    cast = {k: new_sd[k].to(dtype=ref[k].dtype, device=ref[k].device)
+            for k in new_sd}
+    model.load_state_dict(cast, strict=True)
+    return len(cast)
+
+
+def _load_dense_from_export(fp32_path, device):
+    """export_safetensors 命名の FP32 重みを BitNetDense にロードする (共通化)。"""
+    from safetensors.torch import load_file
+    sd = load_file(fp32_path)
+    model = BitNetDense().to(device)
+    model.load_state_dict(_export_naming_to_state_dict(sd), strict=True)
     model.eval()
     return model
 
@@ -2328,6 +2391,23 @@ def main():
                          "(既定 None = data_dir/pairs.train.jsonl で従来挙動 完全不変)。"
                          "指定時は出力を別名 (basename 由来サフィックス) にして "
                          "本番 bitnet_dense*/golden を無改変に保つ。val は pairs.val.jsonl 不変。")
+    # --- F-0b (G-2a): rejection-sampling SFT (RAFT) ---
+    #   正典 bitnet_dense から層状に warm-start し、best-of-N 勝者ペアで低 LR・少 epoch の
+    #   追加学習を行う。破滅的忘却回避が最優先ゆえ既存訓練 (lr 3e-4/30ep) より 1〜2 桁小さい
+    #   LR・2〜4 epoch を推奨。出力は隔離別名 bitnet_dense_sft{,_fp32} / train_stats_sft
+    #   (正典 bitnet_dense*/golden は G-3 合格まで無改変)。source=="rejection_sft" は
+    #   build_sequence の synthetic 分岐 (1-<sep>) で読める。
+    ap.add_argument("--sft-rejection", action="store_true",
+                    help="F-0b (G-2a): 正典 bitnet_dense から層状 warm-start し "
+                         "best-of-N 勝者ペア (--sft-data) で RAFT-SFT。出力は隔離 "
+                         "bitnet_dense_sft{,_fp32} / train_stats_sft (正典無改変)。"
+                         "identity/distill 系とは併用不可。")
+    ap.add_argument("--sft-data", default=None,
+                    help="F-0b: RAFT-SFT 勝者ペア jsonl (既定 data/rollouts/sft_bestofn.jsonl)。"
+                         "schema は synthetic 経路互換 (source=rejection_sft)。")
+    ap.add_argument("--sft-init", default=None,
+                    help="F-0b: SFT 層状 warm-start 元の export 命名 FP32 safetensors "
+                         "(既定 <data-dir>/bitnet_dense_fp32.safetensors = 正典)。")
     args = ap.parse_args()
 
     # --- 施策 D: アーキ次元を config 駆動で確定 (全サブモードより前・1 回だけ) ---
@@ -2339,6 +2419,11 @@ def main():
           f"n_layers={arch_info['n_layers']} n_heads={arch_info['n_heads']} "
           f"ffn={arch_info['ffn']} max_seq={arch_info['max_seq']} "
           f"-> param_count={arch_info['param_count']:,}")
+
+    # --- F-0b: SFT は identity/distill 系と併用不可 (層状 warm-start は synthetic 経路のみ) ---
+    if args.sft_rejection and (args.identity or args.distill or args.distill_kl
+                               or args.distill_ext):
+        raise SystemExit("[sft] --sft-rejection は --identity/--distill*/ と併用不可")
 
     # --- golden dump サブモード (訓練は行わず golden だけ出力) ---
     if args.dump_golden:
@@ -2446,6 +2531,28 @@ def main():
             args.epochs = 1
         print(f"[data] KL-DISTILL train={len(train_rows)} val={len(val_rows)} "
               f"loss_mode={args.loss_mode} (synthetic only・target は案A 共起 teacher で軟化)")
+    elif args.sft_rejection:
+        # F-0b (G-2a): best-of-N 勝者ペアで RAFT-SFT。train = 勝者ペアのみ。
+        #   val は #1 と同一 (pairs.val・追加学習で in-dist が崩れないかの monitor 用)。
+        #   本ゲート (diverse set-F1 非退行) は別途 --eval-only で採点する。
+        default_sft = os.path.join(
+            os.path.dirname(data_dir.rstrip("/\\")) or ".",
+            "rollouts", "sft_bestofn.jsonl")
+        sft_path = args.sft_data or default_sft
+        if not os.path.exists(sft_path):
+            raise FileNotFoundError(f"{sft_path} が無い (--sft-data / G-1 の勝者ペア)")
+        train_rows = load_pairs(sft_path)
+        val_rows = syn_val
+        if args.smoke:
+            train_rows = train_rows[:32]
+            val_rows = val_rows[:32]
+            args.epochs = 1
+        n_ja = sum(1 for r in train_rows if r.get("lang") == "ja")
+        n_en = sum(1 for r in train_rows if r.get("lang") == "en")
+        n_rej = sum(1 for r in train_rows if r.get("source") == "rejection_sft")
+        print(f"[data] SFT-REJECTION train={len(train_rows)} "
+              f"(rejection_sft={n_rej} ja={n_ja} en={n_en}) val={len(val_rows)} "
+              f"loss_mode={args.loss_mode} sft_data={sft_path}")
     else:
         train_rows = syn_train
         val_rows = syn_val
@@ -2467,6 +2574,17 @@ def main():
     model = BitNetDense(dropout=args.dropout).to(device)
     if args.dropout > 0.0:
         print(f"[model] dropout={args.dropout} (訓練時のみ・eval で恒等=golden 非回帰)")
+    # F-0b (G-2a): SFT は乱数初期化でなく正典 bitnet_dense から層状 warm-start する。
+    #   これで「追加学習」= 破滅的忘却回避の前提が成立する (乱数から学ぶ通常訓練と別物)。
+    if args.sft_rejection:
+        init_path = args.sft_init or os.path.join(
+            data_dir, "bitnet_dense_fp32.safetensors")
+        if not os.path.exists(init_path):
+            raise FileNotFoundError(
+                f"{init_path} が無い (--sft-init / 正典 warm-start 元)")
+        n_loaded = _load_export_into_model(model, init_path)
+        print(f"[sft] 層状 warm-start: {init_path} から {n_loaded} テンソルを strict ロード "
+              f"(乱数初期化を上書き)")
     n_params = sum(p.numel() for p in model.parameters())
     # embed tied: lm_head は別パラメータでないので二重カウントなし。
     #   期待値は config 連動の compute_param_count() (C++ param_count() 同式)。
@@ -2623,7 +2741,10 @@ def main():
     #   identity 版 (--identity) は #4 純 dense と別名 (bitnet_dense_identity*) に分ける:
     #     #4 の bitnet_dense_fp32.safetensors は #6 golden 突合に使われており壊せない。
     #     混合訓練したモデルは別物なので名前を分け、#4 と #6 を保全する (設計判断)。
-    if args.distill_ext:
+    if args.sft_rejection:
+        base = "bitnet_dense_sft"
+        stats_base = "train_stats_sft"
+    elif args.distill_ext:
         base = "bitnet_dense_d6"
         stats_base = "train_stats_d6"
     elif args.distill_kl:
@@ -2767,7 +2888,8 @@ def main():
         "seed": seed,
         "device": device,
         "gpu": torch.cuda.get_device_name(0) if device == "cuda" else None,
-        "mode": ("kl_distill_ext" if args.distill_ext
+        "mode": ("sft_rejection" if args.sft_rejection
+                 else "kl_distill_ext" if args.distill_ext
                  else "kl_distill_cooc" if args.distill_kl
                  else "identity_distill_mixed" if (args.identity and args.distill)
                  else "distill_mixed" if args.distill
