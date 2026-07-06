@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・拡散経路へ運ぶだけ)
+
 namespace dollama
 {
 
@@ -73,6 +75,7 @@ struct IDiffusionBackend
 //   unet/vae/embeds : 拡散重み (SDXL が使う)。
 //   tok_l/g・enc_l/g・tok_dll : OV text encoder アセット (SDXL が使う)。
 //   device_l/g   : text encoder の実行デバイス ("NPU" / "CPU" 等)。
+//   fast_cfg     : FAST モードフラグ (G-0b)。全 default false = 現行挙動。拡散経路へ運ぶだけ。
 struct BackendConfig
 {
     std::string backend_name;
@@ -87,6 +90,7 @@ struct BackendConfig
     std::string tok_dll;
     std::string device_l;
     std::string device_g;
+    FastConfig  fast_cfg;
 };
 
 // backend_name に対応する IDiffusionBackend を構築する (registry factory)。

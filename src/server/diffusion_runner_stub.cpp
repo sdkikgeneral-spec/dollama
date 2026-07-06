@@ -17,12 +17,14 @@ namespace dollama
 std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights,
     const std::string& vae_weights,
-    const std::string& embeds_path)
+    const std::string& embeds_path,
+    const FastConfig&  fast_cfg)
 {
     // CUDA 無効: DiffusionRunner は存在しない。常に nullptr。
     (void)unet_weights;
     (void)vae_weights;
     (void)embeds_path;
+    (void)fast_cfg;
     return nullptr;
 }
 

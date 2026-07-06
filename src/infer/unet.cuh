@@ -53,13 +53,16 @@ using UnetStageHook = void (*)(const char* name, const __half* d_buf, size_t n);
 void unet_set_stage_hook(UnetStageHook hook);
 
 // 後方互換: 呼び出しごとに全重みをデバイスへ転送する版 (test_unet が使用)。
+//   attn_fast: FAST モード (G-3k)。true で self/cross attention を launch_attention_fast
+//              へ切り替える。既定 false = 現行 (default) 挙動を 1 命令も変えず通す。
 void launch_unet(const SafeTensors& weights,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out);
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast = false);
 
 // ----------------------------------------------------------------
 // デバイス常駐重みハンドル (S1 最適化)
@@ -85,12 +88,14 @@ UnetWeightsHandle unet_weights_create(const SafeTensors& weights);
 void unet_weights_destroy(UnetWeightsHandle handle);
 
 // 常駐重みハンドルを使う launch_unet。重み転送/再 malloc は発生しない (2step 目以降)。
+//   attn_fast: FAST モード (G-3k)。既定 false = 現行 (default) 挙動。
 void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out);
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast = false);
 
 } // namespace dollama

@@ -343,10 +343,17 @@ private:
 
 // ----------------------------------------------------------------
 // 局所スクラッチプール (FP16)。段内で確保しスコープ脱出で全解放。
+//   attn_fast: FAST モード (G-3k)。true のとき transformer_block の attention を
+//              launch_attention_fast へ切り替える。既定 false = 現行 (default) 挙動。
+//              Scratch は段 (down/mid/up ブロック) 単位で生成され transformer_block まで
+//              流れるため、フラグの運搬役をそのまま兼ねる (追加の引数配線を避ける最小差分)。
 // ----------------------------------------------------------------
 class Scratch
 {
 public:
+    Scratch() = default;
+    explicit Scratch(bool attn_fast) : attn_fast_(attn_fast) {}
+
     __half* alloc(size_t n)
     {
         __half* p = nullptr;
@@ -354,6 +361,9 @@ public:
         ptrs_.push_back(p);
         return p;
     }
+
+    // FAST モードで attention 高速バリアントを使うか。
+    bool attn_fast() const { return attn_fast_; }
 
     ~Scratch()
     {
@@ -365,6 +375,7 @@ public:
 
 private:
     std::vector<__half*> ptrs_;
+    bool                 attn_fast_ = false;
 };
 
 // ----------------------------------------------------------------
@@ -488,7 +499,15 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
         // S0 計時: self-attention のみ attention バケットへ。
         ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
                            profile_enabled());
-        launch_attention(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+        // FAST: attn_fast のとき高速バリアント (数学同一・SSIM=1.0)。既定は従来経路 (無改変)。
+        if (sc.attn_fast())
+        {
+            launch_attention_fast(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+        }
+        else
+        {
+            launch_attention(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+        }
     }
     launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
     // to_out.0 (Linear + bias)
@@ -514,7 +533,15 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
         // S0 計時: cross-attention のみ attention バケットへ。
         ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
                            profile_enabled());
-        launch_attention(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+        // FAST: cross-attn も同様に切り替え (非対応 Dh は内部で従来経路へフォールバック)。
+        if (sc.attn_fast())
+        {
+            launch_attention_fast(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+        }
+        else
+        {
+            launch_attention(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+        }
     }
     launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
     linear(w, prefix + "attn2.to_out.0.weight", prefix + "attn2.to_out.0.bias",
@@ -635,7 +662,8 @@ static void launch_unet_impl(DeviceWeights&     w,
                              const __half*      d_encoder_hidden_states,
                              const __half*      d_text_embeds,
                              const __half*      d_time_ids,
-                             __half*            d_noise_pred_out)
+                             __half*            d_noise_pred_out,
+                             bool               attn_fast)
 {
 
     // ============ S0 プロファイル計時 (DOLLAMA_PROFILE 有効時のみ) ============
@@ -757,7 +785,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ down_blocks[1]: CrossAttnDownBlock (resnet+T2D[L=2] x2, downsample) 64->32 ============
     {
         const int H = 64, Wd = 64, Ln = 2;
-        Scratch sc;
+        Scratch sc(attn_fast);
         // resnet0: 320->640
         __half* d_r0 = sc.alloc((size_t)C1 * H * Wd);
         resnet_block(w, "down_blocks.1.resnets.0.", d_cur, C0, C1, H, Wd, d_temb_silu, d_r0, sc);
@@ -783,7 +811,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ down_blocks[2]: CrossAttnDownBlock (resnet+T2D[L=10] x2, downsample なし) 32x32 ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc;
+        Scratch sc(attn_fast);
         // resnet0: 640->1280
         __half* d_r0 = sc.alloc((size_t)C2 * H * Wd);
         resnet_block(w, "down_blocks.2.resnets.0.", d_cur, C1, C2, H, Wd, d_temb_silu, d_r0, sc);
@@ -809,7 +837,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ mid_block: Resnet -> T2D[L=10] -> Resnet (1280, 32x32) ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc;
+        Scratch sc(attn_fast);
         __half* d_r0 = sc.alloc((size_t)C2 * H * Wd);
         resnet_block(w, "mid_block.resnets.0.", d_cur, C2, C2, H, Wd, d_temb_silu, d_r0, sc);
         dbg_stat("mid_block_resnet0_out", d_r0, (size_t)C2 * H * Wd);
@@ -835,7 +863,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         const int H = 32, Wd = 32, Ln = 10, HW = H * Wd;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast);
             SkipEntry sk = pop_skip();  // 1280,1280,640
             __half* d_cat = sc.alloc((size_t)(C2 + sk.C) * HW);
             launch_concat_chw(d_cur, sk.ptr, d_cat, C2, sk.C, HW);
@@ -869,7 +897,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         int curC = C2;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast);
             SkipEntry sk = pop_skip();  // 640,640,320
             __half* d_cat = sc.alloc((size_t)(curC + sk.C) * HW);
             launch_concat_chw(d_cur, sk.ptr, d_cat, curC, sk.C, HW);
@@ -965,11 +993,12 @@ void launch_unet(const SafeTensors& weights,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out)
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast)
 {
     DeviceWeights w(weights);
     launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out);
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast);
 }
 
 // ----------------------------------------------------------------
@@ -1001,11 +1030,12 @@ void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out)
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast)
 {
     DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
     launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out);
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast);
 }
 
 } // namespace dollama

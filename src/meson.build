@@ -62,6 +62,7 @@ diffusion_cu_sources = [
   'kernels/activation.cu',
   'kernels/geglu.cu',
   'kernels/attention.cu',
+  'kernels/attention_fast.cu',  # FAST モード G-3k: unet.cu が launch_attention_fast を参照
   'kernels/gemm.cu',
   'kernels/elementwise.cu',
   'kernels/bias_add.cu',
@@ -308,6 +309,17 @@ test_diffusion_backend_exe = executable('test_diffusion_backend',
   cpp_args            : cpp_args,
 )
 test('diffusion_backend', test_diffusion_backend_exe)
+
+# FastConfig (FAST モードのフラグ枠・G-0b) 単体テスト
+# 純 cpp (OV/CUDA 非依存) ゆえ開発機でも SKIP なし常時実走する。FastConfig 既定値と
+# resolve_fast_config の env(DOLLAMA_FAST/DOLLAMA_FP8)/CLI 合成・fp8->fast 含意を検証する。
+test_fast_config_exe = executable('test_fast_config',
+  sources             : files('tests/test_fast_config.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('fast_config', test_fast_config_exe)
 
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
@@ -619,6 +631,18 @@ if cuda_enabled
   )
   test('attention', test_attention_exe, timeout : 120)
 
+  # Attention 高速バリアント (launch_attention_fast) テスト + ベンチ (FAST モード G-3k)
+  # attention.cu (既存 golden 経路) と attention_fast.cu (fast) を両方リンクし、
+  # fast を既存出力と SSIM>=0.9999 で突合する。4096 self を回すため timeout を延長。
+  test_attention_fast_exe = executable('test_attention_fast',
+    sources             : files('tests/test_attention_fast.cu', 'kernels/attention.cu', 'kernels/attention_fast.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('attention_fast', test_attention_fast_exe, timeout : 300)
+
   # Elementwise (residual add / nearest upsample 2x) テスト + ベンチ (Phase 2 マイルストーン 2-4)
   test_elementwise_exe = executable('test_elementwise',
     sources             : files('tests/test_elementwise.cu', 'kernels/elementwise.cu'),
@@ -712,6 +736,7 @@ if cuda_enabled
       'kernels/activation.cu',
       'kernels/geglu.cu',
       'kernels/attention.cu',
+      'kernels/attention_fast.cu',
       'kernels/gemm.cu',
       'kernels/elementwise.cu',
       'kernels/bias_add.cu',
@@ -726,6 +751,61 @@ if cuda_enabled
     ],
   )
   test('unet', test_unet_exe, timeout : 600, is_parallel : false)
+
+  # UNet FAST モード (G-3k-wire) e2e ゲート。attn_fast の call site 結線を検証する。
+  # test_unet と同一ソース群 + attention_fast.cu (fast バリアント) を追加リンク。
+  test_unet_fast_exe = executable('test_unet_fast',
+    sources             : files(
+      'tests/test_unet_fast.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + unet_weights_path + '"',
+      '-DUNET_IO_PATH="' + unet_io_path2 + '"',
+    ],
+  )
+  test('unet_fast', test_unet_fast_exe, timeout : 600, is_parallel : false)
+
+  # FAST 診断用 warm ベンチ (計測専用・test 未登録)。常駐ハンドル API で重み再転送なしの
+  # warm per-step を fast on/off 比較する。既存テスト無改変。
+  prof_unet_fast_warm_exe = executable('prof_unet_fast_warm',
+    sources             : files(
+      'tests/prof_unet_fast_warm.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + unet_weights_path + '"',
+      '-DUNET_IO_PATH="' + unet_io_path2 + '"',
+    ],
+  )
 
   # 拡散ループ結線 (DiffusionPipeline) smoke + フルベンチ (Phase 2 マイルストーン 2-6a)
   # diffusion.cu + unet.cu + vae_decode.cu + 全プリミティブ .cu を一括ビルドしてリンクする。

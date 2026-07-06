@@ -34,10 +34,12 @@ class DiffusionRunner : public IDiffusionRunner
 public:
     // unet/vae 重みと golden 埋め込みのパスを受けて DiffusionPipeline を構築・保持する。
     //   重み (5GB) は DiffusionPipeline 内で 1 回だけロードされる (再ロード厳禁)。
+    //   fast_cfg (G-0b): FAST フラグを DiffusionPipeline へ運ぶだけ (既定 = 現行挙動)。
     DiffusionRunner(const std::string& unet_weights_path,
                     const std::string& vae_weights_path,
-                    const std::string& embeds_path)
-        : pipe_(unet_weights_path, vae_weights_path, embeds_path)
+                    const std::string& embeds_path,
+                    const FastConfig&  fast_cfg)
+        : pipe_(unet_weights_path, vae_weights_path, embeds_path, fast_cfg)
     {
     }
 
@@ -99,7 +101,8 @@ bool file_readable(const std::string& path)
 std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights,
     const std::string& vae_weights,
-    const std::string& embeds_path)
+    const std::string& embeds_path,
+    const FastConfig&  fast_cfg)
 {
 #ifdef HAVE_CUDA
     // 重み/golden の存在チェック。1 つでも欠ければ nullptr (→ 呼び出し側フォールバック)。
@@ -121,7 +124,7 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     try
     {
         return std::make_unique<DiffusionRunner>(
-            unet_weights, vae_weights, embeds_path);
+            unet_weights, vae_weights, embeds_path, fast_cfg);
     }
     catch (const std::exception& e)
     {
@@ -136,6 +139,7 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     (void)unet_weights;
     (void)vae_weights;
     (void)embeds_path;
+    (void)fast_cfg;
     return nullptr;
 #endif
 }

@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・DiffusionPipeline へ運ぶだけ)
+
 namespace dollama
 {
 
@@ -62,8 +64,12 @@ struct IDiffusionRunner
 //   (run_txt2img → generate_txt2img) では golden 埋め込みは一切使わず、外部から
 //   渡される cond/uncond 埋め込みのみを使う。したがって embeds_path はコンストラクタ
 //   要件を満たすためだけに必要であり、生成結果には影響しない。
+//
+// fast_cfg について (G-0b):
+//   FAST モードフラグを DiffusionPipeline のメンバとして運ぶだけ。既定 (全 off) は現行挙動。
+//   この Pkg では fast 分岐を一切足さないため、既存呼び出し (3 引数) は既定で無改変。
 std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights, const std::string& vae_weights,
-    const std::string& embeds_path);
+    const std::string& embeds_path, const FastConfig& fast_cfg = FastConfig{});
 
 } // namespace dollama

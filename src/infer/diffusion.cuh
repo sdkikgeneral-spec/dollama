@@ -11,6 +11,7 @@
 #include "io/safetensors.hpp"
 #include "infer/unet.cuh"
 #include "kernels/vae_decode.cuh"
+#include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・純 cpp・保持するだけ)
 
 namespace dollama
 {
@@ -57,9 +58,12 @@ public:
     //       input_encoder_hidden_states_f16 [1,77,2048]
     //       input_text_embeds_f16           [1,1280]
     //       input_time_ids_f16              [6]
+    //   fast_cfg          : FAST モードフラグ (G-0b)。既定 (全 off) は現行挙動。
+    //       この Pkg では保持するだけで拡散経路に fast 分岐を一切足さない (byte-for-byte 無改変)。
     DiffusionPipeline(const std::string& unet_weights_path,
                       const std::string& vae_weights_path,
-                      const std::string& embeds_path);
+                      const std::string& embeds_path,
+                      const FastConfig&  fast_cfg = FastConfig{});
 
     ~DiffusionPipeline();
 
@@ -117,6 +121,10 @@ public:
 private:
     SafeTensors unet_weights_;
     SafeTensors vae_weights_;
+
+    // G-0b: FAST モードフラグ。構築時に受けて保持するだけ (この Pkg では未参照)。
+    //   後続 Pkg (G-1k/G-2k/G-3k/G-4k/G-5k) が本メンバを参照して fast 経路を分岐する。
+    FastConfig fast_cfg_;
 
     // S1: UNet 全重みをデバイス常駐させたハンドル。構築時に 1 度だけ upload し、
     //     全 step で使い回す (重み再転送/再 malloc をゼロにする)。

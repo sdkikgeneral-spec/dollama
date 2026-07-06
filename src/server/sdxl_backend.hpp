@@ -26,6 +26,7 @@
 #include "infer/text_conditioner.hpp"
 #include "server/diffusion_backend.hpp"
 #include "server/diffusion_runner.hpp"
+#include "server/fast_config.hpp"
 
 namespace dollama
 {
@@ -39,6 +40,8 @@ public:
 
     // 各モデルパス・デバイス・重みパスを受けて TextConditioner と IDiffusionRunner を構築する。
     //   (引数規約は従来 Txt2ImgGenerator の ctor をそのまま踏襲)
+    //   fast_cfg (G-0b): FAST フラグを make_diffusion_runner → DiffusionPipeline へ運ぶだけ
+    //     (既定 = 全 off = 現行挙動)。この Pkg では generate() に fast 分岐を一切足さない。
     //   runner (= make_diffusion_runner) が nullptr の場合 (重み不在 / CUDA 無効) は
     //   構築失敗として std::runtime_error を投げる。make_backend がこれを握って nullptr へ倒す。
     SDXLBackend(const std::string& tokenizer_l_xml,
@@ -50,10 +53,11 @@ public:
                 const std::string& vae_weights,
                 const std::string& embeds_path,
                 const std::string& device_l = "NPU",
-                const std::string& device_g = "NPU")
+                const std::string& device_g = "NPU",
+                const FastConfig&  fast_cfg = FastConfig{})
         : tc_(tokenizer_l_xml, tokenizer_g_xml, encoder_l_xml, encoder_g_xml,
               tokenizers_dll, device_l, device_g),
-          runner_(make_diffusion_runner(unet_weights, vae_weights, embeds_path))
+          runner_(make_diffusion_runner(unet_weights, vae_weights, embeds_path, fast_cfg))
     {
         if (!runner_)
         {

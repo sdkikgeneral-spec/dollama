@@ -172,10 +172,18 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 // ----------------------------------------------------------------
 DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
                                      const std::string& vae_weights_path,
-                                     const std::string& embeds_path)
+                                     const std::string& embeds_path,
+                                     const FastConfig&  fast_cfg)
     : unet_weights_(unet_weights_path)
     , vae_weights_(vae_weights_path)
+    , fast_cfg_(fast_cfg) // FAST フラグを保持 (G-3k で attention の分岐に使用)
 {
+    // G-3k フラグ結線: fast の下で attention 高速化 (attn_fast) を有効化する単一箇所。
+    // fp8 は resolve_fast_config で fast を含意済み。fast=false (default) では何も立たない。
+    if (fast_cfg_.fast)
+    {
+        fast_cfg_.attn_fast = true;
+    }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
     SafeTensors embeds(embeds_path);
     std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
@@ -316,7 +324,8 @@ void DiffusionPipeline::generate(int                   steps,
                     d_encoder_hidden_states_,
                     d_text_embeds_,
                     d_time_ids_,
-                    d_noise_pred);
+                    d_noise_pred,
+                    fast_cfg_.attn_fast);
 
         std::chrono::high_resolution_clock::time_point prof_h2;
         if (prof) { prof_h2 = std::chrono::high_resolution_clock::now(); }
@@ -537,7 +546,8 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
                     d_cond_ehs,
                     d_cond_txt,
                     d_time_ids,
-                    d_noise_cond);
+                    d_noise_cond,
+                    fast_cfg_.attn_fast);
 
         // UNet を uncond 埋め込みで 1 回 (同じ d_latent)。
         launch_unet(unet_weights_handle_,
@@ -546,7 +556,8 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
                     d_uncond_ehs,
                     d_uncond_txt,
                     d_time_ids,
-                    d_noise_unc);
+                    d_noise_unc,
+                    fast_cfg_.attn_fast);
 
         // D2H: cond / uncond noise_pred を FP32 へ。
         CUDA_CHECK(cudaMemcpy(h_nc_f16.data(), d_noise_cond,
