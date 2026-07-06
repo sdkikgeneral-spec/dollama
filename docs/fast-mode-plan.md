@@ -38,7 +38,27 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 | UNet | `launch_unet` が **単一 latent 前提 (batch 引数なし)** | `src/infer/unet.cuh:88` | CFG batch=2 化に batch 次元の貫通が要る |
 | FP8 | Blackwell FP8 tensor core **未使用** | — | 理論 2× を握ったまま |
 
-> 「attn 4.60s」は 2-6 時点・CFGなし・stub の値。**実 checkpoint + CFG 込みの内訳は G-0 で取り直す** (下記)。
+> 「attn 4.60s」は 2-6 時点・CFGなし・stub の値。**実 checkpoint での内訳を G-0 で取り直した (下表)**。実重み 4.9GB でも
+> attention は 4.621s とほぼ不変 (コストは shape 駆動で重み値に非依存) → 律速の在処は stub 時と同じと確定。
+
+### G-0 実測 (2026-07-05・既存 allow-list 済み dollama.exe・リビルド無し)
+
+`DOLLAMA_PROFILE=1` + OV アセット無効化で**段2 PipelineGenerator (計装済み非 CFG `generate`)** を実 UNet 重み (`unet_weights.safetensors` 4.9GB) で 20step/1024² 実走。CFG 版 `generate_txt2img` は未計装だが、UNet 内カーネルの律速内訳は CFG/非 CFG で不変 (CFG は同 UNet を 2 forward するだけ) ゆえこれで律速は確定できる。
+
+| 項目 | 実測 | 比率 | 解釈 |
+|---|---|---|---|
+| TOTAL (非 CFG) | 11.469 s | 100% | CFG 本番 ≈ 2×UNet+VAE ≈ **21.7s** (doc 冒頭 19.5s 帯) |
+
+> **⚠ e2e ベースライン要一本化 (2026-07-06)**: 冒頭 19.5s / G-0 推定 21.7s / G-3k 注記 default 43.83s と乖離 (43.83s は cold 重み転送・OV encode 等の付帯込みの可能性)。SAC OFF で実 exe 実測が取れる今、**正典 CFG e2e ベースライン (default / --fast・warm/cold と付帯有無を明記) を 1 回取り直して固定**し、G-6k 出荷判定 (diffusers 3.8s 比) の分母を確定させる (G-2k のベンチ整備に同梱)。
+| UNet step total (20) | 10.254 s | 89.4% | per-step 0.513s |
+| └ transformer (attn/gemm) | 7.007 s | 61.1% | うち gemm ≈ 2.39s |
+| 　└ **attention only** | **4.621 s** | **40.3%** | **単一最大の律速** = #4 (G-3k) が最大レバーと裏取れ |
+| └ resnet (conv/groupnorm) | 1.225 s | 10.7% | 二次律速 (#5 G-4k 対象) |
+| VAE decode | 1.197 s | 10.4% | — |
+| **host roundtrip** | **0.007 s** | **0.06%** | **ほぼゼロ** → #1 の「同期/D2H 撲滅」の時間直接効果は小。#1 の主眼は Graph ローンチ削減 + batch2 の下地に補正 |
+| 段グループ | up 5.65s(49%) > down 3.61s(31%) > mid 0.97s | | up-block 律速 |
+
+**優先度の実測結論**: **#4 attention (G-3k) が単独最大 40%** → 次いで **#2 batch=2 (G-2k・2×forward 削減+occupancy)**。**#1 の時間直接効果は小さい (host 0.007s)** ため順序を #4/#2 先行へ寄せる (下記台帳決裁: G-0b フラグ枠 + G-3k を先行)。
 
 ### 現状 GPU 稼働ベースライン (実測 2026-07-04・G-1 走行中の生成を nvidia-smi で観測)
 
@@ -102,7 +122,8 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 
 ## 実測手段と SAC 制約 (非交渉)
 
-- 研究機は SAC で**再ビルドした exe の新ハッシュがブロック** ([[reference_wdac_new_exe_block]])。カーネルを直して
+- **2026-07-06 更新: SAC OFF・実 exe 実走で全 49/49 緑を確認**。以後の全ゲート (G-2k の SSIM / CFG e2e 秒数、G-5k の LPIPS/reward 順位相関) は**実 exe 実測を正**とする。下記の旧運用 (開発機ビルド緑 + Python/OV 検証) は SAC 再有効化時のフォールバックとして温存。
+- (旧) 研究機は SAC で**再ビルドした exe の新ハッシュがブロック** ([[reference_wdac_new_exe_block]])。カーネルを直して
   リビルドすると `dollama.exe` の実走緑が取りにくい。着手前に **allow-list 更新をユーザーへ依頼**するか、
   **開発機ビルド緑 + Python/OV 経由の数値検証**で回す運用を確定させる。
 - profile: 拡散ループに CUDA events を仕込み、UNet 内の attn/gemm/conv/groupnorm の実測内訳を取る (G-0)。
@@ -111,31 +132,44 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 
 | Pkg | 内容 | 担当 | 依存 | 精度 | status |
 |---|---|---|---|---|---|
-| **G-0** | profile 計装 (CUDA events) で実 checkpoint+CFG 込みの内訳確定 + FAST フラグ枠 (env/CLI・default 無改変) を骨組み | cuda-kernel-dev + cpp-implementer | G-1完走待ち | — | 🔲 |
-| **G-1k** | #1 ループ GPU 常駐化 + CUDA Graphs | cuda-kernel-dev | G-0 | ゼロコスト | 🔲 |
-| **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-1k | ゼロコスト | 🔲 |
-| **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async/epilogue) | cuda-kernel-dev | G-0 | ゼロコスト | 🔲 |
+| **G-0** | profile で実 checkpoint 内訳確定 (既存計装・リビルド無しで実測) | — | G-1完走待ち | — | ✅ (上表・attention 40% 最大) |
+| **G-0b** | FAST フラグ枠 (env `DOLLAMA_FAST`/`DOLLAMA_FP8` + CLI・`FastConfig` を拡散経路へ貫通・default byte-for-byte 無改変) | cpp-implementer | G-0 | 無改変 | ✅ (test_fast_config 緑・golden 無改変で緑) |
+| **G-1k** | #1 ループ GPU 常駐化 + CUDA Graphs (時間直接効果は小・Graph ローンチ削減主) | cuda-kernel-dev | G-2k/G-4k 後の再profile | ゼロコスト | 🔲 **条件付き降格**: host 0.007s ゆえ時間直接効果ほぼ無。G-2k で batch 次元が変わると Graph 再キャプチャ=手戻り。再profile で launch 谷が実測で残る場合のみ着手・残らなければ不着手クローズ可 |
+| **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | 🔲 **次着手 (確定)** |
+| **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.19x (下記注)** |
+| **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.19x に是正) | cpp-implementer | G-3k | — | 🔲 (G-2k のテスト整備に同梱可) |
 | **G-4k** | #5 epilogue 融合 (gemm/conv) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
 | **G-6k** | 3段モードの実測まとめ + 出荷判定 (`--fast` の default 昇格是非 / FP8 採否) | PL + gpu-benchmarker | 全部 | — | 🔲 |
 
 > 各 Pkg は着手時に **test も実装** (CLAUDE.md ルール4・`src/tests/test_*`・meson 緑)。
 
+### G-3k 結果の注記 (2026-07-05・実走緑・warm 実測で確定)
+
+- **正しさ**: `launch_attention_fast` は既存 `launch_attention` と **SSIM=1.0 / MAE=0 (ビット一致)**。reduction が同じ 16-タイル順のため。UNet 全段でも default vs fast で **noise_pred SSIM=1** = 絵は完全同一。default (fast off) は golden 無改変で緑。→ **精度リスクゼロで恒久資産**。
+- **速度 (warm 実測・`prof_unet_fast_warm.cu` + 段1 e2e)**:
+  - attention 段/step **231→161ms = 1.43x** (単体 micro 1.41x と一致)、UNet forward/step **452→382ms = 1.19x** (−72ms/step)、attention 以外 (GEMM/resnet) は不変 = 副作用なし。
+  - 段1 CFG 本番 e2e (交互3回): **43.83→40.20s = −3.63s** (全ペアで fast 勝ち・逆転なし)。CFG は 1step 2 forward ゆえ理論 −2.9s と整合。
+- **「1.03x」は計測アーティファクトだった (訂正)**: 初回報告の e2e 1step 1.03x は `test_unet_fast` が後方互換 `launch_unet(const SafeTensors&)` を使い**毎 call で 4.9GB を H2D 再アップロード (cold)** → attention 比率が 40%→20% に希釈された値。カーネルは遅くない。→ **要 follow-up: test_unet_fast を常駐ハンドル warm 経路に直し、ゲート数値を実態 (1.19x) に合わせる**。
+- **含意**: G-0 の「attention 40% 最大律速」を fast が 1.43x で回収済み。単独 40% 律速は解消 (fast 後 warm 内訳 = attn 161ms / GEMM ~130ms / resnet ~60ms)。**次の最大レバーは計画どおり #2 CFG batch=2** (2 forward→1 batched・occupancy+host 半減)。ソースレビューの「shared 占有率律速で 1.09x 上限」説は warm 実測で否定 (両者を回して確定)。
+
 ## 順序 (掛け算で効く)
 
 ```
-G-0 (profile+枠) ──► G-1k (常駐/Graphs) ──► G-2k (CFG batch2) ──► G-4k (融合)
-                 └──► G-3k (attention) ────────────────────────► G-5k (FP8) ──► G-6k (判定)
+G-0/G-0b (profile+枠) ──► G-3k ✅ (attention) ──► G-2k (CFG batch2) ──► G-4k (融合) ──► [G-1k 条件付き] ──► G-5k (FP8) ──► G-6k (判定)
 ```
-まず **精度ゼロコスト4手 (#1/#2/#4/#5) で ~8-10s を確定** (絵は今と同一)。そのうえで **FP8 は別立ての gated 実験**。
+> **順序改訂 (2026-07-06)**: G-0 実測で host roundtrip 0.007s と判明したため G-1k (同期撲滅/Graphs) を主線先頭から**末尾の条件付き**へ降格。attention (G-3k) は完了済ゆえ次は #2 CFG batch=2 (G-2k) = UNet 15.3s 全体に効く単独最大レバー。
+
+まず **精度ゼロコスト4手 (#4✅/#2/#5/#1) で ~8-10s を確定** (絵は今と同一)。そのうえで **FP8 は別立ての gated 実験**。
 A+B (#1/#2) だけでも ~19.5s→~10-11s、4手で ~8-10s、FP8 が通れば diffusers 級 (~3.8s) かそれ以下が射程。
 
 ## 安全弁 (非交渉・既定)
 
 1. **default は無改変** (回帰アンカー)。全高速化は `--fast` 以降に隔離。
-2. **走行中 G-1 に触れない**。ビルド/実走は G-1 完走・退避後。`data/rollouts/` 無干渉。
-3. **FP8 は可逆** (層単位で FP16 に戻せる)。ゲート未通過なら不採用でクローズ。
-4. **コミットは巻き込み禁止** (in-flight ファイルがあるため `git add -A` を使わず対象ファイルのみ明示 stage)。
+2. ~~走行中 G-1 に触れない~~ **解消済み (2026-07-06)**: F-0b は不採用クローズ (a3b129d merge) 済みで G-1 rollout はもう走っていない。`data/rollouts/` 制約は撤去。
+3. **G-2k 着手前に G-0b/G-3k を先行コミット** (対象ファイル明示 stage)。ワークツリーに未確定成果を残したまま次 Pkg に入ると安全弁4 が守れず、問題時のロールバック点も失う。
+4. **FP8 は可逆** (層単位で FP16 に戻せる)。ゲート未通過なら不採用でクローズ。
+5. **コミットは巻き込み禁止** (in-flight ファイルがあるため `git add -A` を使わず対象ファイルのみ明示 stage)。
 
 ## スコープ外
 
