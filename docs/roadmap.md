@@ -92,7 +92,7 @@ OpenAI Images API 互換。
 | dense | 6 | C++ 推論 CPU `src/infer/bitnet.hpp` | ✅ golden corr 1.0・greedy 5/5・~253ms→Tier1 で ~5x |
 | dense | 6-GPU | C++ GPU 推論 `src/infer/bitnet_gpu.cu`/`.cuh` | ✅ CPU 版と数値一致・forward 46.8–87.5x・test_bitnet_gpu 緑 |
 | 拡張 (A) | A | **同一性条件付けタグ生成** (character-bible 入力) | ✅ **クローズ (二分結論)**: diverse-val F1 は seed ノイズ・**identity retention 0.975 が機能基盤** (roadmap-decisions §A / training-spec §9.10) |
-| 評価 (B) | B | **アニメ品質スコアラ** (§11 蒸留 QA・生成画像を採点) | 🔄 Stage1 QualityGate ✅ / ScorerNet 訓練・OV/NPU 化 (B-3b〜c) ✅ (NPU 8.32ms 純 conv 実証)。**残**: B-3d C++ グルー → B-3e golden → B-5 FB。quality head は Q-2 で有効化済 (F 決定ログ) |
+| 評価 (B) | B | **アニメ品質スコアラ** (§11 蒸留 QA・生成画像を採点) | 🔄 Stage1 QualityGate ✅ / ScorerNet 訓練・OV/NPU 化 (B-3b〜c) ✅ (NPU 8.32ms 純 conv 実証) / C++ 結線 **B-3d〜B-5 完了** (`IScorer`/scorer_runner/scoring_postprocess で生成器結線・採点はログのみ)。quality は Q-2 で **CLIP-embed 別枝 (QualityMLP)** に分離・ScorerNet は anatomy 専用化 (F 決定ログ)。**残 = 消費者 F** |
 | 圧縮 | 5 | Ternary GEMM (重み{-1,0,+1}) — 圧縮実験 | ⏳ 降格 (dense 後の研究軸)。INT8 dense CPU 推論は別途完了 (`bitnet_int8.hpp`・training-spec §15) |
 
 **学習強化プログラム C/B/A/D/F の決着 (2026-06〜07)**: → 下記「タグ生成 LM 学習強化プログラム」節。
@@ -182,7 +182,7 @@ authored 層 (character.hpp) は完了、以下は learned 層・後処理段。
 | ~~SDXL UNet 自作カーネル~~ | ✅ 解消 (2-5・SSIM 0.999998) |
 | ~~タグ生成 LM 基礎データ~~ | ✅ 解消 (#1・5,000 ペア) |
 | ~~A 同一性条件付けデータ~~ | ✅ 解消 (dataset-spec §13→a12k で retention 0.975 クローズ) |
-| B 品質スコアラの正解ラベル | 🟡 前進。§11 軸は WD14 soft 8 軸蒸留 (B-3b〜d 完了)・**quality head も Q-2 で有効化** (waifu 蒸留 CLIP-embed 枝・F 決定ログ) |
+| B 品質スコアラの正解ラベル | 🟡 前進。§11 軸は WD14 soft 8 軸蒸留 (B-3b〜B-5 完了)・**quality は Q-2 で CLIP-embed 別枝 (QualityMLP) に分離** (ScorerNet=anatomy 専用・waifu 蒸留・F 決定ログ) |
 | ~~B の NPU 実行性~~ | ✅ 解消。純 conv は NPU 最速 (448² 4.62ms) |
 | ~~safetensors パーサー~~ | ✅ 解消 (2-3・19.0 µs/op) |
 | ~~Linux 対応 (HTTP)~~ | ✅ cpp-httplib が吸収 |
