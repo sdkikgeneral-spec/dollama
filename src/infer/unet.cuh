@@ -98,4 +98,21 @@ void launch_unet(UnetWeightsHandle  handle,
                  __half*            d_noise_pred_out,
                  bool               attn_fast = false);
 
+// ----------------------------------------------------------------
+// バッチ (B>1) forward (G-2k S2)。CFG cond/uncond を B=2 に束ねて 1 forward で回す
+// 下地。常駐重みハンドルを使う。各テンソルは b-major で連続:
+//   d_latent [B,4,128,128] / d_encoder_hidden_states [B,77,2048] /
+//   d_text_embeds [B,1280] / d_time_ids [6] (全 b 共有) / d_noise_pred_out [B,4,128,128]。
+// B=1 で呼べば launch_unet(handle,...) と各カーネル起動列・数値が完全同一 (default 無改変)。
+//   attn_fast: FAST モード (G-3k)。既定 false = 現行 (default) 挙動。
+void launch_unet_batched(UnetWeightsHandle  handle,
+                         int                B,
+                         const __half*      d_latent,
+                         float              timestep,
+                         const __half*      d_encoder_hidden_states,
+                         const __half*      d_text_embeds,
+                         const __half*      d_time_ids,
+                         __half*            d_noise_pred_out,
+                         bool               attn_fast = false);
+
 } // namespace dollama

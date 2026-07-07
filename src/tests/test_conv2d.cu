@@ -437,6 +437,186 @@ static bool test_conv_gemm_large()
 }
 
 // ----------------------------------------------------------------
+// 9. N>1 バッチ GEMM 経路 (G-2k S1)。CFG cond/uncond の B=2 束ねの下地。
+//    改修後 launch_conv2d の N=2 出力 (per-n バッチループ) を、per-sample に
+//    N=1 で 2 回呼んだ出力 (= 既存 N==1 GEMM 経路そのまま) と突合する。
+//    各サンプルは独立ゆえ蓄積順は N==1 と不変 → ビット一致 (MAE=0) を第一目標に、
+//    届かねば tol 内 (compare) を許容する。Cout/HW/K は GEMM 下限 (16) 以上にする。
+// ----------------------------------------------------------------
+static bool run_case_batch_vs_persample(const char* name,
+                                        int Cin, int H, int W,
+                                        int Cout, int KH, int KW,
+                                        int stride_h, int stride_w,
+                                        int pad_h, int pad_w,
+                                        int dilation_h, int dilation_w,
+                                        bool with_bias,
+                                        unsigned seed)
+{
+    const int Hout = out_dim(H, pad_h, dilation_h, KH, stride_h);
+    const int Wout = out_dim(W, pad_w, dilation_w, KW, stride_w);
+    const int per_in  = Cin * H * W;          // 1 サンプルの入力要素数
+    const int per_out = Cout * Hout * Wout;   // 1 サンプルの出力要素数
+    const int w_n     = Cout * Cin * KH * KW;
+
+    // 2 サンプル分の入力 (別データ)。weight/bias は共有。
+    HalfBuffer in0 = make_half(per_in, seed);
+    HalfBuffer in1 = make_half(per_in, seed + 10);
+    HalfBuffer w   = make_half(w_n, seed + 1);
+
+    std::vector<__half> bias_h;
+    if (with_bias)
+    {
+        HalfBuffer bb = make_half(Cout, seed + 2, -0.5f, 0.5f);
+        bias_h = bb.h;
+    }
+
+    // N=2 バッチ入力 (in0 ++ in1)。
+    std::vector<__half> in_batch;
+    in_batch.reserve(static_cast<size_t>(2) * per_in);
+    in_batch.insert(in_batch.end(), in0.h.begin(), in0.h.end());
+    in_batch.insert(in_batch.end(), in1.h.begin(), in1.h.end());
+
+    // 被験: 改修後 launch_conv2d に N=2 で通す (per-n バッチ GEMM ループ)。
+    std::vector<float> got = run_gpu_conv(in_batch, w.h, bias_h, 2, Cin, H, W, Cout, KH, KW,
+                                          stride_h, stride_w, pad_h, pad_w,
+                                          dilation_h, dilation_w, /*force_direct=*/false);
+
+    // 参照: 各サンプルを N=1 で個別に通し (= 既存 N==1 GEMM 経路)、連結する。
+    std::vector<float> ref0 = run_gpu_conv(in0.h, w.h, bias_h, 1, Cin, H, W, Cout, KH, KW,
+                                           stride_h, stride_w, pad_h, pad_w,
+                                           dilation_h, dilation_w, /*force_direct=*/false);
+    std::vector<float> ref1 = run_gpu_conv(in1.h, w.h, bias_h, 1, Cin, H, W, Cout, KH, KW,
+                                           stride_h, stride_w, pad_h, pad_w,
+                                           dilation_h, dilation_w, /*force_direct=*/false);
+    std::vector<float> ref;
+    ref.reserve(static_cast<size_t>(2) * per_out);
+    ref.insert(ref.end(), ref0.begin(), ref0.end());
+    ref.insert(ref.end(), ref1.begin(), ref1.end());
+
+    // ビット一致 (MAE=0) の明示チェック。SSIM は完全一致なら 1。
+    double sad = 0.0;
+    float  max_abs = 0.0f;
+    size_t exact = 0;
+    for (size_t i = 0; i < got.size(); ++i)
+    {
+        const float d = std::fabs(got[i] - ref[i]);
+        sad += d;
+        if (d > max_abs) max_abs = d;
+        if (got[i] == ref[i]) ++exact;
+    }
+    const double mae = sad / static_cast<double>(got.size());
+    const bool bit_exact = (max_abs == 0.0f);
+    std::cout << "[" << name << "] MAE=" << mae << " max_abs=" << max_abs
+              << " exact=" << exact << "/" << got.size()
+              << " SSIM=" << (bit_exact ? 1.0 : -1.0)
+              << (bit_exact ? " (BIT-EXACT)" : " (not bit-exact)") << "\n";
+
+    const int K = Cin * KH * KW;
+    // ビット一致が第一目標。届かなくても FP16 相応 tol 内なら緑 (>=0.9999 相当)。
+    return compare(got, ref, K, name);
+}
+
+// ----------------------------------------------------------------
+// 9b. N=2 バッチ GEMM 突合ケース群。1x1 / 3x3 same / 3x3 stride2 / bias 有無。
+// ----------------------------------------------------------------
+static bool test_conv_batch_gemm()
+{
+    bool ok = true;
+    // 1x1 GEMM バッチ — Cin=24 Cout=32 20x20。
+    ok = run_case_batch_vs_persample("batch2_1x1", 24, 20, 20, 32, 1, 1, 1, 1, 0, 0, 1, 1,
+                                     false, 901) && ok;
+    // 1x1 GEMM + bias バッチ — 端数 Cout=20。
+    ok = run_case_batch_vs_persample("batch2_1x1_bias", 24, 17, 19, 20, 1, 1, 1, 1, 0, 0, 1, 1,
+                                     true, 902) && ok;
+    // 3x3 same (im2col+GEMM) + bias バッチ — Cin=20 Cout=24 18x18。
+    ok = run_case_batch_vs_persample("batch2_3x3_same", 20, 18, 18, 24, 3, 3, 1, 1, 1, 1, 1, 1,
+                                     true, 903) && ok;
+    // 3x3 stride2 downsample バッチ — 33x33 -> 17x17 Cout=32。
+    ok = run_case_batch_vs_persample("batch2_3x3_s2", 16, 33, 33, 32, 3, 3, 2, 2, 1, 1, 1, 1,
+                                     true, 904) && ok;
+    // UNet 相当 (CFG B=2 の代表): Cin=Cout=320 64x64 3x3 same。
+    ok = run_case_batch_vs_persample("batch2_unet_c320_64", 320, 64, 64, 320, 3, 3, 1, 1, 1, 1,
+                                     1, 1, true, 905) && ok;
+    return ok;
+}
+
+// ----------------------------------------------------------------
+// 9c. warm ベンチ: N=2 バッチ GEMM (1 forward) vs N=1 を 2 回逐次呼び。
+//    per-call ms (中央値) を報告。CFG B=2 束ねの launch オーバーヘッド低減を観測する。
+// ----------------------------------------------------------------
+static void bench_batch_vs_persample(int Cin, int H, int W, int Cout, int KH, int KW,
+                                     int stride_h, int stride_w, int pad_h, int pad_w,
+                                     const char* label)
+{
+    const int Hout = out_dim(H, pad_h, 1, KH, stride_h);
+    const int Wout = out_dim(W, pad_w, 1, KW, stride_w);
+    const int per_in  = Cin * H * W;
+    const int per_out = Cout * Hout * Wout;
+    const int w_n     = Cout * Cin * KH * KW;
+
+    HalfBuffer in = make_half(2 * per_in, 5551);
+    HalfBuffer w  = make_half(w_n, 5552);
+    HalfBuffer bb = make_half(Cout, 5553, -0.5f, 0.5f);
+
+    __half *d_in = nullptr, *d_weight = nullptr, *d_bias = nullptr, *d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_in, static_cast<size_t>(2) * per_in * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_weight, static_cast<size_t>(w_n) * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_bias, static_cast<size_t>(Cout) * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_out, static_cast<size_t>(2) * per_out * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_in, in.h.data(), static_cast<size_t>(2) * per_in * sizeof(__half),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_weight, w.h.data(), static_cast<size_t>(w_n) * sizeof(__half),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bias, bb.h.data(), static_cast<size_t>(Cout) * sizeof(__half),
+                          cudaMemcpyHostToDevice));
+
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    auto time_ms = [&](bool batched) -> float
+    {
+        CUDA_CHECK(cudaEventRecord(start));
+        if (batched)
+        {
+            launch_conv2d(d_in, d_weight, d_bias, d_out, 2, Cin, H, W, Cout, KH, KW,
+                          stride_h, stride_w, pad_h, pad_w, 1, 1);
+        }
+        else
+        {
+            launch_conv2d(d_in, d_weight, d_bias, d_out, 1, Cin, H, W, Cout, KH, KW,
+                          stride_h, stride_w, pad_h, pad_w, 1, 1);
+            launch_conv2d(d_in + per_in, d_weight, d_bias, d_out + per_out,
+                          1, Cin, H, W, Cout, KH, KW,
+                          stride_h, stride_w, pad_h, pad_w, 1, 1);
+        }
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        float ms = 0.0f;
+        CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+        return ms;
+    };
+
+    const int warmup = 3, iters = 50;
+    for (int i = 0; i < warmup; ++i) { (void)time_ms(true); (void)time_ms(false); }
+    std::vector<float> tb, ts;
+    tb.reserve(iters); ts.reserve(iters);
+    for (int i = 0; i < iters; ++i) { tb.push_back(time_ms(true)); ts.push_back(time_ms(false)); }
+    std::sort(tb.begin(), tb.end());
+    std::sort(ts.begin(), ts.end());
+    std::cout << "[bench_batch] " << label
+              << " N=2 batch median=" << tb[tb.size() / 2] << " ms"
+              << " | N=1x2 seq median=" << ts[ts.size() / 2] << " ms\n";
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaFree(d_in));
+    CUDA_CHECK(cudaFree(d_weight));
+    CUDA_CHECK(cudaFree(d_bias));
+    CUDA_CHECK(cudaFree(d_out));
+}
+
+// ----------------------------------------------------------------
 // ベンチ: conv は積和律速 → GFLOPS と有効帯域 (GB/s) を報告。
 // FLOPs ≈ 2 * N*Cout*Hout*Wout * Cin*KH*KW (積 + 和)。
 // bytes ≈ (in + weight + out) * 2byte (おおまかな読み書き総量)。
@@ -537,6 +717,8 @@ static void bench_conv2d()
     bench_one(1, 320, 32, 32, 640, 1, 1, 1, 1, 0, 0, 1, 1, "unet_1x1_320to640");
     // VAE 1x1: Cin=512 -> Cout=512, 64x64。
     bench_one(1, 512, 64, 64, 512, 1, 1, 1, 1, 0, 0, 1, 1, "vae_1x1_512_64");
+    // G-2k S1: CFG B=2 束ねの効果観測 (UNet C320 64x64 3x3 same)。
+    bench_batch_vs_persample(320, 64, 64, 320, 3, 3, 1, 1, 1, 1, "unet_c320_64");
 }
 
 #endif // HAVE_CUDA
@@ -558,6 +740,7 @@ int main()
     ok = dollama::test_conv_dilation()    && ok;
     ok = dollama::test_conv_gemm_path()   && ok;
     ok = dollama::test_conv_gemm_large()  && ok;
+    ok = dollama::test_conv_batch_gemm()  && ok;
 
     if (!ok)
     {
