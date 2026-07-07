@@ -222,7 +222,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | safetensors ローダー | 19.0 µs/op | test_safetensors |
 | 自作 VAE decoder 全段 | SSIM **0.999992** / decode 7.96s | test_vae_decode |
 | 自作 SDXL UNet 全段 | noise_pred SSIM **0.999998** / 1step ~9.2s / 2.57B params | test_unet |
-| UNet バッチ (G-2k S2) | `launch_unet_batched(B=2)` per-sample パリティ test 追加 (B=2 一発 vs B=1×2 連結突合・cross-attn M=154 の wmma 16 非整除タイル境界を実測)・ビルド緑 (SAC で実走不可) | test_unet |
+| UNet バッチ (G-2k S2) | `launch_unet_batched(B=2)` per-sample パリティ **実走緑** (SAC OFF): sample0/1 とも MAE**6.4e-05**/bad0・wmma M=154 タイル境界も異常なし。ビット一致には非到達=FP16 tol 内 (linear の M=B*tokens 単発 GEMM が cuBLAS タイル選択を変え蓄積順が変わるため・1 ULP)。conv2d S1 は per-n ループで **BIT-EXACT** | test_unet/conv2d |
 | 自作 EulerDiscreteScheduler | sigmas max_err 4.77e-6 / golden 一致 | test_scheduler |
 | 自作 LayerNorm/GEGLU/time embed | 0.043ms / 0.055ms / 0.011ms | test_layernorm 等 |
 | HTTP サーバー (cpp-httplib+nlohmann) | 生成+往復 2.11ms (OpenAI Images 互換) | test_http |
