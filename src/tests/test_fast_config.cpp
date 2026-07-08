@@ -42,6 +42,7 @@ void clear_fast_env()
 {
     set_env("DOLLAMA_FAST", "");
     set_env("DOLLAMA_FP8", "");
+    set_env("DOLLAMA_BATCH2", "");
 }
 
 } // namespace
@@ -73,12 +74,16 @@ int main()
     }
 
     // --- 3) env DOLLAMA_FAST=1 が fast に落ちる (fp8 は立たない) ---
+    //   G-2k: batch2/attn_fast の fast 含意は DiffusionPipeline コンストラクタ側で行うため、
+    //   resolve 段階ではまだ立たない (attn_fast の既存方針と一貫)。
     {
         clear_fast_env();
         set_env("DOLLAMA_FAST", "1");
         FastConfig c = resolve_fast_config();
         check(c.fast, "env DOLLAMA_FAST -> fast");
         check(!c.fp8, "env DOLLAMA_FAST keeps fp8 off");
+        check(!c.attn_fast, "env DOLLAMA_FAST does not set attn_fast at resolve");
+        check(!c.batch2, "env DOLLAMA_FAST does not set batch2 at resolve");
     }
 
     // --- 4) env DOLLAMA_FP8=1 が fp8 に落ち、fast を含意する ---
@@ -115,9 +120,40 @@ int main()
         clear_fast_env();
         set_env("DOLLAMA_FAST", "");
         set_env("DOLLAMA_FP8", "");
+        set_env("DOLLAMA_BATCH2", "");
         FastConfig c = resolve_fast_config();
         check(!c.fast, "empty env fast off");
         check(!c.fp8, "empty env fp8 off");
+        check(!c.batch2, "empty env batch2 off");
+    }
+
+    // --- 8) G-2k: env DOLLAMA_BATCH2=1 単独で batch2 が立ち、fast は立たない (独立性) ---
+    //   A/B ベンチ・bisect 用に fast 抜きで batch2 を単独計測できる経路の固定。
+    {
+        clear_fast_env();
+        set_env("DOLLAMA_BATCH2", "1");
+        FastConfig c = resolve_fast_config();
+        check(c.batch2, "env DOLLAMA_BATCH2 -> batch2");
+        check(!c.fast, "env DOLLAMA_BATCH2 keeps fast off (independent)");
+        check(!c.fp8, "env DOLLAMA_BATCH2 keeps fp8 off");
+        check(!c.attn_fast, "env DOLLAMA_BATCH2 keeps attn_fast off");
+    }
+
+    // --- 9) G-2k: 既定 (env 全空・base 既定) で batch2 は絶対に立たない (回帰アンカー保護) ---
+    {
+        clear_fast_env();
+        FastConfig c = resolve_fast_config();
+        check(!c.batch2, "default path never sets batch2");
+    }
+
+    // --- 10) G-2k: CLI base.batch2=true が透過して維持される ---
+    {
+        clear_fast_env();
+        FastConfig base;
+        base.batch2 = true; // CLI 由来 batch2 相当
+        FastConfig c = resolve_fast_config(base);
+        check(c.batch2, "cli base.batch2 transparent through resolve");
+        check(!c.fast, "cli base.batch2 does not imply fast");
     }
 
     // 後片付け (他テストへの env 漏れ防止)。

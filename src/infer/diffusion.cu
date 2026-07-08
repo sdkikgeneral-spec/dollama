@@ -183,6 +183,9 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
     if (fast_cfg_.fast)
     {
         fast_cfg_.attn_fast = true;
+        // G-2k フラグ結線: fast の下で CFG batch=2 (batch2) も有効化する。
+        // default (fast=false) 経路ではこの if に入らないため batch2 は false のまま。
+        fast_cfg_.batch2 = true;
     }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
     SafeTensors embeds(embeds_path);
