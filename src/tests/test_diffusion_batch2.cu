@@ -24,6 +24,7 @@
 // meson cuda_args で -D 埋め込み (cwd 非依存)。
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -340,6 +341,64 @@ static int run_test()
         std::cout << "[test_diffusion_batch2] parity PASSED (gate g=1.0 SSIM=" << ssim_g1
                   << " >= 0.999)\n";
     }
+
+    // --- DB2_BENCH: batch2 の e2e 速度 (G-2k のヘッドライン ~2×) を warm 実測する ---
+    //   generate_txt2img 全体 (CFG UNet ループ + VAE decode) の wall-clock を off/on で計測。
+    //   VAE decode は両者共通 (~1.2s) ゆえ speedup は UNet CFG ループ差で希釈されるが、
+    //   これが正典 CFG e2e ベースライン (計画書 line52) = 出荷判定 (diffusers 3.8s 比) の分母。
+    //   meson test では非設定 → parity のみで高速。手動 DB2_BENCH=1 で計測モードに入る。
+    if (ok && std::getenv("DB2_BENCH"))
+    {
+        int bsteps = 20;                          // 出荷相当 20step。
+        int iters  = 2;                           // 本計測 (min を採用)。
+        const float bg = 7.5f;                    // 出荷相当 guidance。
+        if (const char* e = std::getenv("DB2_BENCH_STEPS")) { bsteps = std::atoi(e); }
+        if (const char* e = std::getenv("DB2_BENCH_ITERS")) { iters  = std::atoi(e); }
+        std::cout << "[test_diffusion_batch2] BENCH steps=" << bsteps << " guidance=" << bg
+                  << " iters=" << iters << " (warmup1・min 採用・VAE 共通込み e2e)\n";
+
+        // 1 パイプラインを warmup 1 回 + iters 回計測し最小 ms を返す。
+        auto bench_pipe = [&](bool attn_fast, bool batch2) -> double
+        {
+            FastConfig cfg;
+            cfg.attn_fast = attn_fast;
+            cfg.batch2    = batch2;
+            DiffusionPipeline pipe(unet_w, vae_w, iopath, cfg);
+            std::vector<uint8_t> rgb;
+            int ww = 0, hh = 0;
+            auto one = [&]()
+            {
+                pipe.generate_txt2img(bsteps, seed, bg,
+                                      cond_ehs.data(), cond_txt.data(),
+                                      uncond_ehs.data(), uncond_txt.data(),
+                                      time_ids.data(), rgb, ww, hh);
+            };
+            one();                                      // warmup (lazy init を排す)
+            double best = 1e30;
+            for (int it = 0; it < iters; ++it)
+            {
+                CUDA_CHECK(cudaDeviceSynchronize());
+                const auto t0 = std::chrono::steady_clock::now();
+                one();
+                CUDA_CHECK(cudaDeviceSynchronize());
+                const auto t1 = std::chrono::steady_clock::now();
+                const double ms =
+                    std::chrono::duration<double, std::milli>(t1 - t0).count();
+                best = std::min(best, ms);
+            }
+            return best;
+        };
+
+        const double def_ms  = bench_pipe(false, false);  // default (逐次 2 forward)
+        const double b2_ms   = bench_pipe(false, true);   // batch2 単独 (attn_fast off)
+        const double fast_ms = bench_pipe(true,  true);   // --fast 全部 (attn_fast + batch2)
+        std::cout << "[test_diffusion_batch2] BENCH e2e (min ms): default=" << def_ms
+                  << " batch2=" << b2_ms << " fast(attn+batch2)=" << fast_ms << "\n";
+        std::cout << "[test_diffusion_batch2] BENCH speedup vs default: batch2 x"
+                  << (b2_ms  > 0.0 ? def_ms / b2_ms  : 0.0) << "  fast x"
+                  << (fast_ms > 0.0 ? def_ms / fast_ms : 0.0) << "\n";
+    }
+
     return ok ? 0 : 1;
 }
 
