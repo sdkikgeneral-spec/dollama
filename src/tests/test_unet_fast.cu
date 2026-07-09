@@ -7,6 +7,13 @@
 //       launch_attention_fast は数学同一 (SSIM=1.0 実測) ゆえ実質ビット一致になる想定。
 //   (3) 速度   : default / fast の UNet 1step レイテンシを cudaEvent で計測しログ。
 //
+// G-3kf (warm 化): 従来は後方互換 launch_unet(const SafeTensors&, ...) を使い、毎 call で
+//   4.9GB を H2D 再アップロード (cold) していた。これは attention 比率を 40%→20% に希釈し、
+//   速度ゲートが実態 (UNet forward 1.19x / attention 1.43x) より低く出る原因だった。
+//   本テストは unet_weights_create で全重みを 1 度だけデバイス常駐させ、以降 launch_unet(handle, ...)
+//   の warm 経路で計測・突合する (重み再転送ゼロ)。正しさ検証 (default vs golden / fast vs default)
+//   は warm 経路でも数値同一のまま維持する。ハンドルは weights の生存期間内で使い、destroy する。
+//
 // HAVE_CUDA 未定義時 / golden 不在時は [SKIP] で return 0。
 // ゴールデンパス UNET_WEIGHTS_PATH / UNET_IO_PATH は meson cuda_args で -D 埋め込み。
 
@@ -141,6 +148,10 @@ static int run_test()
     SafeTensors weights(wpath);
     SafeTensors io(iopath);
 
+    // G-3kf: 全 UNet 重みを 1 度だけデバイス常駐させる (warm)。以降の全 launch_unet(handle,...)
+    //        は重み再転送ゼロで走る。ハンドルは weights の生存期間内でのみ有効。
+    UnetWeightsHandle uh = unet_weights_create(weights);
+
     // 入力。latent はスケジューラでスケール済み (step0)。
     std::vector<__half> h_latent = load_f16(io, "input_sample_scaled_step0_f16");
     std::vector<__half> h_ehs    = load_f16(io, "input_encoder_hidden_states_f16");
@@ -167,8 +178,8 @@ static int run_test()
 
     bool ok = true;
 
-    // --- (1) default (attn_fast=false) を golden と突合 ---
-    launch_unet(weights, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_def, /*attn_fast=*/false);
+    // --- (1) default (attn_fast=false) を golden と突合 (warm ハンドル経路) ---
+    launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_def, /*attn_fast=*/false);
     long              bad_def = 0;
     std::vector<float> got_def = gather_np(d_np_def, latent_n, bad_def);
 
@@ -189,8 +200,8 @@ static int run_test()
     if (mae_def > 5e-3) { std::cerr << "[test_unet_fast] FAIL: default MAE " << mae_def << " > 5e-3\n"; ok = false; }
     if (ssim_def < 0.99){ std::cerr << "[test_unet_fast] FAIL: default SSIM " << ssim_def << " < 0.99\n"; ok = false; }
 
-    // --- (2) fast (attn_fast=true) を default と突合 ---
-    launch_unet(weights, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_fast, /*attn_fast=*/true);
+    // --- (2) fast (attn_fast=true) を default と突合 (warm ハンドル経路) ---
+    launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_fast, /*attn_fast=*/true);
     long              bad_fast = 0;
     std::vector<float> got_fast = gather_np(d_np_fast, latent_n, bad_fast);
 
@@ -213,6 +224,8 @@ static int run_test()
                                        << ssim_fd << " < 0.9999\n"; ok = false; }
 
     // --- (3) 速度: default / fast の 1step レイテンシ (cudaEvent 中央値, warmup2/iters5) ---
+    //     warm ハンドル経路 (重み再転送なし) で計測するため attention の律速比率が実態のまま
+    //     反映され、fast の速度差 (UNet forward ~1.19x / attention ~1.43x 帯) が正しく出る。
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
@@ -221,7 +234,7 @@ static int run_test()
         auto run_once = [&]() -> float
         {
             CUDA_CHECK(cudaEventRecord(start));
-            launch_unet(weights, d_latent, timestep, d_ehs, d_txt, d_tids, d_out, attn_fast);
+            launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_out, attn_fast);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             float ms = 0.0f;
@@ -238,7 +251,7 @@ static int run_test()
     };
     const float ms_def  = bench(false, d_np_def);
     const float ms_fast = bench(true,  d_np_fast);
-    std::cout << "[test_unet_fast] 1step latency median: default=" << ms_def
+    std::cout << "[test_unet_fast] 1step latency median (warm): default=" << ms_def
               << " ms  fast=" << ms_fast << " ms";
     if (ms_fast > 0.0f)
     {
@@ -254,6 +267,8 @@ static int run_test()
     CUDA_CHECK(cudaFree(d_tids));
     CUDA_CHECK(cudaFree(d_np_def));
     CUDA_CHECK(cudaFree(d_np_fast));
+    // 常駐重みハンドルを解放 (weights の生存期間内)。
+    unet_weights_destroy(uh);
     return ok ? 0 : 1;
 }
 
