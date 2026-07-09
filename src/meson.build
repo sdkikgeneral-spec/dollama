@@ -827,6 +827,22 @@ if cuda_enabled
   )
   test('diffusion', test_diffusion_exe, timeout : 600, is_parallel : false)
 
+  # FAST モード G-2k S3c: CFG batch2 on/off パリティゲート (generate_txt2img 縦通し)。
+  # batch2=off / batch2=on を逐次実行し (VRAM 二重常駐回避) 最終 RGB の SSIM を突合する。
+  # 依存ソース・-D 埋め込みは test_diffusion と同型。CUDA 依存ゆえ with_cuda gate 内。
+  test_diffusion_batch2_exe = executable('test_diffusion_batch2',
+    sources             : files(['tests/test_diffusion_batch2.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + diff_unet_w + '"',
+      '-DVAE_WEIGHTS_PATH="' + diff_vae_w + '"',
+      '-DUNET_IO_PATH="' + diff_unet_io + '"',
+    ],
+  )
+  test('diffusion_batch2', test_diffusion_batch2_exe, timeout : 600, is_parallel : false)
+
   # PipelineGenerator (DiffusionPipeline -> IImageGenerator アダプタ) テスト (Phase 2 / 2-6a ST-3+ST-4)
   # pipeline_generator.hpp は HAVE_CUDA ガード越しに diffusion.cuh を include するため
   # .cu (nvcc 経由) でビルドする。リンクするソースは test_diffusion と同一 (diffusion.cu +
