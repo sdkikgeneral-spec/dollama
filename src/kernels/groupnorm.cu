@@ -178,4 +178,235 @@ void launch_group_norm(const __half* d_in,
     CUDA_CHECK_KERNEL();
 }
 
+
+// ================================================================
+// G-4k S1a: multi-block GroupNorm (epilogue=on 経路専用)
+// ================================================================
+// 上の 1-block 版は grid = N*num_groups (B=1 で 32 block) しか立たず、RTX5080 の
+// 84 SM の大半が遊休 → 実測 73 GB/s (理論 ~960 GB/s の 8%) の構造要因だった
+// (冒頭コメント 18-20 行の宿題)。ここでは 1 グループを複数ブロックで分担する
+// 「2 段の決定的集約」へ昇格する:
+//   カーネル1 (partial):   グループを bpg 個のブロックで分担し、各ブロックが
+//                          block_reduce_sum で (sum, sum-sq) の部分和を中間バッファへ書く。
+//   カーネル2 (finalize):  1 グループ = 1 ブロックが bpg 個の部分和を固定順で集約し
+//                          mean / inv_std を確定してバッファへ書く。
+//   カーネル3 (normalize): 全要素 grid-stride の純 map で正規化 + affine を書き戻す。
+//
+// 決定性 (非交渉ゲート): atomicAdd は浮動小数の加算順が run-to-run で変わり
+// テストが非決定になるため使わない。上記 3 カーネルはいずれも grid/block 形状と
+// リダクション木が入力形状のみで決まる固定順なので、同一入力 → 完全ビット一致。
+//
+// default との関係: multi-block は 1-block 版と蓄積順が異なるため FP32 蓄積でも
+// 数値が微妙にずれる (FP16 出力で高々 1 ULP 級)。よって default (epilogue=off) は
+// 従来の launch_group_norm を byte-for-byte 維持し、本経路は epilogue フラグの
+// 裏に隔離する (呼び分けは src/infer/unet.cu)。
+//
+// 中間バッファの確保方針 (G-8k との整合):
+//   必要量は NG*bpg*2 + NG*2 float。UNet 実形状の上界は NG = B*32 ≤ 64、
+//   bpg ≤ GN_MB_MAX_BPG = 128 なので 64*128*2 + 64*2 = 16,512 float ≈ 65KB と極小。
+//   step ループ内の cudaMalloc/cudaFree (G-8k で撲滅対象の既知問題) を新たに
+//   増やさないため、本 TU 内の grow-only 静的常駐バッファとする (初回のみ確保、
+//   以降は使い回し。プロセス終了までデバイス常駐 = 65KB は VRAM 誤差)。
+//   Scratch プールを使わない理由: Scratch は FP16 プールで float 部分和と型が
+//   合わず、段スコープ生成のため毎回 cudaMalloc/cudaFree が発生してしまう。
+//   注意: 拡散オーケストレーションは単一スレッド前提 (プロジェクト全体の規約)。
+// ----------------------------------------------------------------
+
+// multi-block 版のスレッド数 (1-block 版と同じ 32 の倍数)。
+static constexpr int GN_MB_THREADS = 256;
+// 1 グループあたりのブロック数上限 (バッファ上界と finalize の集約幅を抑える)。
+static constexpr int GN_MB_MAX_BPG = 128;
+// 1 スレッドが partial パスで担う目安要素数 (bpg の算出に使う)。
+static constexpr int GN_MB_ELEMS_PER_THREAD = 8;
+
+// grow-only 静的常駐バッファ (partial sums + stats)。上記コメント参照。
+static float* g_mb_buf        = nullptr;
+static size_t g_mb_buf_floats = 0;
+
+static float* mb_buffer(size_t floats)
+{
+    if (floats > g_mb_buf_floats)
+    {
+        if (g_mb_buf != nullptr)
+        {
+            CUDA_CHECK(cudaFree(g_mb_buf));
+            g_mb_buf = nullptr;
+        }
+        CUDA_CHECK(cudaMalloc(&g_mb_buf, floats * sizeof(float)));
+        g_mb_buf_floats = floats;
+    }
+    return g_mb_buf;
+}
+
+// ----------------------------------------------------------------
+// カーネル1: 部分和。blockIdx.x = gid * bpg + blk (gid = n*num_groups + g)。
+// 各ブロックはグループ内をインターリーブ (stride = bpg*blockDim) で舐める
+// (連続アドレスを warp が読む coalesced 配置)。
+// ----------------------------------------------------------------
+__global__ void group_norm_mb_partial(const __half* in,
+                                      float*        partial,
+                                      int           C,
+                                      int           HW,
+                                      int           cpg,
+                                      int           num_groups,
+                                      int           bpg)
+{
+    const int gid = blockIdx.x / bpg;   // n * num_groups + g
+    const int blk = blockIdx.x % bpg;
+    const int g   = gid % num_groups;
+    const int n   = gid / num_groups;
+
+    const int  c_begin    = g * cpg;
+    const int  group_size = cpg * HW;
+    const long base = (static_cast<long>(n) * C + c_begin) * static_cast<long>(HW);
+
+    __shared__ float smem[GN_MB_THREADS / 32];
+
+    float local_sum = 0.0f;
+    float local_sq  = 0.0f;
+    const int stride = bpg * blockDim.x;
+    for (int i = blk * blockDim.x + threadIdx.x; i < group_size; i += stride)
+    {
+        const float x = __half2float(in[base + i]);
+        local_sum += x;
+        local_sq  += x * x;
+    }
+
+    const float sum    = block_reduce_sum(local_sum, smem);
+    const float sum_sq = block_reduce_sum(local_sq, smem);
+
+    if (threadIdx.x == 0)
+    {
+        const long slot = (static_cast<long>(gid) * bpg + blk) << 1;
+        partial[slot]     = sum;
+        partial[slot + 1] = sum_sq;
+    }
+}
+
+// ----------------------------------------------------------------
+// カーネル2: 集約。1 グループ = 1 ブロックが bpg 個の部分和を固定順で読み、
+// mean / inv_std を確定して stats[gid*2] へ書く。
+// ----------------------------------------------------------------
+__global__ void group_norm_mb_finalize(const float* partial,
+                                       float*       stats,
+                                       int          bpg,
+                                       int          group_size,
+                                       float        eps)
+{
+    const int gid = blockIdx.x;
+
+    __shared__ float smem[GN_MB_THREADS / 32];
+
+    float local_sum = 0.0f;
+    float local_sq  = 0.0f;
+    for (int j = threadIdx.x; j < bpg; j += blockDim.x)
+    {
+        const long slot = (static_cast<long>(gid) * bpg + j) << 1;
+        local_sum += partial[slot];
+        local_sq  += partial[slot + 1];
+    }
+
+    const float sum    = block_reduce_sum(local_sum, smem);
+    const float sum_sq = block_reduce_sum(local_sq, smem);
+
+    if (threadIdx.x == 0)
+    {
+        const float inv_k = 1.0f / static_cast<float>(group_size);
+        const float mean  = sum * inv_k;
+        float var = sum_sq * inv_k - mean * mean;
+        var = fmaxf(var, 0.0f);
+        stats[gid << 1]       = mean;
+        stats[(gid << 1) + 1] = rsqrtf(var + eps);
+    }
+}
+
+// ----------------------------------------------------------------
+// カーネル3: 正規化 + affine。全要素 grid-stride の純 map (リダクションなし =
+// 自明に決定的)。stats は確定済みなので d_in == d_out の in-place も安全。
+// ----------------------------------------------------------------
+__global__ void group_norm_mb_normalize(const __half* in,
+                                        const __half* gamma,
+                                        const __half* beta,
+                                        const float*  stats,
+                                        __half*       out,
+                                        int           C,
+                                        int           HW,
+                                        int           cpg,
+                                        int           num_groups,
+                                        long          total)
+{
+    const long chw = static_cast<long>(C) * HW;
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x; idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        const int n   = static_cast<int>(idx / chw);
+        const int c   = static_cast<int>((idx - static_cast<long>(n) * chw) / HW);
+        const int gid = n * num_groups + c / cpg;
+
+        const float mean    = stats[gid << 1];
+        const float inv_std = stats[(gid << 1) + 1];
+        const float x  = __half2float(in[idx]);
+        const float gm = __half2float(gamma[c]);
+        const float bt = __half2float(beta[c]);
+        out[idx] = __float2half((x - mean) * inv_std * gm + bt);
+    }
+}
+
+// ----------------------------------------------------------------
+// ホストラッパー (multi-block 版)。引数仕様は launch_group_norm と同一。
+// ----------------------------------------------------------------
+void launch_group_norm_mb(const __half* d_in,
+                          const __half* d_gamma,
+                          const __half* d_beta,
+                          __half*       d_out,
+                          int           N,
+                          int           C,
+                          int           H,
+                          int           W,
+                          int           num_groups,
+                          float         eps)
+{
+    if (N <= 0 || C <= 0 || H <= 0 || W <= 0 || num_groups <= 0)
+    {
+        return;
+    }
+    assert(C % num_groups == 0);
+
+    const int cpg        = C / num_groups;
+    const int HW         = H * W;
+    const int group_size = cpg * HW;
+    const int NG         = N * num_groups;
+
+    // 1 グループあたりのブロック数: 1 スレッド ~8 要素を目安に立て、上限でクランプ。
+    int bpg = ceil_div(group_size, GN_MB_THREADS * GN_MB_ELEMS_PER_THREAD);
+    if (bpg > GN_MB_MAX_BPG)
+    {
+        bpg = GN_MB_MAX_BPG;
+    }
+    if (bpg < 1)
+    {
+        bpg = 1;
+    }
+
+    // 常駐バッファ: [NG*bpg*2] partial + [NG*2] stats。
+    const size_t part_floats = (static_cast<size_t>(NG) * bpg) << 1;
+    float* buf     = mb_buffer(part_floats + (static_cast<size_t>(NG) << 1));
+    float* d_part  = buf;
+    float* d_stats = buf + part_floats;
+
+    group_norm_mb_partial<<<NG * bpg, GN_MB_THREADS>>>(d_in, d_part, C, HW, cpg,
+                                                       num_groups, bpg);
+    CUDA_CHECK_KERNEL();
+
+    group_norm_mb_finalize<<<NG, GN_MB_THREADS>>>(d_part, d_stats, bpg, group_size, eps);
+    CUDA_CHECK_KERNEL();
+
+    const long total = static_cast<long>(N) * C * HW;
+    const long bl    = (total + GN_MB_THREADS - 1) / GN_MB_THREADS;
+    const int blocks = static_cast<int>(bl < 65535 ? bl : 65535);
+    group_norm_mb_normalize<<<blocks, GN_MB_THREADS>>>(d_in, d_gamma, d_beta, d_stats,
+                                                       d_out, C, HW, cpg, num_groups, total);
+    CUDA_CHECK_KERNEL();
+}
+
 } // namespace dollama

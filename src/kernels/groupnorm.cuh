@@ -59,4 +59,28 @@ void launch_group_norm(const __half* d_in,
                        int           num_groups,
                        float         eps);
 
+// ----------------------------------------------------------------
+// multi-block GroupNorm (G-4k S1a・FAST epilogue 経路専用)
+// ----------------------------------------------------------------
+// 数学・引数仕様は launch_group_norm と同一。1 グループを複数ブロックで分担する
+// 「2 段の決定的集約」(partial sum → finalize → normalize の 3 カーネル) で
+// SM 占有率と実効帯域を引き上げる (1-block 版は grid=N*num_groups=32 で 73 GB/s)。
+//   - atomic 不使用。grid/block 形状とリダクション木は入力形状のみで決まる固定順
+//     なので、同一入力に対して run-to-run 完全ビット一致 (非交渉ゲート)。
+//   - 蓄積順が 1-block 版と異なるため出力は 1-block 版と FP16 で ~1 ULP 級ずれる。
+//     default (epilogue=off) 経路では使わないこと (byte-for-byte 無改変の原則)。
+//   - 中間バッファ (~65KB 上界) は TU 内 grow-only 静的常駐。step ループ内の
+//     cudaMalloc/cudaFree は発生しない (G-8k と整合)。単一スレッド前提。
+//   - d_in == d_out の in-place 可 (stats 確定後の normalize は純 map)。
+void launch_group_norm_mb(const __half* d_in,
+                          const __half* d_gamma,
+                          const __half* d_beta,
+                          __half*       d_out,
+                          int           N,
+                          int           C,
+                          int           H,
+                          int           W,
+                          int           num_groups,
+                          float         eps);
+
 } // namespace dollama

@@ -5,7 +5,10 @@
 //       → launch_attention (従来経路) をそのまま通す。
 //   (2) fast    (attn_fast=true) : default 出力と突合し SSIM >= 0.9999。
 //       launch_attention_fast は数学同一 (SSIM=1.0 実測) ゆえ実質ビット一致になる想定。
-//   (3) 速度   : default / fast の UNet 1step レイテンシを cudaEvent で計測しログ。
+//   (2b) epilogue (G-4k S1a)     : attn_fast+epilogue=on を default と突合し SSIM >= 0.9999
+//       (multi-block GroupNorm は蓄積順が変わるため FP16 で微差・ビット一致は狙わない)。
+//       default (epilogue=off) は (1) がそのまま無改変ゲート (既定引数 false)。
+//   (3) 速度   : default / fast / fast+epilogue の UNet 1step レイテンシを cudaEvent で計測しログ。
 //
 // G-3kf (warm 化): 従来は後方互換 launch_unet(const SafeTensors&, ...) を使い、毎 call で
 //   4.9GB を H2D 再アップロード (cold) していた。これは attention 比率を 40%→20% に希釈し、
@@ -223,18 +226,46 @@ static int run_test()
     if (ssim_fd < 0.9999)  { std::cerr << "[test_unet_fast] FAIL: fast vs default SSIM "
                                        << ssim_fd << " < 0.9999\n"; ok = false; }
 
+    // --- (2b) epilogue=on (G-4k S1a): attn_fast+epilogue を default と突合 ---
+    //     multi-block GN は 1-block 版と蓄積順が異なるため FP16 で微差が乗る (ビット
+    //     一致は狙わない)。ゲート = noise_pred SSIM >= 0.9999。
+    __half* d_np_ep = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_np_ep, latent_n * sizeof(__half)));
+    launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_ep,
+                /*attn_fast=*/true, /*epilogue=*/true);
+    long               bad_ep = 0;
+    std::vector<float> got_ep = gather_np(d_np_ep, latent_n, bad_ep);
+
+    double sum_abs3 = 0, max_abs3 = 0;
+    for (size_t i = 0; i < latent_n; ++i)
+    {
+        const double d = std::fabs((double)got_ep[i] - (double)got_def[i]);
+        sum_abs3 += d;
+        max_abs3 = std::max(max_abs3, d);
+    }
+    const double mae_ep  = sum_abs3 / static_cast<double>(latent_n);
+    const double ssim_ep = ssim_uniform(got_ep, got_def, 4, 128, 128);
+    const double ssim_eg = ssim_uniform(got_ep, golden, 4, 128, 128);
+    std::cout << "[test_unet_fast] epilogue vs default: MAE=" << mae_ep
+              << " max_abs=" << max_abs3 << " bad=" << bad_ep
+              << " SSIM=" << ssim_ep << "  (epilogue vs golden SSIM=" << ssim_eg << ")\n";
+    if (bad_ep != 0)      { std::cerr << "[test_unet_fast] FAIL: epilogue Inf/NaN\n"; ok = false; }
+    if (ssim_ep < 0.9999) { std::cerr << "[test_unet_fast] FAIL: epilogue vs default SSIM "
+                                      << ssim_ep << " < 0.9999\n"; ok = false; }
+
     // --- (3) 速度: default / fast の 1step レイテンシ (cudaEvent 中央値, warmup2/iters5) ---
     //     warm ハンドル経路 (重み再転送なし) で計測するため attention の律速比率が実態のまま
     //     反映され、fast の速度差 (UNet forward ~1.19x / attention ~1.43x 帯) が正しく出る。
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
-    auto bench = [&](bool attn_fast, __half* d_out) -> float
+    auto bench = [&](bool attn_fast, bool epilogue, __half* d_out) -> float
     {
         auto run_once = [&]() -> float
         {
             CUDA_CHECK(cudaEventRecord(start));
-            launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_out, attn_fast);
+            launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_out,
+                        attn_fast, epilogue);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             float ms = 0.0f;
@@ -249,13 +280,15 @@ static int run_test()
         std::sort(t.begin(), t.end());
         return t[t.size() / 2];
     };
-    const float ms_def  = bench(false, d_np_def);
-    const float ms_fast = bench(true,  d_np_fast);
+    const float ms_def  = bench(false, false, d_np_def);
+    const float ms_fast = bench(true,  false, d_np_fast);
+    const float ms_ep   = bench(true,  true,  d_np_ep);
     std::cout << "[test_unet_fast] 1step latency median (warm): default=" << ms_def
-              << " ms  fast=" << ms_fast << " ms";
+              << " ms  fast=" << ms_fast << " ms  fast+epilogue=" << ms_ep << " ms";
     if (ms_fast > 0.0f)
     {
-        std::cout << "  (speedup x" << (ms_def / ms_fast) << ")";
+        std::cout << "  (fast x" << (ms_def / ms_fast)
+                  << " / +epilogue x" << (ms_def / ms_ep) << ")";
     }
     std::cout << "\n";
 
@@ -267,6 +300,7 @@ static int run_test()
     CUDA_CHECK(cudaFree(d_tids));
     CUDA_CHECK(cudaFree(d_np_def));
     CUDA_CHECK(cudaFree(d_np_fast));
+    CUDA_CHECK(cudaFree(d_np_ep));
     // 常駐重みハンドルを解放 (weights の生存期間内)。
     unet_weights_destroy(uh);
     return ok ? 0 : 1;

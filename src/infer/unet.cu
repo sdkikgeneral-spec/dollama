@@ -347,12 +347,16 @@ private:
 //              launch_attention_fast へ切り替える。既定 false = 現行 (default) 挙動。
 //              Scratch は段 (down/mid/up ブロック) 単位で生成され transformer_block まで
 //              流れるため、フラグの運搬役をそのまま兼ねる (追加の引数配線を避ける最小差分)。
+//   epilogue : FAST モード (G-4k S1a)。true のとき resnet_block の norm1/norm2 の
+//              GroupNorm を multi-block 版 (launch_group_norm_mb) へ切り替える。
+//              既定 false = 現行 (default) 挙動。運搬方式は attn_fast の厳密ミラー。
 // ----------------------------------------------------------------
 class Scratch
 {
 public:
     Scratch() = default;
-    explicit Scratch(bool attn_fast) : attn_fast_(attn_fast) {}
+    explicit Scratch(bool attn_fast, bool epilogue = false)
+        : attn_fast_(attn_fast), epilogue_(epilogue) {}
 
     __half* alloc(size_t n)
     {
@@ -365,6 +369,9 @@ public:
     // FAST モードで attention 高速バリアントを使うか。
     bool attn_fast() const { return attn_fast_; }
 
+    // FAST モードで GroupNorm multi-block 版 (epilogue 経路) を使うか。
+    bool epilogue() const { return epilogue_; }
+
     ~Scratch()
     {
         for (__half* p : ptrs_)
@@ -376,6 +383,7 @@ public:
 private:
     std::vector<__half*> ptrs_;
     bool                 attn_fast_ = false;
+    bool                 epilogue_  = false;
 };
 
 // ----------------------------------------------------------------
@@ -421,8 +429,17 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     __half* d_b = sc.alloc((size_t)B * chw_out);
 
     // norm1 -> silu -> conv1 (Cin -> Cout)。group_norm/conv2d は N=B を渡すだけ。
-    launch_group_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
-                      d_a, B, Cin, H, W, groups, eps);
+    // G-4k S1a: epilogue=on のみ multi-block GN (蓄積順が変わるため default から隔離)。
+    if (sc.epilogue())
+    {
+        launch_group_norm_mb(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
+                             d_a, B, Cin, H, W, groups, eps);
+    }
+    else
+    {
+        launch_group_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
+                          d_a, B, Cin, H, W, groups, eps);
+    }
     launch_silu(d_a, d_a, B * Cin * HW);
     launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
                   d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
@@ -440,8 +457,16 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     }
 
     // norm2 -> silu -> conv2 (Cout -> Cout)
-    launch_group_norm(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
-                      d_a, B, Cout, H, W, groups, eps);
+    if (sc.epilogue())
+    {
+        launch_group_norm_mb(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
+                             d_a, B, Cout, H, W, groups, eps);
+    }
+    else
+    {
+        launch_group_norm(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
+                          d_a, B, Cout, H, W, groups, eps);
+    }
     launch_silu(d_a, d_a, B * Cout * HW);
     launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
                   d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
@@ -701,7 +726,8 @@ static void launch_unet_impl(DeviceWeights&     w,
                              const __half*      d_text_embeds,
                              const __half*      d_time_ids,
                              __half*            d_noise_pred_out,
-                             bool               attn_fast)
+                             bool               attn_fast,
+                             bool               epilogue)
 {
 
     // ============ S0 プロファイル計時 (DOLLAMA_PROFILE 有効時のみ) ============
@@ -817,7 +843,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ down_blocks[0]: DownBlock2D (resnet x2, downsample) 128->64 ============
     {
         const int H = 128, Wd = 128;
-        Scratch sc;
+        Scratch sc(attn_fast, epilogue);
         __half* d_r0 = sc.alloc((size_t)B * C0 * H * Wd);
         resnet_block(w, "down_blocks.0.resnets.0.", d_cur, B, C0, C0, H, Wd, d_temb_silu, d_r0, sc);
         dbg_stat("down_block_0_resnet0_out", d_r0, (size_t)B * C0 * H * Wd);
@@ -836,7 +862,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ down_blocks[1]: CrossAttnDownBlock (resnet+T2D[L=2] x2, downsample) 64->32 ============
     {
         const int H = 64, Wd = 64, Ln = 2;
-        Scratch sc(attn_fast);
+        Scratch sc(attn_fast, epilogue);
         // resnet0: 320->640
         __half* d_r0 = sc.alloc((size_t)B * C1 * H * Wd);
         resnet_block(w, "down_blocks.1.resnets.0.", d_cur, B, C0, C1, H, Wd, d_temb_silu, d_r0, sc);
@@ -862,7 +888,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ down_blocks[2]: CrossAttnDownBlock (resnet+T2D[L=10] x2, downsample なし) 32x32 ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc(attn_fast);
+        Scratch sc(attn_fast, epilogue);
         // resnet0: 640->1280
         __half* d_r0 = sc.alloc((size_t)B * C2 * H * Wd);
         resnet_block(w, "down_blocks.2.resnets.0.", d_cur, B, C1, C2, H, Wd, d_temb_silu, d_r0, sc);
@@ -888,7 +914,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     // ============ mid_block: Resnet -> T2D[L=10] -> Resnet (1280, 32x32) ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc(attn_fast);
+        Scratch sc(attn_fast, epilogue);
         __half* d_r0 = sc.alloc((size_t)B * C2 * H * Wd);
         resnet_block(w, "mid_block.resnets.0.", d_cur, B, C2, C2, H, Wd, d_temb_silu, d_r0, sc);
         dbg_stat("mid_block_resnet0_out", d_r0, (size_t)B * C2 * H * Wd);
@@ -914,7 +940,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         const int H = 32, Wd = 32, Ln = 10, HW = H * Wd;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc(attn_fast);
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 1280,1280,640
             __half* d_cat = sc.alloc((size_t)B * (C2 + sk.C) * HW);
             // concat は per-b (レイアウト [B,Ca+Cb,HW])。B=1 は offset 0 の 1 周。
@@ -953,7 +979,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         int curC = C2;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc(attn_fast);
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 640,640,320
             __half* d_cat = sc.alloc((size_t)B * (curC + sk.C) * HW);
             for (int b = 0; b < B; ++b)
@@ -992,7 +1018,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         int curC = C1;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 320,320,320
             __half* d_cat = sc.alloc((size_t)B * (curC + sk.C) * HW);
             for (int b = 0; b < B; ++b)
@@ -1020,8 +1046,17 @@ static void launch_unet_impl(DeviceWeights&     w,
         const int H = 128, Wd = 128;
         Scratch sc;
         __half* d_n = sc.alloc((size_t)B * C0 * H * Wd);
-        launch_group_norm(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
-                          d_n, B, C0, H, Wd, 32, 1e-5f);
+        // G-4k S1a: epilogue=on のみ multi-block GN。default は従来経路を無改変で通す。
+        if (epilogue)
+        {
+            launch_group_norm_mb(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
+                                 d_n, B, C0, H, Wd, 32, 1e-5f);
+        }
+        else
+        {
+            launch_group_norm(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
+                              d_n, B, C0, H, Wd, 32, 1e-5f);
+        }
         // golden conv_norm_out_out は SiLU 前 (GroupNorm 出力) を捕捉している。
         dbg_stat("conv_norm_out_out", d_n, (size_t)B * C0 * H * Wd);
         launch_silu(d_n, d_n, B * C0 * H * Wd);
@@ -1058,11 +1093,12 @@ void launch_unet(const SafeTensors& weights,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
                  __half*            d_noise_pred_out,
-                 bool               attn_fast)
+                 bool               attn_fast,
+                 bool               epilogue)
 {
     DeviceWeights w(weights);
     launch_unet_impl(w, 1, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast);
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
 }
 
 // ----------------------------------------------------------------
@@ -1095,11 +1131,12 @@ void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
                  __half*            d_noise_pred_out,
-                 bool               attn_fast)
+                 bool               attn_fast,
+                 bool               epilogue)
 {
     DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
     launch_unet_impl(w, 1, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast);
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
 }
 
 // ----------------------------------------------------------------
@@ -1119,11 +1156,12 @@ void launch_unet_batched(UnetWeightsHandle  handle,
                          const __half*      d_text_embeds,
                          const __half*      d_time_ids,
                          __half*            d_noise_pred_out,
-                         bool               attn_fast)
+                         bool               attn_fast,
+                         bool               epilogue)
 {
     DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
     launch_unet_impl(w, B, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast);
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
 }
 
 } // namespace dollama

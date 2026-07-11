@@ -119,6 +119,28 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 - 触るファイル: `src/kernels/{groupnorm,conv2d}` に融合バリアント, 呼び出し側 `src/infer/unet.cu` (VAE は G-4k 対象外)。
 - 精度: 融合は数値ほぼ不変 (中間の FP16 往復が減る分むしろ改善方向)。
 
+#### G-4k S1a 実測 (2026-07-11・GN multi-block + epilogue 配線・完了)
+
+G-11k (GN multi-block 化) を S1a として G-4k に織り込み。`launch_group_norm_mb` (src/kernels/groupnorm.cu) =
+partial→finalize→normalize の 3 カーネル **2 段決定的集約 (atomic 禁止・run-to-run bit 一致が非交渉ゲート)**。
+`epilogue` フラグを `Scratch` 経由で `src/infer/unet.cu` に配線 (`attn_fast` の厳密ミラー)。対象 = resnet の
+norm1/norm2 + conv_norm_out。default(off) は 1-block GN のまま byte-for-byte 無改変。
+
+- **GN カーネル単体 (test_groupnorm 実走 ALL PASSED)**:
+  - parity: MAE ~3e-7 / max_abs 0.0039 (ゲート <1e-3 / <4e-3) PASS
+  - bitexact: 3 runs 完全ビット一致 PASS
+  - 帯域: unet_320_128 mb **444.6 GB/s** ≥ 300 ゲート PASS (1-block 105 GB/s → **4.2x**)。
+    B2 527 / 640_64 334 / 1280_32 226 GB/s
+- **UNet 結線 (test_unet_fast 実走 ALL PASSED・warm ハンドル)**:
+  - epilogue(attn_fast+epilogue) vs default: **SSIM 0.999999 ≥ 0.9999** / MAE 6.6e-05 / bad=0 PASS
+  - default 無改変ゲート: fast vs default **bit-exact 維持** (MAE=0/SSIM=1)・default vs golden SSIM 0.999996 PASS
+  - 1step warm 中央値 (最終検証 2 走): default **479.0/483.8ms** / fast 440.8/412.9ms / fast+epilogue
+    **436.2/414.3ms**。epilogue vs fast の差分は **−4.6ms / +1.4ms = run-to-run ノイズ内** (パリティ系は
+    2 走とも完全同値で決定的)
+- **resnet ≤0.95s ゲートの扱い**: S1a 単体の 1step 寄与はノイズ床下 (GN 置換のみで SiLU は別パスのまま =
+  パス数不変・帯域改善分だけ。GN 単体は 4.2x で実証済み)。回帰なしは確認。resnet バケット合否は
+  S1b (GN+SiLU 融合) + S2 (conv2d 後段融合) 完了後の再 profile で判定する。
+
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。
   softmax / GroupNorm / time embed / 最初と最後の conv は **FP16 のまま残す** (敏感層)。
@@ -153,7 +175,7 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 | **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | ✅ **完了 (S1〜S3c・下記注)。parity gate g=1.0 SSIM 0.9994≥0.999 PASS (sweep g=1 は 0.9995・別走行)・batch2 e2e 1.19x (期待 ~2× に非到達)・合成 --fast 1.32x** |
 | **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)** |
 | **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.20x に是正) | cpp-implementer | G-3k | — | ✅ **完了**: warm ハンドル (unet_weights_create) で計測・default vs golden SSIM 0.999996/bad0・fast vs default bit-exact・warm 1step default 526ms/fast 437ms = **1.20x** |
-| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 **着手中** (PL 決裁スコープ・ゲート = #5 節参照: resnet 1.225→≤0.95s・e2e 参考 ≤15.55s・resnet バケット+パリティで判定) |
+| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 **着手中・S1a ✅** (S1a 実測は #5 節「S1a 実測」参照。残: S1b GN+SiLU 融合 / S2 conv2d 後段融合 / S3 配線) |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
 | **G-6k** | 3段モードの実測まとめ + 出荷判定 (`--fast` の default 昇格是非 / FP8 採否) | PL + gpu-benchmarker | 全部 | — | 🔲 |
 | **G-7k** | cuBLASLt 移行による linear (FFN/attn to_q/k/v/out) の bias epilogue 融合 — transformer バケット残 ~2.39s が対象。GEMM 本体の呼び方が変わるため G-4k と分離 (PL 決裁 2026-07-10・当初仮称「G-5k」は FP8 と衝突するため G-7k で採番) | cuda-kernel-dev | G-4k | ゼロコスト | 🔲 **バックログ** (順序図の主線外・費用対効果を G-4k 後の再 profile で判断) |
@@ -228,7 +250,7 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 | **G-8k** | step ループ内 cudaMalloc/cudaFree 撲滅 (スクラッチプール / VAE ワークスペース常駐) | 全バケットに分散混入 | **要 nsys 実測** (数百 ms 級の可能性・下記) | 低 (数値不変・配管のみ) | ✅ |
 | **G-9k** | VAE decode 高速化パック (mid attn GEMM 化 / GN f32 占有率 / FP32 重み変換キャッシュ / BF16 gated) | VAE 1.197s | **1.197s → ~0.4-0.6s** (概算・内訳推定は下記) | 低〜中 (BF16 のみ gated) | ✅ |
 | **G-10k** | conv2d 真の batch2 (im2col N 込み + cublasGemmStridedBatchedEx) | CFG e2e の resnet ~2.45s | **~0.5-1.0s** (batch2 恩恵ゼロ領域の解消) | 中 (パリティ ~1 ULP・G-2k S2 と同種) | ✅ |
-| **G-11k** | GroupNorm multi-block 化 (G-4k(A) 補強・grid=32 block の占有率是正) | resnet 1.225s の GN 面積 | GN 実効帯域 73→数百 GB/s (面積は G-4k 再 profile で確定) | 低〜中 (2 段 reduction・数値は蓄積順変化) | ✅ |
+| **G-11k** | GroupNorm multi-block 化 (G-4k(A) 補強・grid=32 block の占有率是正) — **G-4k S1a に吸収・実装完了** (帯域 105→444.6 GB/s = 4.2x・#5 節「S1a 実測」参照) | resnet 1.225s の GN 面積 | GN 実効帯域 73→数百 GB/s (面積は G-4k 再 profile で確定) | 低〜中 (2 段 reduction・数値は蓄積順変化) | ✅ |
 | **G-12k** | transformer 脇役融合 (QKV fused GEMM / split-merge heads 転置削減) | transformer 非attn ~2.39s (GEMM 純増でない・下記) | 見積り不能 (バケット内訳の再 profile が先) | 中 | ✅ |
 | **G-13k** | マルチ stream 独立枝並列 (QKV / conv_shortcut / time_emb_proj) | launch 谷・依存直列 | 見積り不能 (**nsys で谷を直接観測してから**・G-1k 再判定と同一前提) | 中〜高 (stream/event 配線・検証コスト) | ✅ |
 | micro | time_ids 毎 step D2H 同期 / up ループ free→malloc→memcpy / push_skip D2D コピー | 微小 | 各 ~ms 級 | 低 | ✅ |
