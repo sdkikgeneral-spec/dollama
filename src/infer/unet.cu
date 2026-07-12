@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -335,10 +336,103 @@ public:
         }
     }
 
+    // ----------------------------------------------------------------
+    // ランタイム LoRA (L-2): 常駐重みへ delta = scale*(B@A) を焼き込む。
+    //   forward 経路は 1 命令も変えない (重みバッファの中身だけが変わる)。
+    //   scratch (A/B/delta) は都度確保・解放 (適用は generate 律速の外・sub 秒)。
+    // ----------------------------------------------------------------
+    void apply_lora(const LoraModule& m)
+    {
+        // base の numel と B@A の numel 整合 (load_lora_modules 済みだが防御的に再検証)
+        const std::vector<size_t>& shp   = st_.shape(m.base_key);
+        size_t                     numel = 1;
+        for (size_t d : shp)
+        {
+            numel *= d;
+        }
+        const size_t delta_numel =
+            static_cast<size_t>(m.out_dim) * static_cast<size_t>(m.in_flat);
+        if (numel != delta_numel)
+        {
+            throw std::runtime_error("unet lora: '" + m.base_key + "' numel mismatch (base " +
+                                     std::to_string(numel) + " vs delta " +
+                                     std::to_string(delta_numel) + ")");
+        }
+        if (m.a_fp16.size() != static_cast<size_t>(m.rank) * m.in_flat ||
+            m.b_fp16.size() != static_cast<size_t>(m.out_dim) * m.rank)
+        {
+            throw std::runtime_error("unet lora: '" + m.base_key + "' A/B buffer size mismatch vs shape");
+        }
+
+        // cache miss の key は先に常駐化してから patch する
+        __half* d_w = const_cast<__half*>(get(m.base_key));
+
+        // 変異前に patched_ へ登録する。GEMM/加算が途中失敗すると W は
+        // 中途半端に書き換わり得るため、失敗しても unet_clear_loras が
+        // base host バイトから必ず復元できるよう先に追跡する
+        // (未変異のまま登録されても revert は base 再 upload なので無害)。
+        patched_.insert(m.base_key);
+
+        // scratch: A [rank, in_flat] / B [out, rank] / delta [out, in_flat]
+        __half* d_a     = nullptr;
+        __half* d_b     = nullptr;
+        __half* d_delta = nullptr;
+        try
+        {
+            CUDA_CHECK(cudaMalloc(&d_a, m.a_fp16.size() * sizeof(__half)));
+            CUDA_CHECK(cudaMalloc(&d_b, m.b_fp16.size() * sizeof(__half)));
+            CUDA_CHECK(cudaMalloc(&d_delta, delta_numel * sizeof(__half)));
+            CUDA_CHECK(cudaMemcpy(d_a, m.a_fp16.data(), m.a_fp16.size() * sizeof(__half),
+                                  cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_b, m.b_fp16.data(), m.b_fp16.size() * sizeof(__half),
+                                  cudaMemcpyHostToDevice));
+
+            // delta = scale * (B @ A): [out, rank] @ [rank, in_flat] -> [out, in_flat]
+            //   alpha=scale, beta=0 → delta は初めからスケール済み (FP32 蓄積)。
+            launch_gemm_fp16(d_b, d_a, d_delta,
+                             /*M=*/m.out_dim, /*N=*/m.in_flat, /*K=*/m.rank,
+                             /*alpha=*/m.scale, /*beta=*/0.0f,
+                             /*transA=*/false, /*transB=*/false);
+
+            // W += delta (launch_add は out==a の in-place 安全)
+            launch_add(d_w, d_delta, d_w, static_cast<int>(delta_numel));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+        catch (...)
+        {
+            if (d_a != nullptr)     { cudaFree(d_a); }
+            if (d_b != nullptr)     { cudaFree(d_b); }
+            if (d_delta != nullptr) { cudaFree(d_delta); }
+            throw;
+        }
+        cudaFree(d_a);
+        cudaFree(d_b);
+        cudaFree(d_delta);
+    }
+
+    // patch 済みの全 key を base SafeTensors の host バイトから再 upload して
+    // bit-exact 復元する (st_ が base の真実源なのでデバイス側コピーは不要)。
+    void revert_all()
+    {
+        for (const std::string& key : patched_)
+        {
+            auto it = cache_.find(key);
+            if (it == cache_.end())
+            {
+                continue;  // 論理上到達しない (patch 時に必ず常駐化している)
+            }
+            size_t         nbytes = 0;
+            const uint8_t* src    = st_.tensor_bytes(key, nbytes);
+            CUDA_CHECK(cudaMemcpy(it->second, src, nbytes, cudaMemcpyHostToDevice));
+        }
+        patched_.clear();
+    }
+
 private:
     const SafeTensors&             st_;
     std::map<std::string, __half*> cache_;
     std::vector<__half*>           ptrs_;
+    std::set<std::string>          patched_;  // L-2: LoRA patch 済み key (clear で復元)
 };
 
 // ----------------------------------------------------------------
@@ -1122,6 +1216,40 @@ void unet_weights_destroy(UnetWeightsHandle handle)
         return;
     }
     delete static_cast<DeviceWeights*>(handle);
+}
+
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2) C-API。DeviceWeights (private) へのハンドル越し操作。
+// ----------------------------------------------------------------
+void unet_apply_loras(UnetWeightsHandle handle, const LoraModule* mods, int n)
+{
+    if (handle == nullptr || mods == nullptr || n <= 0)
+    {
+        return;
+    }
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    for (int i = 0; i < n; ++i)
+    {
+        w.apply_lora(mods[i]);
+    }
+}
+
+void unet_clear_loras(UnetWeightsHandle handle)
+{
+    if (handle == nullptr)
+    {
+        return;
+    }
+    static_cast<DeviceWeights*>(handle)->revert_all();
+}
+
+const __half* unet_weight_device_ptr(UnetWeightsHandle handle, const std::string& name)
+{
+    if (handle == nullptr)
+    {
+        return nullptr;
+    }
+    return static_cast<DeviceWeights*>(handle)->get(name);
 }
 
 void launch_unet(UnetWeightsHandle  handle,

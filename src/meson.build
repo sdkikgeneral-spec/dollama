@@ -780,6 +780,38 @@ if cuda_enabled
   )
   test('unet_fast', test_unet_fast_exe, timeout : 600, is_parallel : false)
 
+  # ランタイム LoRA (L-2) 重みレベル検証テスト。合成 base + LoRA safetensors を
+  # ビルドディレクトリ (LORA_TMP_DIR) に書き出し、load_lora_modules (lora.hpp) →
+  # unet_apply_loras / unet_clear_loras の parity / revert bit-exact / stack /
+  # skip・throw をゲート化する。SDXL 実走・golden 不要 (合成データで自己完結)。
+  # unet.cu の常駐ハンドル API を使うため test_unet と同じソース群をリンクする。
+  # Windows の '\' は -D 文字列リテラル内で C エスケープに化けるため '/' へ正規化する。
+  lora_tmp_dir = meson.current_build_dir().replace('\\', '/')
+  test_lora_runtime_exe = executable('test_lora_runtime',
+    sources             : files(
+      'tests/test_lora_runtime.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DLORA_TMP_DIR="' + lora_tmp_dir + '"',
+    ],
+  )
+  test('lora_runtime', test_lora_runtime_exe, timeout : 120)
+
   # FAST 診断用 warm ベンチ (計測専用・test 未登録)。常駐ハンドル API で重み再転送なしの
   # warm per-step を fast on/off 比較する。既存テスト無改変。
   prof_unet_fast_warm_exe = executable('prof_unet_fast_warm',

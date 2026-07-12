@@ -21,6 +21,15 @@
 namespace dollama
 {
 
+// ランタイム LoRA (L-2) の HTTP リクエスト項目 (name + strength)。
+// generator.hpp は純 cpp interface 層のため backend 層の LoraRequest には依存せず、
+// BackendImageGenerator が LoraRequest へ変換して IDiffusionBackend へ渡す。
+struct LoraSpec
+{
+    std::string name;            // LoRA 識別名 (<name>.safetensors へ解決される)
+    float       strength = 1.0f; // 適用強度
+};
+
 // 生成リクエスト DTO (HTTP レイヤがパースして渡す)
 struct GenRequest
 {
@@ -31,6 +40,7 @@ struct GenRequest
     int width  = 1024;           // 出力幅
     int height = 1024;           // 出力高
     bool matting = true;         // M-6: マッティング既定 ON (透過 PNG)。--no-matting で OFF。
+    std::vector<LoraSpec> loras; // L-2: ランタイム LoRA (未指定 = 空 = 従来経路・無改変)
 };
 
 // 生成結果 DTO (PNG バイト列まで; base64 化はサーバ層)

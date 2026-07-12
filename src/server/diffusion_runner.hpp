@@ -25,10 +25,25 @@
 namespace dollama
 {
 
+// ランタイム LoRA (L-2) のファイル単位リクエスト DTO (純 cpp・CUDA 型なし)。
+//   path     : LoRA safetensors の実ファイルパス (name→path 解決は backend 層の責務)。
+//   strength : 適用強度 (scale = strength * alpha / rank)。
+struct LoraFileRequest
+{
+    std::string path;
+    float       strength = 1.0f;
+};
+
 // 拡散ループの実行 interface。実体は .cu 側で DiffusionPipeline をラップして実装する。
 struct IDiffusionRunner
 {
     virtual ~IDiffusionRunner() = default;
+
+    // ランタイム LoRA (L-2): 常駐 UNet 重みへ生成前にマージする / 復元する。
+    //   default no-op (stub / 非対応 runner は無改修で無効)。実体 (DiffusionRunner) が
+    //   override し、適用途中の失敗時は自ら復元してから例外を投げる。
+    virtual void apply_loras(const std::vector<LoraFileRequest>& reqs) { (void)reqs; }
+    virtual void clear_loras() {}
 
     // CFG (classifier-free guidance) 付き txt2img を 1 枚生成する。
     //   diffusion.cuh の DiffusionPipeline::generate_txt2img と 1:1 対応 (同じ引数規約)。

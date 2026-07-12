@@ -18,6 +18,8 @@
 #ifdef HAVE_OPENVINO
 
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -95,6 +97,41 @@ public:
             rgb_out, w_out, h_out);
     }
 
+    // ----------------------------------------------------------------
+    // ランタイム LoRA (L-2)。name → ファイルパスを解決して runner へ委譲する。
+    //   探索先: 環境変数 DOLLAMA_LORA_DIR (既定 "models/loras") 配下の <name>.safetensors。
+    //   未存在は std::invalid_argument (HTTP 層が 4xx に変換する契約)。
+    //   デバイス適用の実体は runner (DiffusionRunner → DiffusionPipeline →
+    //   unet_apply_loras) に隔離され、本ヘッダに CUDA 型は露出しない。
+    // ----------------------------------------------------------------
+    void apply_loras(const std::vector<LoraRequest>& reqs) override
+    {
+        if (reqs.empty())
+        {
+            return;
+        }
+        std::vector<LoraFileRequest> files;
+        files.reserve(reqs.size());
+        for (const LoraRequest& r : reqs)
+        {
+            const std::string path = resolve_lora_path(r.name);
+            std::ifstream     f(path, std::ios::binary);
+            if (!f.good())
+            {
+                throw std::invalid_argument(
+                    "SDXLBackend: LoRA '" + r.name + "' が見つかりません: " + path);
+            }
+            files.push_back(LoraFileRequest{path, r.strength});
+        }
+        runner_->apply_loras(files);
+    }
+
+    // patch 済み常駐重みを base へ bit-exact 復元する。
+    void clear_loras() override
+    {
+        runner_->clear_loras();
+    }
+
     // SDXL の静的メタ情報: latent 4ch / native 1024 / T5 不要。
     BackendInfo info() const override
     {
@@ -107,6 +144,15 @@ public:
     }
 
 private:
+    // LoRA 名 → ファイルパス解決。DOLLAMA_LORA_DIR (既定 "models/loras") 配下の
+    // <name>.safetensors。存在確認は呼び出し側 (apply_loras) が行う。
+    static std::string resolve_lora_path(const std::string& name)
+    {
+        const char*       env = std::getenv("DOLLAMA_LORA_DIR");
+        const std::string dir = (env != nullptr && env[0] != '\0') ? env : "models/loras";
+        return dir + "/" + name + ".safetensors";
+    }
+
     TextConditioner                   tc_;
     std::unique_ptr<IDiffusionRunner> runner_;
 };

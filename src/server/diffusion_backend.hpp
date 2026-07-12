@@ -43,10 +43,26 @@ struct BackendInfo
     bool        needs_t5          = false;
 };
 
+// ランタイム LoRA (L-2) のリクエスト DTO (純 cpp・CUDA/OV 型なし)。
+//   name     : LoRA 識別名。backend が DOLLAMA_LORA_DIR (既定 models/loras) 配下の
+//              <name>.safetensors へ解決する。
+//   strength : 適用強度 (scale = strength * alpha / rank)。
+struct LoraRequest
+{
+    std::string name;
+    float       strength = 1.0f;
+};
+
 // 拡散 backend の実行 interface。実体はアーキごとに (sdxl_backend.hpp 等で) 実装する。
 struct IDiffusionBackend
 {
     virtual ~IDiffusionBackend() = default;
+
+    // ランタイム LoRA (L-2): 生成前に常駐重みへマージ / 生成後に復元する。
+    //   default no-op (sd35 / stub は無改修で LoRA 無効)。SDXL が override する。
+    //   name が解決できない場合は std::invalid_argument を投げる (HTTP 層が 4xx に変換)。
+    virtual void apply_loras(const std::vector<LoraRequest>& reqs) { (void)reqs; }
+    virtual void clear_loras() {}
 
     // prompt / negative から 1 枚生成し RGB8 を返す。
     //   prompt   : ポジティブプロンプト。

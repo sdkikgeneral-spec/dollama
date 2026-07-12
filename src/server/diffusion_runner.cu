@@ -75,6 +75,31 @@ public:
                                h);
     }
 
+    // ランタイム LoRA (L-2): ファイルリストを DiffusionPipeline へ順に適用する。
+    //   適用途中で失敗した場合は部分適用が残らないよう復元してから再 throw する
+    //   (呼び出し側 = HTTP 層はエラー変換だけに専念できる)。
+    void apply_loras(const std::vector<LoraFileRequest>& reqs) override
+    {
+        try
+        {
+            for (const LoraFileRequest& r : reqs)
+            {
+                pipe_.apply_lora_file(r.path, r.strength);
+            }
+        }
+        catch (...)
+        {
+            pipe_.clear_loras();
+            throw;
+        }
+    }
+
+    // patch 済み常駐重みを base へ bit-exact 復元する。
+    void clear_loras() override
+    {
+        pipe_.clear_loras();
+    }
+
 private:
     DiffusionPipeline pipe_;
 };

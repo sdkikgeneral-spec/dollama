@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -221,6 +222,37 @@ DiffusionPipeline::~DiffusionPipeline()
     if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
     if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
     if (vae_weights_handle_ != nullptr)      { vae_weights_destroy(vae_weights_handle_); }
+}
+
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2)。常駐 UNet 重みへの適用時マージ / bit-exact 復元。
+// ----------------------------------------------------------------
+void DiffusionPipeline::apply_lora_file(const std::string& path, float strength)
+{
+    // LoRA safetensors をロードし、base (= unet_weights_) へ写像する (lora.hpp)。
+    SafeTensors    lora_st(path);
+    LoraLoadReport rep;
+    std::vector<LoraModule> mods = load_lora_modules(unet_weights_, lora_st, strength, &rep);
+    if (rep.te_skipped > 0)
+    {
+        // te1/te2 (テキストエンコーダ) LoRA はスコープ外 skip
+        std::cout << "[lora] skipped " << rep.te_skipped
+                  << " te1/te2 keys (UNet merge only)\n";
+    }
+    if (rep.incomplete > 0 || rep.other_keys > 0)
+    {
+        // down/up 片欠けの不完全 module / 解釈不能 key の skip 件数
+        std::cout << "[lora] skipped incomplete modules=" << rep.incomplete
+                  << " / unknown keys=" << rep.other_keys << "\n";
+    }
+    unet_apply_loras(unet_weights_handle_, mods.data(), static_cast<int>(mods.size()));
+    std::cout << "[lora] applied: " << path << " (strength=" << strength
+              << ", modules=" << rep.modules << ")\n";
+}
+
+void DiffusionPipeline::clear_loras()
+{
+    unet_clear_loras(unet_weights_handle_);
 }
 
 // ----------------------------------------------------------------

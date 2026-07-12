@@ -106,6 +106,18 @@ public:
     //   time_ids : [6] (FP32, cond/uncond 共通)
     //   guidance_scale : CFG スケール (例 7.5)
     //   rgb_out / w / h : generate と同じ HWC uint8 出力。
+    // ----------------------------------------------------------------
+    // ランタイム LoRA (L-2)。生成前に常駐 UNet 重みへ焼き込み、生成後に復元する。
+    //   apply_lora_file: LoRA safetensors (kohya 命名) をロードし、
+    //     load_lora_modules (base = unet_weights_) → unet_apply_loras で
+    //     W += strength*(alpha/rank)*(B@A) をデバイス上でマージする。
+    //     ファイル不正・写像不能は std::runtime_error (適用途中失敗は呼び出し側が
+    //     clear_loras してから再試行する)。
+    //   clear_loras: patch 済み key を base host バイトから再 upload し bit-exact 復元。
+    // ----------------------------------------------------------------
+    void apply_lora_file(const std::string& path, float strength);
+    void clear_loras();
+
     void generate_txt2img(int                   steps,
                           uint64_t              seed,
                           float                 guidance_scale,

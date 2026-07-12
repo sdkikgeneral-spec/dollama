@@ -5,6 +5,7 @@
 #include <cuda_fp16.h>
 
 #include "io/safetensors.hpp"
+#include "infer/lora.hpp"
 
 namespace dollama
 {
@@ -90,6 +91,27 @@ UnetWeightsHandle unet_weights_create(const SafeTensors& weights);
 
 // ハンドルが保持する全デバイス重みを解放する。nullptr は無視。
 void unet_weights_destroy(UnetWeightsHandle handle);
+
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2)。常駐重みへの適用時マージ / bit-exact 復元。
+// ----------------------------------------------------------------
+// unet_apply_loras:
+//   各 LoraModule (lora.hpp / load_lora_modules の出力) について、常駐重み W に
+//     W += scale * (B @ A)
+//   をデバイス上で焼き込む (delta = launch_gemm_fp16(B, A, alpha=scale, beta=0) →
+//   launch_add で in-place 加算)。forward 経路・カーネルは 1 命令も変えない。
+//   patch した base_key はハンドル内で追跡され unet_clear_loras で復元される。
+//   shape 不整合・重み不在は std::runtime_error (途中で失敗した場合、それまでに
+//   適用済みの module は patched のまま残る → 呼び出し側は clear してから再試行する)。
+void unet_apply_loras(UnetWeightsHandle handle, const LoraModule* mods, int n);
+
+// unet_clear_loras:
+//   patch 済みの全 key を base SafeTensors の host バイトから再 upload して
+//   bit-exact 復元する (デバイス側 base コピーは持たない)。patch なしなら no-op。
+void unet_clear_loras(UnetWeightsHandle handle);
+
+// 常駐重みのデバイスポインタを引く (テスト・検証用)。未ロードの key は常駐化してから返す。
+const __half* unet_weight_device_ptr(UnetWeightsHandle handle, const std::string& name);
 
 // 常駐重みハンドルを使う launch_unet。重み転送/再 malloc は発生しない (2step 目以降)。
 //   attn_fast: FAST モード (G-3k)。既定 false = 現行 (default) 挙動。

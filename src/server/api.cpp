@@ -122,6 +122,43 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
         gr.height = h;
     }
 
+    // L-2: ランタイム LoRA (任意項目)。loras: [{ "name": str, "strength": float=1.0 }]。
+    // 未指定 = 空 = 従来経路 (無改変)。形式不正は 400 で明示的に弾く (黙って無視しない)。
+    if (body.contains("loras"))
+    {
+        if (!body["loras"].is_array())
+        {
+            write_error(res, 400, "'loras' は配列である必要があります",
+                        "invalid_request_error");
+            return;
+        }
+        for (const auto& item : body["loras"])
+        {
+            if (!item.is_object() || !item.contains("name") || !item["name"].is_string() ||
+                item["name"].get<std::string>().empty())
+            {
+                write_error(res, 400,
+                            "'loras' の各要素は {\"name\": 文字列, \"strength\": 数値} "
+                            "である必要があります",
+                            "invalid_request_error");
+                return;
+            }
+            LoraSpec spec;
+            spec.name = item["name"].get<std::string>();
+            if (item.contains("strength"))
+            {
+                if (!item["strength"].is_number())
+                {
+                    write_error(res, 400, "'loras[].strength' は数値である必要があります",
+                                "invalid_request_error");
+                    return;
+                }
+                spec.strength = item["strength"].get<float>();
+            }
+            gr.loras.push_back(spec);
+        }
+    }
+
     // response_format: url は未対応
     if (body.contains("response_format") && body["response_format"].is_string())
     {
@@ -134,11 +171,18 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
         }
     }
 
-    // 生成 (失敗は 500)
+    // 生成 (失敗は 500。ただしリクエスト起因 = std::invalid_argument は 400:
+    //  L-2 の LoRA 名未解決など、呼び出し側入力の誤りをサーバ異常と区別する)
     GenResult result;
     try
     {
         result = gen.generate(gr);
+    }
+    catch (const std::invalid_argument& e)
+    {
+        write_error(res, 400, std::string("リクエストが不正です: ") + e.what(),
+                    "invalid_request_error");
+        return;
     }
     catch (const std::exception& e)
     {
