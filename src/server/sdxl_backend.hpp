@@ -146,8 +146,27 @@ public:
 private:
     // LoRA 名 → ファイルパス解決。DOLLAMA_LORA_DIR (既定 "models/loras") 配下の
     // <name>.safetensors。存在確認は呼び出し側 (apply_loras) が行う。
+    //
+    // name は HTTP リクエスト由来のユーザー入力なので、連結前に厳格に検証して
+    // ディレクトリ脱出 (path traversal) を封じる: 空・先頭ドット・区切り文字を含む
+    // ものは即 reject し、許可文字は [A-Za-z0-9_.-] のみ (これにより '/' '\\' '..' は
+    // 構造的に混入不能)。不正名は std::invalid_argument → HTTP 層が 4xx に変換する。
     static std::string resolve_lora_path(const std::string& name)
     {
+        if (name.empty() || name[0] == '.')
+        {
+            throw std::invalid_argument("SDXLBackend: 不正な LoRA 名: '" + name + "'");
+        }
+        for (const char c : name)
+        {
+            const bool allowed = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                                 (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+            if (!allowed)
+            {
+                throw std::invalid_argument("SDXLBackend: 不正な LoRA 名: '" + name + "'");
+            }
+        }
+
         const char*       env = std::getenv("DOLLAMA_LORA_DIR");
         const std::string dir = (env != nullptr && env[0] != '\0') ? env : "models/loras";
         return dir + "/" + name + ".safetensors";
