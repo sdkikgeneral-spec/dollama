@@ -230,6 +230,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 LayerNorm/GEGLU/time embed | 0.043ms / 0.055ms / 0.011ms | test_layernorm 等 |
 | HTTP サーバー (cpp-httplib+nlohmann) | 生成+往復 2.11ms (OpenAI Images 互換) | test_http |
 | PNG メタ往復 (tEXt bible) | embed 1961 / read 4376 ns/op | test_png_meta |
+| ランタイム LoRA (L-2 完了) | kohya→diffusers 写像 (`load_lora_modules`) + 常駐重み apply-time マージ (`unet_apply_loras`: `launch_gemm_fp16` で delta=scale*(B@A) → `launch_add` in-place) / `unet_clear_loras` bit-exact 復元。**全ゲート PASS** (SAC OFF 実走): [1]host写像 modules/te_skip/incomplete/scale/throw OK・[2]parity max_abs**4.9e-4**/bad0・[3]revert 4/4 memcmp bit-exact・[4]stack max_abs**9.6e-4**/bad0+revert bit-exact。数値正典=L-1 offline merge (dollma_merge_lora.py) `W+strength*(alpha/rank)*(B@A)`。HTTP `loras:[{name,strength}]` 結線 (name は allowlist 検証で path traversal 封止) | test_lora_runtime |
 
 **Phase 4 自作 LM (BitNet, 詳細は measurements-log.md §Phase4)**
 
