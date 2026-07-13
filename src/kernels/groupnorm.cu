@@ -409,4 +409,113 @@ void launch_group_norm_mb(const __half* d_in,
     CUDA_CHECK_KERNEL();
 }
 
+// ================================================================
+// G-4k S1b: multi-block GroupNorm + SiLU 融合 (epilogue=on 経路専用)
+// ================================================================
+// resnet_block の GN→SiLU は「mb 版 normalize (write) → launch_silu (read+write)」の
+// 2 パスで、SiLU ぶんの往復 (read 1 + write 1) が丸ごと余分だった。normalize の
+// 末尾 map に SiLU を畳んで 1 パス化する。partial / finalize は mb 版を共用。
+//
+// bit-exact パリティ (非交渉ゲート):
+//   既存 launch_silu (activation.cu silu_fp16) は __half 入力を float へ戻して
+//   x / (1 + __expf(-x)) を計算し __half で書く。融合版もこの丸め順を厳密に踏む:
+//   GN 結果 y を __float2half で half へ丸め → その half を float に戻して
+//   同式・同精度 (__expf) の SiLU → __float2half で書く。これで
+//   「launch_group_norm_mb → launch_silu」の 2 パスと完全ビット一致する。
+// 決定性: SiLU は要素ごとの純 map (reduction なし) なので、mb 版の
+//   run-to-run 完全ビット一致はそのまま維持される。
+// ----------------------------------------------------------------
+__global__ void group_norm_mb_normalize_silu(const __half* in,
+                                             const __half* gamma,
+                                             const __half* beta,
+                                             const float*  stats,
+                                             __half*       out,
+                                             int           C,
+                                             int           HW,
+                                             int           cpg,
+                                             int           num_groups,
+                                             long          total)
+{
+    const long chw = static_cast<long>(C) * HW;
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x; idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        const int n   = static_cast<int>(idx / chw);
+        const int c   = static_cast<int>((idx - static_cast<long>(n) * chw) / HW);
+        const int gid = n * num_groups + c / cpg;
+
+        const float mean    = stats[gid << 1];
+        const float inv_std = stats[(gid << 1) + 1];
+        const float x  = __half2float(in[idx]);
+        const float gm = __half2float(gamma[c]);
+        const float bt = __half2float(beta[c]);
+
+        // GN 結果を一旦 __half へ丸める (launch_silu が half 入力を読むのと等価)。
+        const __half hy = __float2half((x - mean) * inv_std * gm + bt);
+
+        // silu_fp16 (activation.cu) と同式・同精度: v / (1 + __expf(-v))。
+        const float v   = __half2float(hy);
+        const float sig = 1.0f / (1.0f + __expf(-v));
+        out[idx] = __float2half(v * sig);
+    }
+}
+
+// ----------------------------------------------------------------
+// ホストラッパー (GN+SiLU 融合版)。引数仕様は launch_group_norm_mb と完全同一。
+// partial / finalize / バッファは mb 版を共用し、normalize のみ SiLU 融合版に差し替え。
+// ----------------------------------------------------------------
+void launch_group_norm_silu(const __half* d_in,
+                            const __half* d_gamma,
+                            const __half* d_beta,
+                            __half*       d_out,
+                            int           N,
+                            int           C,
+                            int           H,
+                            int           W,
+                            int           num_groups,
+                            float         eps)
+{
+    if (N <= 0 || C <= 0 || H <= 0 || W <= 0 || num_groups <= 0)
+    {
+        return;
+    }
+    assert(C % num_groups == 0);
+
+    const int cpg        = C / num_groups;
+    const int HW         = H * W;
+    const int group_size = cpg * HW;
+    const int NG         = N * num_groups;
+
+    // bpg 算出は mb 版と同一 (stats の蓄積順が一致 = GN 部の bit-exact 前提)。
+    int bpg = ceil_div(group_size, GN_MB_THREADS * GN_MB_ELEMS_PER_THREAD);
+    if (bpg > GN_MB_MAX_BPG)
+    {
+        bpg = GN_MB_MAX_BPG;
+    }
+    if (bpg < 1)
+    {
+        bpg = 1;
+    }
+
+    const size_t part_floats = (static_cast<size_t>(NG) * bpg) << 1;
+    float* buf     = mb_buffer(part_floats + (static_cast<size_t>(NG) << 1));
+    float* d_part  = buf;
+    float* d_stats = buf + part_floats;
+
+    group_norm_mb_partial<<<NG * bpg, GN_MB_THREADS>>>(d_in, d_part, C, HW, cpg,
+                                                       num_groups, bpg);
+    CUDA_CHECK_KERNEL();
+
+    group_norm_mb_finalize<<<NG, GN_MB_THREADS>>>(d_part, d_stats, bpg, group_size, eps);
+    CUDA_CHECK_KERNEL();
+
+    const long total = static_cast<long>(N) * C * HW;
+    const long bl    = (total + GN_MB_THREADS - 1) / GN_MB_THREADS;
+    const int blocks = static_cast<int>(bl < 65535 ? bl : 65535);
+    group_norm_mb_normalize_silu<<<blocks, GN_MB_THREADS>>>(d_in, d_gamma, d_beta, d_stats,
+                                                            d_out, C, HW, cpg, num_groups,
+                                                            total);
+    CUDA_CHECK_KERNEL();
+}
+
 } // namespace dollama

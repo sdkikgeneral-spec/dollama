@@ -602,8 +602,10 @@ if cuda_enabled
 
   # GroupNorm テスト + ベンチ (Phase 2 マイルストーン 2-2-3)
   # groupnorm.cu をテストと一緒にビルドして launch_group_norm をリンクする。
+  # G-4k S1b: GN+SiLU 融合の参照 (mb→launch_silu) 用に activation.cu もリンク。
   test_groupnorm_exe = executable('test_groupnorm',
-    sources             : files('tests/test_groupnorm.cu', 'kernels/groupnorm.cu'),
+    sources             : files('tests/test_groupnorm.cu', 'kernels/groupnorm.cu',
+                                'kernels/activation.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,

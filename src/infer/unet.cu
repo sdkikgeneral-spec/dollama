@@ -523,18 +523,20 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     __half* d_b = sc.alloc((size_t)B * chw_out);
 
     // norm1 -> silu -> conv1 (Cin -> Cout)。group_norm/conv2d は N=B を渡すだけ。
-    // G-4k S1a: epilogue=on のみ multi-block GN (蓄積順が変わるため default から隔離)。
+    // G-4k S1a/S1b: epilogue=on のみ multi-block GN + SiLU 融合 1 パス
+    // (mb→別 launch_silu の 2 パスとビット一致・default から隔離)。
     if (sc.epilogue())
     {
-        launch_group_norm_mb(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
-                             d_a, B, Cin, H, W, groups, eps);
+        launch_group_norm_silu(d_x, w.get(prefix + "norm1.weight"),
+                               w.get(prefix + "norm1.bias"),
+                               d_a, B, Cin, H, W, groups, eps);
     }
     else
     {
         launch_group_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
                           d_a, B, Cin, H, W, groups, eps);
+        launch_silu(d_a, d_a, B * Cin * HW);
     }
-    launch_silu(d_a, d_a, B * Cin * HW);
     launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
                   d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 
@@ -551,17 +553,19 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     }
 
     // norm2 -> silu -> conv2 (Cout -> Cout)
+    // G-4k S1b: norm1 と同じく epilogue=on は GN+SiLU 融合 1 パス。
     if (sc.epilogue())
     {
-        launch_group_norm_mb(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
-                             d_a, B, Cout, H, W, groups, eps);
+        launch_group_norm_silu(d_b, w.get(prefix + "norm2.weight"),
+                               w.get(prefix + "norm2.bias"),
+                               d_a, B, Cout, H, W, groups, eps);
     }
     else
     {
         launch_group_norm(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
                           d_a, B, Cout, H, W, groups, eps);
+        launch_silu(d_a, d_a, B * Cout * HW);
     }
-    launch_silu(d_a, d_a, B * Cout * HW);
     launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
                   d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
 

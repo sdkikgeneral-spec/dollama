@@ -83,4 +83,28 @@ void launch_group_norm_mb(const __half* d_in,
                           int           num_groups,
                           float         eps);
 
+// ----------------------------------------------------------------
+// multi-block GroupNorm + SiLU 融合 (G-4k S1b・FAST epilogue 経路専用)
+// ----------------------------------------------------------------
+// 引数仕様は launch_group_norm_mb と完全同一。partial / finalize カーネルは
+// mb 版をそのまま共用し、normalize カーネルのみ末尾 map に SiLU を畳んだ 1 パス版。
+//   - bit-exact パリティ: normalize は GN 結果を一旦 __half へ丸めてから float に
+//     戻して SiLU (launch_silu と同式・同精度 = x / (1 + __expf(-x))) を掛けるため、
+//     「launch_group_norm_mb → launch_silu」の 2 パスと完全ビット一致する。
+//   - SiLU は reduction を伴わない末尾 map なので、mb 版の run-to-run 完全
+//     ビット一致 (決定的 2 段集約) はそのまま維持される (非交渉ゲート)。
+//   - default (epilogue=off) 経路では使わないこと (byte-for-byte 無改変の原則)。
+//   - 中間バッファは mb 版と共用 (grow-only 静的常駐・step 内 cudaMalloc なし)。
+//   - d_in == d_out の in-place 可 (stats 確定後の normalize+SiLU は純 map)。
+void launch_group_norm_silu(const __half* d_in,
+                            const __half* d_gamma,
+                            const __half* d_beta,
+                            __half*       d_out,
+                            int           N,
+                            int           C,
+                            int           H,
+                            int           W,
+                            int           num_groups,
+                            float         eps);
+
 } // namespace dollama

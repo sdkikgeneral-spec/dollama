@@ -141,6 +141,26 @@ norm1/norm2 + conv_norm_out。default(off) は 1-block GN のまま byte-for-byt
   パス数不変・帯域改善分だけ。GN 単体は 4.2x で実証済み)。回帰なしは確認。resnet バケット合否は
   S1b (GN+SiLU 融合) + S2 (conv2d 後段融合) 完了後の再 profile で判定する。
 
+#### G-4k S1b 実測 (2026-07-12・GN+SiLU 融合・完了)
+
+multi-block GN の normalize カーネル末尾に SiLU を畳んだ `launch_group_norm_silu` (src/kernels/groupnorm.cu) を
+新設。partial/finalize は mb 版を共用し normalize のみ融合版に差し替え。resnet_block の epilogue 経路
+(norm1/norm2) で `launch_group_norm_mb`+`launch_silu` の 2 パスを 1 本に置換 (SiLU の read+write 往復を撲滅)。
+conv_norm_out は golden `conv_norm_out_out` が SiLU 前 GN 出力を捕捉 (test_unet.cu 回帰アンカー) するため融合せず据え置き。
+
+- **bit-exact 設計**: 融合 normalize は GN 結果を一旦 `__float2half` で丸め→float 戻し→`launch_silu` と同式・同精度
+  (`x/(1+__expf(-x))`) の SiLU を掛ける。この丸め順で「mb GN → 別 launch_silu」の 2 パスと**完全ビット一致**。
+- **GN カーネル単体 (test_groupnorm 実走 ALL PASSED)**:
+  - silu 融合 parity: 5 形状 (320_128 / 640_64 / 1280_32 / B2_320_128 / 2560_32) すべて **BIT-EXACT vs mb+silu** (memcmp)
+  - bitexact: 融合版 3 runs 完全ビット一致 PASS (SiLU は純 map で mb の決定性を壊さない)
+- **UNet 結線 (test_unet_fast 実走 ALL PASSED・warm)**:
+  - epilogue vs default: **SSIM 0.999999 ≥ 0.9999** / MAE 6.57e-05 / max_abs 4.88e-4 / bad=0 PASS
+  - default 無改変ゲート: fast vs default **bit-exact 維持** (MAE=0/SSIM=1)・default vs golden SSIM 0.999996 PASS
+  - 1step warm 中央値: default **467.1ms** / fast 397.1ms / fast+epilogue **397.5ms** = epilogue vs fast 差は
+    +0.4ms = run-to-run ノイズ内 (SiLU パス削減ぶんはパス数 −2/resnet だが GN が既にメモリ律速で埋没)
+- **resnet ≤0.95s ゲート**: S1b 単体でも 1step 寄与はノイズ床下 (S1a と同傾向)。合否判定は S2 (conv2d 後段融合)
+  完了後の再 profile へ (据え置き)。S1b はパリティ (bit-exact) + パス数削減の達成まで。
+
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。
   softmax / GroupNorm / time embed / 最初と最後の conv は **FP16 のまま残す** (敏感層)。
@@ -175,7 +195,7 @@ norm1/norm2 + conv_norm_out。default(off) は 1-block GN のまま byte-for-byt
 | **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | ✅ **完了 (S1〜S3c・下記注)。parity gate g=1.0 SSIM 0.9994≥0.999 PASS (sweep g=1 は 0.9995・別走行)・batch2 e2e 1.19x (期待 ~2× に非到達)・合成 --fast 1.32x** |
 | **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)** |
 | **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.20x に是正) | cpp-implementer | G-3k | — | ✅ **完了**: warm ハンドル (unet_weights_create) で計測・default vs golden SSIM 0.999996/bad0・fast vs default bit-exact・warm 1step default 526ms/fast 437ms = **1.20x** |
-| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 **着手中・S1a ✅** (S1a 実測は #5 節「S1a 実測」参照。残: S1b GN+SiLU 融合 / S2 conv2d 後段融合 / S3 配線) |
+| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 **着手中・S1a ✅ / S1b ✅** (実測は #5 節「S1a/S1b 実測」参照。S1b=GN+SiLU 融合 bit-exact・epilogue vs default SSIM 0.999999。残: S2 conv2d 後段融合 / S3 配線) |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
 | **G-6k** | 3段モードの実測まとめ + 出荷判定 (`--fast` の default 昇格是非 / FP8 採否) | PL + gpu-benchmarker | 全部 | — | 🔲 |
 | **G-7k** | cuBLASLt 移行による linear (FFN/attn to_q/k/v/out) の bias epilogue 融合 — transformer バケット残 ~2.39s が対象。GEMM 本体の呼び方が変わるため G-4k と分離 (PL 決裁 2026-07-10・当初仮称「G-5k」は FP8 と衝突するため G-7k で採番) | cuda-kernel-dev | G-4k | ゼロコスト | 🔲 **バックログ** (順序図の主線外・費用対効果を G-4k 後の再 profile で判断) |
