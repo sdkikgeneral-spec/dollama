@@ -537,8 +537,23 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
                           d_a, B, Cin, H, W, groups, eps);
         launch_silu(d_a, d_a, B * Cin * HW);
     }
-    launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
-                  d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    // G-4k S2: epilogue=on のみ conv1.bias を後段融合カーネルへ移す (conv は bias なし)。
+    //   融合が GEMM 経路の 2 段丸め列 (conv_bias_add_rows → bias_add_channel) と
+    //   bit 一致するのは conv が GEMM 経路のときのみ。direct 経路 shape (GEMM 下限割れ)
+    //   は bias の丸め列が違う (FP32 蓄積へ畳む単一丸め) ため、ガードで従来 2 パスへ
+    //   フォールバックする (静かな bit 崩れ防止)。epilogue=off は従来経路そのまま。
+    const bool fuse1 = sc.epilogue()
+        && conv2d_uses_gemm_bias_path(B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    if (fuse1)
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv1.weight"), /*d_bias=*/nullptr,
+                      d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    }
+    else
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
+                      d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    }
 
     // time embedding: silu(temb) -> Linear -> [B,Cout] -> channel broadcast add。
     //   temb proj は per-b で異なる (temb は cond/uncond で別) ため M=B で射影し、
@@ -546,10 +561,20 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     __half* d_tproj = sc.alloc((size_t)B * Cout);
     linear(w, prefix + "time_emb_proj.weight", prefix + "time_emb_proj.bias",
            d_temb_silu, d_tproj, B, Cout, 1280, true);
-    for (int b = 0; b < B; ++b)
+    if (fuse1)
     {
-        launch_bias_add_channel(d_b + (size_t)b * Cout * HW, d_tproj + (size_t)b * Cout,
-                                d_b + (size_t)b * Cout * HW, 1, Cout, H, W);
+        // G-4k S2 P1: conv1.bias broadcast + per-(n,c) time-bias を 1 カーネルに融合
+        //   (2 段丸めを 1:1 再現し per-b ループ B+1 発を 1 発に置換)。
+        launch_conv_bias_biasch(d_b, w.get(prefix + "conv1.bias"), d_tproj,
+                                d_b, B, Cout, H, W);
+    }
+    else
+    {
+        for (int b = 0; b < B; ++b)
+        {
+            launch_bias_add_channel(d_b + (size_t)b * Cout * HW, d_tproj + (size_t)b * Cout,
+                                    d_b + (size_t)b * Cout * HW, 1, Cout, H, W);
+        }
     }
 
     // norm2 -> silu -> conv2 (Cout -> Cout)
@@ -566,20 +591,45 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
                           d_a, B, Cout, H, W, groups, eps);
         launch_silu(d_a, d_a, B * Cout * HW);
     }
-    launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
-                  d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
-
-    // skip
-    if (Cin == Cout)
+    // G-4k S2: epilogue=on のみ conv2.bias + residual add を後段融合 (ガードは conv1 と同じ
+    //   GEMM 経路保証のみ。false なら従来 2 パス)。conv_shortcut 自体は無改修 (bias 込み)。
+    const bool fuse2 = sc.epilogue()
+        && conv2d_uses_gemm_bias_path(B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    if (fuse2)
     {
-        launch_add(d_out, d_x, d_out, B * Cout * HW);
+        launch_conv2d(d_a, w.get(prefix + "conv2.weight"), /*d_bias=*/nullptr,
+                      d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+        // residual 決定: Cin==Cout は x そのまま、それ以外は 1x1 conv_shortcut(x) を d_b へ。
+        const __half* d_res = d_x;
+        if (Cin != Cout)
+        {
+            launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
+                          w.get(prefix + "conv_shortcut.bias"),
+                          d_b, B, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
+            d_res = d_b;
+        }
+        // G-4k S2 P2: conv2.bias broadcast + residual add を 1 カーネルに融合
+        //   (conv_bias_add_rows → add_fp16 の 2 段丸めを 1:1 再現)。
+        launch_conv_bias_residual(d_out, w.get(prefix + "conv2.bias"), d_res,
+                                  d_out, B, Cout, H, W);
     }
     else
     {
-        launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
-                      w.get(prefix + "conv_shortcut.bias"),
-                      d_b, B, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
-        launch_add(d_out, d_b, d_out, B * Cout * HW);
+        launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
+                      d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+
+        // skip
+        if (Cin == Cout)
+        {
+            launch_add(d_out, d_x, d_out, B * Cout * HW);
+        }
+        else
+        {
+            launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
+                          w.get(prefix + "conv_shortcut.bias"),
+                          d_b, B, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
+            launch_add(d_out, d_b, d_out, B * Cout * HW);
+        }
     }
     (void)chw_out;
 }

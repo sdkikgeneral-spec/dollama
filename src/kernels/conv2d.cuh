@@ -40,6 +40,22 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
                    int stride_h, int stride_w, int pad_h, int pad_w, int dilation_h, int dilation_w);
 
 // ----------------------------------------------------------------
+// G-4k S2: この形状の launch_conv2d が「GEMM 経路」に乗ることをホスト側から保証する判定。
+//   GEMM 経路は conv 本体 (bias なし GEMM → f2h 丸め) の後に conv_bias_add_rows で
+//   bias を f2h(h2f(conv)+h2f(bias)) と別丸めする「2 段丸め」。direct 経路は bias を
+//   FP32 アキュムレータへ畳む「単一丸め」で丸め列が異なる。そのため conv の bias を
+//   後段カーネルへ融合 (d_bias=nullptr で呼び bias を後付け再現) してよいのは、本関数が
+//   true を返す shape のみ (false なら融合せず従来経路にフォールバックすること)。
+//   判定は launch_conv2d の経路選択と同一式:
+//     - N==1 は use_gemm_path(N=1,...) 直、N>1 の per-n ループも use_gemm_path(1,...) 判定
+//       のため、どちらも N=1 形状下限 (Cout>=16, Hout*Wout>=16, Cin*KH*KW>=16) に一致。
+//     - 不正次元・出力空の場合は false (launch_conv2d は何もしない early return)。
+// ----------------------------------------------------------------
+bool conv2d_uses_gemm_bias_path(int N, int Cin, int H, int W, int Cout, int KH, int KW,
+                                int stride_h, int stride_w, int pad_h, int pad_w,
+                                int dilation_h, int dilation_w);
+
+// ----------------------------------------------------------------
 // direct conv (1 スレッド = 出力 1 画素, FP32 蓄積) を明示的に起動する。
 //   launch_conv2d が形状により選ぶ GEMM 経路をバイパスし、必ず direct で計算する。
 //   GEMM 経路 (im2col+wmma / 帯分割) の数値検証用に、信頼できる参照として test から

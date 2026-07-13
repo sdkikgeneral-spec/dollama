@@ -686,8 +686,10 @@ if cuda_enabled
   test('timeembed', test_timeembed_exe)
 
   # broadcast bias add テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet)
+  # G-4k S2: 融合カーネルの P2 参照 2 パスに launch_add を使うため elementwise.cu も同梱。
   test_bias_add_exe = executable('test_bias_add',
-    sources             : files('tests/test_bias_add.cu', 'kernels/bias_add.cu'),
+    sources             : files('tests/test_bias_add.cu', 'kernels/bias_add.cu',
+                                'kernels/elementwise.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,

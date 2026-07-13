@@ -161,6 +161,34 @@ conv_norm_out は golden `conv_norm_out_out` が SiLU 前 GN 出力を捕捉 (te
 - **resnet ≤0.95s ゲート**: S1b 単体でも 1step 寄与はノイズ床下 (S1a と同傾向)。合否判定は S2 (conv2d 後段融合)
   完了後の再 profile へ (据え置き)。S1b はパリティ (bit-exact) + パス数削減の達成まで。
 
+#### G-4k S2 実測 (2026-07-14・conv2d 後段融合・完了)
+
+resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で 1 パスに畳んだ (`src/kernels/bias_add.cu`):
+`launch_conv_bias_biasch` (P1) = conv1.bias broadcast + per-(n,c) time-bias 融合 (per-b ループ B 発 + conv 内 bias
+パスを 1 発に)、`launch_conv_bias_residual` (P2) = conv2.bias broadcast + residual add 融合 (conv 内 bias パス +
+`launch_add` を 1 発に)。配線 (`src/infer/unet.cu` resnet_block・epilogue=on 分岐のみ) は conv を `d_bias=nullptr` で
+呼び融合カーネルへ差し替え、off は原文そのまま温存 (else 側に移設・byte 無改変)。
+
+- **bit-exact 設計 (急所)**: `launch_conv2d` は**形状で経路が分岐し bias の丸め列が違う** — GEMM 経路は conv を
+  f2h 丸め後に `conv_bias_add_rows` が別丸め (**2 段丸め** `f2h(h2f(conv)+h2f(bias))`)、direct 経路 (GEMM 下限割れ) は
+  bias を FP32 蓄積へ畳む**単一丸め**。融合は conv を bias 抜きで呼び中間を register 内で `__float2half` に落として
+  bias を後付け再現するため、**GEMM 経路のときだけ bit 一致**。よって resnet_block に `conv2d_uses_gemm_bias_path`
+  (conv2d.cu 純追加・launch_conv2d 本体不変) のガードを噛ませ、GEMM 経路非保証 shape では従来 2 パスへフォールバック
+  (静かな bit 崩れ防止)。UNet resnet の実 conv (Cout≥320 / HW≥32² / K=Cin·9) は B=1/B=2 とも GEMM 経路確定。
+- **カーネル単体 (test_bias_add 実走 ALL PASSED)**:
+  - P1/P2 融合 parity: B={1,2} × {320_128 / 640_64 / 1280_32} 全 6 形状すべて **BIT-EXACT vs GEMM 経路 2 段丸め
+    参照** (memcmp)・P1 in-place (d_conv==d_out) も bit-exact
+  - bitexact: 融合版 3 runs 完全ビット一致 PASS (純 map で決定性を壊さない)。既存 rowvec/channel 4 テストも無回帰
+- **UNet 結線 (test_unet_fast 実走 ALL PASSED・warm)**:
+  - epilogue vs default: **SSIM 0.999999 ≥ 0.9999** / MAE 6.57e-05 / max_abs 4.88e-4 / bad=0 PASS
+  - default 無改変ゲート: fast vs default **bit-exact 維持** (MAE=0/max_abs=0)・default vs golden SSIM 0.999996 PASS
+  - 1step warm 中央値: default **469.5ms** / fast 402.3ms / fast+epilogue **400.7ms** = epilogue vs fast 差 −1.6ms
+    (S2 で fast 単体を僅かに下回る側へ・GN がメモリ律速で埋没する帯だが後段パス削減が微小に前進)
+  - 回帰確認: test_conv2d 全 PASS (batch2 含む・conv2d.cu 純追加のみ)・meson compile 63 ターゲット緑
+- **resnet ≤0.95s ゲート**: S1a/S1b/S2 で resnet epilogue の融合 (GN mb / GN+SiLU / conv 後段) が出揃った。1step 寄与は
+  依然ノイズ床下だが、これで G-4k(A)(B) のパス削減は達成。**resnet バケット合否の再 profile は研究機セッションで別途**
+  (ScopedSyncTimer で resnet 秒数を取り直し ≤0.95s 判定・G-6k 出荷判定の分母更新)。
+
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。
   softmax / GroupNorm / time embed / 最初と最後の conv は **FP16 のまま残す** (敏感層)。
@@ -195,7 +223,7 @@ conv_norm_out は golden `conv_norm_out_out` が SiLU 前 GN 出力を捕捉 (te
 | **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | ✅ **完了 (S1〜S3c・下記注)。parity gate g=1.0 SSIM 0.9994≥0.999 PASS (sweep g=1 は 0.9995・別走行)・batch2 e2e 1.19x (期待 ~2× に非到達)・合成 --fast 1.32x** |
 | **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)** |
 | **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.20x に是正) | cpp-implementer | G-3k | — | ✅ **完了**: warm ハンドル (unet_weights_create) で計測・default vs golden SSIM 0.999996/bad0・fast vs default bit-exact・warm 1step default 526ms/fast 437ms = **1.20x** |
-| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | 🔲 **着手中・S1a ✅ / S1b ✅** (実測は #5 節「S1a/S1b 実測」参照。S1b=GN+SiLU 融合 bit-exact・epilogue vs default SSIM 0.999999。残: S2 conv2d 後段融合 / S3 配線) |
+| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | ✅ **S1a/S1b/S2 完了** (実測は #5 節「S1a/S1b/S2 実測」参照。S2=conv2d 後段融合 (P1 conv1.bias+time-bias / P2 conv2.bias+residual) 全 6 形状 memcmp BIT-EXACT・GEMM 経路ガード付・epilogue vs default SSIM 0.999999。resnet ≤0.95s の再 profile は研究機で別途) |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
 | **G-6k** | 3段モードの実測まとめ + 出荷判定 (`--fast` の default 昇格是非 / FP8 採否) | PL + gpu-benchmarker | 全部 | — | 🔲 |
 | **G-7k** | cuBLASLt 移行による linear (FFN/attn to_q/k/v/out) の bias epilogue 融合 — transformer バケット残 ~2.39s が対象。GEMM 本体の呼び方が変わるため G-4k と分離 (PL 決裁 2026-07-10・当初仮称「G-5k」は FP8 と衝突するため G-7k で採番) | cuda-kernel-dev | G-4k | ゼロコスト | 🔲 **バックログ** (順序図の主線外・費用対効果を G-4k 後の再 profile で判断) |

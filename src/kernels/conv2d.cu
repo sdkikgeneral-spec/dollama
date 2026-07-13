@@ -508,6 +508,39 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
                          dilation_h, dilation_w);
 }
 
+// ----------------------------------------------------------------
+// G-4k S2: GEMM 経路 (bias 2 段丸め) 保証判定 (宣言コメントは conv2d.cuh 参照)。
+//   launch_conv2d の経路選択ロジックを 1:1 でなぞる (本体は一切変更しない純追加)。
+//   ここが false の shape に bias 後段融合を当てると direct 経路の単一丸めと食い違い、
+//   静かに bit が崩れる — 呼び側 (resnet_block epilogue) の必須ガード。
+// ----------------------------------------------------------------
+bool conv2d_uses_gemm_bias_path(int N, int Cin, int H, int W, int Cout, int KH, int KW,
+                                int stride_h, int stride_w, int pad_h, int pad_w,
+                                int dilation_h, int dilation_w)
+{
+    // launch_conv2d の early return と同じ不正入力は「GEMM 経路ではない」扱い。
+    if (N <= 0 || Cin <= 0 || H <= 0 || W <= 0 || Cout <= 0 || KH <= 0 || KW <= 0)
+    {
+        return false;
+    }
+    if (stride_h <= 0 || stride_w <= 0 || dilation_h <= 0 || dilation_w <= 0)
+    {
+        return false;
+    }
+    if (pad_h < 0 || pad_w < 0)
+    {
+        return false;
+    }
+    const int Hout = conv_out_dim(H, pad_h, dilation_h, KH, stride_h);
+    const int Wout = conv_out_dim(W, pad_w, dilation_w, KW, stride_w);
+    if (Hout <= 0 || Wout <= 0)
+    {
+        return false;
+    }
+    // N==1 も N>1 per-n ループも判定は use_gemm_path(1, ...) に帰着する。
+    return use_gemm_path(1, Cin, Cout, KH, KW, Hout, Wout);
+}
+
 
 // ================================================================
 // FP32 im2col + GEMM 経路 (S3-E)。
