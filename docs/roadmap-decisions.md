@@ -241,6 +241,23 @@ host 側 safetensors 重み演算のみ (SDXL 推論不要・開発機で完結)
 往復)。合成ベンチ rank32 **0.38 GB/s** → 5.1GB 外挿 ~13-16s + I/O。**実 SDXL/LoRA でのマージ + 実画像
 確認は研究機・別タスク** (本番アセット無改変)。
 
+### LoRA L-2 ランタイム LoRA (✅ 完了 2026-07-13・`2dc4181` / path traversal 修正 `4fa6ca5`)
+
+生成ごとに LoRA 選択/スタック/強度可変を**常駐重みへ apply-time マージ**で実現 (offline merge を毎生成やり直す
+のではなく、GPU 上の常駐 UNet 重みに適用/復元する)。設計:
+- **host 写像** `load_lora_modules`: kohya (`lora_up`/`lora_down`/`alpha`) → diffusers key へ写像・UNet のみ
+  (`lora_te1`/`te2` は skip)・incomplete pair は無視・scale=strength·alpha/rank。
+- **apply** `unet_apply_loras`: 各 module で `launch_gemm_fp16` により delta=scale·(B@A) を作り `launch_add` で
+  常駐重みへ in-place 加算 (複数 LoRA は順次スタック)。
+- **revert** `unet_clear_loras`: 適用の逆順で減算し **memcmp bit-exact 復元** (生成間の重み汚染ゼロ)。
+- **HTTP 結線**: `loras:[{name,strength}]`。`name` は allowlist 検証で **path traversal 封止** (`4fa6ca5`)。
+- **数値正典 = L-1 offline merge** (`dollma_merge_lora.py` の `W+strength·(alpha/rank)·BA`)。ランタイム経路は
+  この offline 結果と突合して検証。
+
+test_lora_runtime 全ゲート PASS (SAC OFF 実走): [1] host 写像 (modules/te skip/incomplete/scale/throw)・
+[2] parity max_abs **4.9e-4** / bad0・[3] revert 4/4 **memcmp bit-exact**・[4] stack max_abs **9.6e-4** / bad0 +
+revert bit-exact。**残**: UI (Blazor) の LoRA 選択/強度チップは未着手 (roadmap.md 表)。
+
 ### プレビュー用ドラフトモード — 見送った選択肢 (2026-06-25 ユーザー判断)
 
 採用は「本番と同じ重み・同ステップで解像度だけ下げる (768²)」の 2 ボタン方式 (✅ 完了・roadmap.md 表)。
