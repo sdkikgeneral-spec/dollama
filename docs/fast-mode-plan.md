@@ -185,9 +185,26 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
   - 1step warm 中央値: default **469.5ms** / fast 402.3ms / fast+epilogue **400.7ms** = epilogue vs fast 差 −1.6ms
     (S2 で fast 単体を僅かに下回る側へ・GN がメモリ律速で埋没する帯だが後段パス削減が微小に前進)
   - 回帰確認: test_conv2d 全 PASS (batch2 含む・conv2d.cu 純追加のみ)・meson compile 63 ターゲット緑
-- **resnet ≤0.95s ゲート**: S1a/S1b/S2 で resnet epilogue の融合 (GN mb / GN+SiLU / conv 後段) が出揃った。1step 寄与は
-  依然ノイズ床下だが、これで G-4k(A)(B) のパス削減は達成。**resnet バケット合否の再 profile は研究機セッションで別途**
-  (ScopedSyncTimer で resnet 秒数を取り直し ≤0.95s 判定・G-6k 出荷判定の分母更新)。
+- **resnet ≤0.95s ゲート — 再 profile 完了 (2026-07-14・研究機実走 DOLLAMA_PROFILE=1)**: **不合格 (FAIL)**。
+  `prof_unet_fast_warm` を拡張し `cat_resnet_sec` を per-step + ×20step バケット換算で報告 (epilogue フラグも貫通)。
+  warm・N=10・ScopedSyncTimer 計時 (baseline 1.225s と同一手法) で resnet バケット実測:
+
+  | mode | resnet/step | resnet ×20 バケット | 対 baseline |
+  |---|---|---|---|
+  | default (attn=0/epi=0) | 61.28 ms | **1.226 s** | ±0 (baseline 再現) |
+  | fast (attn=1/epi=0) | 62.01 ms | 1.240 s | +1.2% |
+  | **fast+epilogue (S1a/S1b/S2)** | 60.58 ms | **1.212 s** | **−1.1%** |
+  | default (再計測・順序影響確認) | 61.64 ms | 1.233 s | +0.6% |
+
+  → ゲート ≤0.95s (≥22% 削減) に対し fast+epilogue は **1.212s = −1.1%** で**未達**。default 再計測だけで
+  1.226→1.233s と run-to-run が ±0.6% 揺れるため、epilogue の −0.014s は**ノイズ床内 = 実効ゼロ**。
+- **診断 (なぜ G-4k では届かないか)**: resnet バケットは **conv2d (GEMM/im2col) が質量**で GroupNorm は小面積。
+  S1a の GN 帯域 4.2x は「小さいものをさらに速く」で、バケット (=conv 質量) を動かさない。G-4k(A)(B) の狙い
+  (パス数削減・bit-exact) は達成済だが、**バケット秒数を落とすレバーは conv 側**にある:
+  **G-10k (conv2d 真 batch2・~0.5-1.0s 見込み)** / **G-8k (im2col の per-conv malloc/free 撲滅・~1,600 ペア/画像)**。
+  → **resnet ≤0.95s ゲートは G-4k のスコープ外と確定。合否は G-10k/G-8k 完了後の再 profile へ再割当**。
+  G-6k 出荷判定の resnet 分母は暫定 **1.212s** (fast+epilogue) を採用 (baseline 1.225s から実質不変)。
+  再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の [RESNET-BUCKET] 行で恒久化済。
 
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。

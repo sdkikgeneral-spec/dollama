@@ -105,11 +105,15 @@ static int run_bench()
     const int  warmup = 3;
     const int  iters  = 10;
 
-    auto bench = [&](bool attn_fast)
+    // G-4k 再 profile: resnet バケット (cat_resnet_sec) を per-step + ×20step で報告し
+    //   ≤0.95s ゲート判定に供する。epilogue フラグも貫通させ fast+epilogue の resnet を測る。
+    const int gen_steps = 20;  // 正典 20step 生成でのバケット換算
+
+    auto bench = [&](bool attn_fast, bool epilogue)
     {
         for (int i = 0; i < warmup; ++i)
         {
-            launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, attn_fast);
+            launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, attn_fast, epilogue);
             CUDA_CHECK(cudaDeviceSynchronize());
         }
         if (prof)
@@ -121,7 +125,7 @@ static int run_bench()
         for (int i = 0; i < iters; ++i)
         {
             CUDA_CHECK(cudaEventRecord(ev0));
-            launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, attn_fast);
+            launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, attn_fast, epilogue);
             CUDA_CHECK(cudaEventRecord(ev1));
             CUDA_CHECK(cudaEventSynchronize(ev1));
             float ms = 0.0f;
@@ -132,23 +136,31 @@ static int run_bench()
         std::sort(s.begin(), s.end());
         const float med = s[s.size() / 2];
         std::cout << "[prof_unet_fast_warm] attn_fast=" << (attn_fast ? 1 : 0)
+                  << " epilogue=" << (epilogue ? 1 : 0)
                   << " warm per-step: median=" << med << " ms"
                   << " min=" << s.front() << " max=" << s.back()
                   << " (N=" << iters << ", warmup=" << warmup << ")\n";
         if (prof)
         {
-            const double attn_ms = profile_counters().cat_attention_sec * 1000.0 / iters;
-            const double tfmr_ms = profile_counters().cat_transformer_sec * 1000.0 / iters;
+            const double attn_ms   = profile_counters().cat_attention_sec   * 1000.0 / iters;
+            const double tfmr_ms   = profile_counters().cat_transformer_sec * 1000.0 / iters;
+            const double resnet_ms = profile_counters().cat_resnet_sec      * 1000.0 / iters;
+            const double resnet_bucket = resnet_ms * gen_steps / 1000.0;  // 20step バケット [s]
             std::cout << "[prof_unet_fast_warm]   [PROFILE] attention/step=" << attn_ms
                       << " ms  transformer/step=" << tfmr_ms
-                      << " ms  weight_upload=" << profile_counters().weight_upload_sec
+                      << " ms  resnet/step=" << resnet_ms << " ms"
+                      << "  weight_upload=" << profile_counters().weight_upload_sec
                       << " s (must be ~0 when warm)\n";
+            std::cout << "[prof_unet_fast_warm]   [RESNET-BUCKET] resnet x" << gen_steps
+                      << "step=" << resnet_bucket << " s  (gate: <=0.95s / stretch <=0.85s"
+                      << " / baseline 1.225s)\n";
         }
     };
 
-    bench(false);
-    bench(true);
-    bench(false);  // 順序影響 (クロック/温度) の確認用に default を再計測
+    bench(false, false);         // default
+    bench(true,  false);         // fast (attn only)
+    bench(true,  true);          // fast + epilogue (G-4k S1a/S1b/S2)
+    bench(false, false);         // 順序影響 (クロック/温度) の確認用に default を再計測
 
     unet_weights_destroy(handle);
     CUDA_CHECK(cudaEventDestroy(ev0));
