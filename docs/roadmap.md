@@ -240,7 +240,7 @@ proxy→実品質へ動かすこと**。**次レバー** (F-0b 後): reward 設�
 | 段 | 実装物 | 難易度 | 状態 |
 |---|---|---|---|
 | L-1 | **offline merge**: LoRA を base に事前マージ (W′=W+scale·BA) → 合成 checkpoint ロード。**自作推論は無改修**・前処理ツール 1 本 (`scripts/dollma_merge_lora.py`) | 低 | ✅ 完了 (aec741e)・test 12/12 緑・**実マージ+実画像は研究機で別途** |
-| L-2 | **ランタイム LoRA**: 生成ごとに LoRA 選択/スタック/強度可変。kohya→diffusers 写像 (`load_lora_modules`) + 常駐重み apply-time マージ (`unet_apply_loras`: `launch_gemm_fp16` で delta=scale·BA → `launch_add` in-place) / `unet_clear_loras` bit-exact 復元。HTTP `loras:[{name,strength}]` 結線 (name allowlist で path traversal 封止) | 中 | ✅ 完了 (2dc4181 / path traversal 修正 4fa6ca5)・test_lora_runtime 全ゲート PASS (parity max_abs 4.9e-4・revert memcmp bit-exact・stack+revert bit-exact)・数値正典=L-1 offline merge。**UI (Blazor) 選択チップは未着手** |
+| L-2 | **ランタイム LoRA**: 生成ごとに LoRA 選択/スタック/強度可変。kohya→diffusers 写像 (`load_lora_modules`) + 常駐重み apply-time マージ (`unet_apply_loras`: `launch_gemm_fp16` で delta=scale·BA → `launch_add` in-place) / `unet_clear_loras` bit-exact 復元。HTTP `loras:[{name,strength}]` 結線 (name allowlist で path traversal 封止) | 中 | ✅ **完了** (2dc4181 / path traversal 修正 4fa6ca5)・test_lora_runtime 全ゲート PASS (parity max_abs 4.9e-4・revert memcmp bit-exact・stack+revert bit-exact)・数値正典=L-1 offline merge。**UI (Blazor) 選択チップも完了**: 静的カタログ (`ui/wwwroot/loras.json`)・トグルチップ+強度スライダ (0.0–1.5)・空選択で `loras` キー非送出=従来経路無改変・ui.Tests 46 緑 (サーバー無改修) |
 
 **データ要件**: 使うだけなら学習データ不要 (既存 .safetensors を merge/適用)。**自分の OC/画風 LoRA を
 作る場合のみ画像が要る** (キャラ 10〜50 枚 or 自分の絵)。OC の鶏卵問題は ① 参照絵 ② 記憶層ブートストラップ

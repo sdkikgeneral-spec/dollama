@@ -1,0 +1,4 @@
+[
+  { "name": "anime_style_v1", "label": "アニメ画風 v1", "defaultStrength": 0.8 },
+  { "name": "detail_enhancer", "label": "ディテール強調", "defaultStrength": 0.6 }
+]

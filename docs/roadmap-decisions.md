@@ -256,7 +256,15 @@ host 側 safetensors 重み演算のみ (SDXL 推論不要・開発機で完結)
 
 test_lora_runtime 全ゲート PASS (SAC OFF 実走): [1] host 写像 (modules/te skip/incomplete/scale/throw)・
 [2] parity max_abs **4.9e-4** / bad0・[3] revert 4/4 **memcmp bit-exact**・[4] stack max_abs **9.6e-4** / bad0 +
-revert bit-exact。**残**: UI (Blazor) の LoRA 選択/強度チップは未着手 (roadmap.md 表)。
+revert bit-exact。
+
+**UI (Blazor) 選択チップ (✅ 完了・PL 承認 UI のみ/サーバー無改修方式)**: LoRA 一覧 GET を C++ に足さず、
+静的カタログ `ui/wwwroot/loras.json` (`TagPaletteCatalog` 踏襲・不在/壊れ JSON で空・起動継続) を UI で持つ方式を採用
+(前例 tag-palette.json・可逆・YAGNI)。`LoraChips.razor` = トグルチップ + 選択中のみ強度スライダ (0.0–1.5・UI 安全弁)、
+`@bind-Selected` で `List<LoraSpec>` を親へ双方向。`GenerationRequest.Loras` は `JsonIgnore(WhenWritingNull)` で
+**空選択時に `loras` キー自体を送らず従来経路 bit-exact 維持** (ui.Tests で固定)。name/strength は `JsonPropertyName` で
+snake_case 明示。実在しない name はサーバー 400 (既存 `GenerationException`→`_error` 表示・path traversal は C++ 側封止済)。
+ui.Tests **46 緑** (カタログ present/missing/broken + 選択→loras マッピング + 空選択で省略)。C++ (`src/`) 無改修。
 
 ### プレビュー用ドラフトモード — 見送った選択肢 (2026-06-25 ユーザー判断)
 

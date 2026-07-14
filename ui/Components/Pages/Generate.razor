@@ -84,6 +84,9 @@
                 </label>
             </div>
 
+            <!-- ランタイム LoRA 選択チップ (L-2)。未選択なら loras キーを送らない。 -->
+            <LoraChips @bind-Selected="_loras" />
+
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
                 <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@_busy">
@@ -131,6 +134,9 @@
     private List<string> _negativeTags = new();
     private string _size = "1024x1024";
     private int _steps = 20;
+
+    // 選択中の LoRA (LoraChips と @bind-Selected で双方向共有)。空なら生成時に null にして送らない。
+    private List<LoraSpec> _loras = new();
 
     // パレットのタグ追加先 ("prompt" / "negative" / "favorites") の真実源。
     // 中央入力欄・お気に入り入力欄のフォーカスで自動更新し (SetTarget / パレット側 onfocus)、
@@ -285,6 +291,8 @@
             NegativePrompt = _negativeTags.Count == 0 ? null : string.Join(", ", _negativeTags),
             Size = sendSize,
             Steps = _steps,
+            // LoRA 未選択なら null にして "loras" キー自体を送らない (従来経路無改変・ガード1)。
+            Loras = _loras.Count == 0 ? null : new List<LoraSpec>(_loras),
         };
 
         // 生成中フラグを立てる → TelemetryBroadcaster が GPU を高負荷側に振る

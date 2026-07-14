@@ -30,6 +30,9 @@ builder.Services.AddSingleton<Dollama.Ui.Services.PresetStore>();
 // キュレーション済みタグパレット (wwwroot/tag-palette.json・起動時に 1 回読む)
 builder.Services.AddSingleton<Dollama.Ui.Services.TagPaletteCatalog>();
 
+// LoRA カタログ (wwwroot/loras.json・起動時に 1 回読む)
+builder.Services.AddSingleton<Dollama.Ui.Services.LoraCatalog>();
+
 // お気に入りタグの永続化ストア (ui/data/favorites.json)
 builder.Services.AddSingleton<Dollama.Ui.Services.FavoriteTagStore>();
 
