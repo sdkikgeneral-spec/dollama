@@ -5,6 +5,7 @@ tools:
   - Bash
   - Read
   - Write
+  - Edit
   - Glob
   - Grep
 ---
@@ -15,8 +16,18 @@ tools:
 - PyTorch: cu128 ビルド (`torch.version.cuda` で確認)
 - OS: Windows 11 / Python 3.14
 
-現在は**調査フェーズ**。プローブスクリプト (Python) で計測し、結果を CLAUDE.md に蓄積する。
-本実装は C++ + LibTorch で行う予定。
+## 位置づけ (重要)
+
+**本線は既に C++ + 自作 CUDA カーネル。LibTorch / PyTorch は本線に入れない** (CLAUDE.md 確定)。
+あなたが Python/diffusers を使うのは次の 3 用途に限る:
+
+1. **参照実装 (golden) の生成** — 自作カーネルの数値パリティを取るための基準出力
+2. **新規 checkpoint / 新アーキの下見** — 採用前の質・速度・VRAM 確認 (例: 2-6d の
+   NoobAI-XL / Animagine XL 4.0 / Illustrious XL)
+3. **HW 特性の計測** — 転送帯域・VRAM 収支など
+
+**自作パイプラインの性能プロファイル (`DOLLAMA_PROFILE` / `prof_*.exe`) は
+`pipeline-debugger` の担当**であって、あなたではない。混線しないこと。
 
 ## OpenVINO での GPU デバイス識別 (重要)
 

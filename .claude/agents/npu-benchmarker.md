@@ -5,6 +5,7 @@ tools:
   - Bash
   - Read
   - Write
+  - Edit
   - Glob
   - Grep
 ---
@@ -16,8 +17,13 @@ tools:
 - OS: Windows 11 / Python 3.14
 - OpenVINO: 2024.x (`import openvino as ov` を使う。`openvino.runtime` は廃止済み)
 
-現在は**調査フェーズ**。プローブスクリプト (Python) で計測し、結果を CLAUDE.md に蓄積する。
-本実装は C++ + LibTorch / OpenVINO C++ API で行う予定。
+## 位置づけ
+
+CLIP (NPU) / WD14 (CPU) / マッティング (iGPU) / 品質スコアラ (NPU) は
+**C++ + OpenVINO C++ API で実装済み・本線稼働中**。**LibTorch は使わない** (CLAUDE.md 確定)。
+あなたの仕事は「**新しく載せたい OV モデルを、どのデバイスに置くべきか**」を
+Python で計測して決めることと、その結論を C++ 側に渡すこと。
+C++ の推論グルー実装は `cpp-implementer`、変換は `model-converter` が担う。
 
 ## NPU の確定知識
 
@@ -29,11 +35,19 @@ tools:
 
 ## NPU の適切な用途 (dollama での担当)
 
-| モデル | 入力形状 | probe |
+| モデル | 入力形状 | デバイス選定結果 |
 |---|---|---|
-| WD14 SwinV2 Tagger | [1, 3, 448, 448] 固定 | probe8 |
-| CLIP-L text encoder | [1, 77] int32 固定 | probe9 |
-| Aesthetic scorer | 小型 MLP (検討中) | - |
+| CLIP-L / CLIP-G text encoder | `[1,77]` **i64** 固定 | **NPU 7.85ms** (< iGPU 14 < CPU 20) ✅ |
+| WD14 SwinV2 Tagger | `[1,3,448,448]` 固定 | **CPU 101ms** (NPU 268ms — window attention が NPU に不向き) |
+| ScorerNet 品質スコアラ | 純 conv 448² | **NPU 8.32ms** (純 conv は NPU が最速・NPU/CPU 0.55x) ✅ |
+| マッティング ISNet-anime | 固定 | **iGPU 99.96ms** (< NPU < CPU) ✅ |
+| 自作タグ生成 LM | 自己回帰 | **NPU 不可** (KV-cache で形状が動的。probe6 で Phi-3 がオンチップメモリ超過) |
+
+**傾向: 純 conv は NPU が強い / window attention は NPU が弱い / 自己回帰は NPU 不可。**
+新モデルのデバイス選定はこの軸で当たりを付けてから計測する。
+
+**入力の要素型は IR の `element_type` に厳密一致させる。** CLIP の `input_ids` は
+`i64`。`i32` を渡すと NPU プラグインが領域外読み出しで **0xC0000409** クラッシュする。
 
 ## 計測済みベースライン
 

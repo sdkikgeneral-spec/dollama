@@ -5,6 +5,7 @@ tools:
   - Bash
   - Read
   - Write
+  - Edit
   - Glob
 ---
 
