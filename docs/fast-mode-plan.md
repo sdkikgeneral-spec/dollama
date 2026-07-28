@@ -20,7 +20,7 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 | モード | 中身 | 精度 | 狙い |
 |---|---|---|---|
 | **default (フラグ無し)** | 現行カーネル・現行 CFG ループ | golden 0.999998 完全保存 | 回帰アンカー・基準線・無改変 |
-| **`--fast`** | #2 CFG batch=2 ✅ / #4 FlashAttn級 ✅ / #5 epilogue融合 / #1 GPU常駐+Graphs (条件付き・G-1k) | FP32 蓄積維持 = **絵は実質同一** | 当初狙い ~2倍 → **実測 1.32x (#5/#1 残)**・リスク無しの常用 (将来 default 昇格候補) |
+| **`--fast`** | #2 CFG batch=2 ✅ / #4 FlashAttn級 ✅ / **#5 epilogue融合 ✅ (G-4k S3 で `--fast` に内包)** / #1 GPU常駐+Graphs (条件付き・G-1k) | FP32 蓄積維持 = **絵は実質同一** | 当初狙い ~2倍 → **実測 x1.334 (#1 残)**・リスク無しの常用 (将来 default 昇格候補) |
 | **`--fast --fp8`** | 上記 + FP8 を選択的 GEMM に | reward順位/最終RGB で gated | 最速・崩れたら層単位で FP16 に戻す |
 
 - **精度ゼロコストと FP8 を混ぜない** のが肝。速度の大半は FP8 抜き (#1/#2/#4/#5・FP32 蓄積維持) で取れるので、
@@ -61,6 +61,13 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 | 段グループ | up 5.65s(49%) > down 3.61s(31%) > mid 0.97s | | up-block 律速 |
 
 > **✅ e2e ベースライン一本化 (2026-07-09・G-2k ベンチで確定)**: `test_diffusion_batch2 DB2_BENCH=1` (20step/1024²/guidance7.5/**warm**=UNet+VAE 重み常駐/VAE decode 込み/**OV encode・cold 重み転送は付帯外**/SAC OFF 実 exe) で 3 構成を min 実測: **default (逐次 2 forward) 20.93s** / batch2 単独 17.59s (x1.19) / **--fast (attn_fast+batch2) 15.88s (x1.32)**。冒頭 19.5s / G-0 推定 21.7s と同帯 (warm ゆえ僅かに軽い)。G-3k 注記の 43.83s は cold 重み転送込みの段1 CFG 本番値で別物 (付帯込み)。**G-6k 出荷判定の分母 = warm default 20.93s / diffusers 3.8s は cold+OV 込みの別条件ゆえ最終比較は同条件で取り直す**。
+>
+> **⚠ ラベルの読み替え (2026-07-28・G-4k S3 以降)**: 上記 **15.88s (x1.32) の `--fast` は pre-S3 の
+> 「attn_fast + batch2」構成**。S3 で epilogue が `--fast` に内包されたため、**出荷される `--fast` は
+> epilogue 込みの構成が継ぐ** (S3 実測 **x1.33439**)。旧 `attn+batch2` の組み合わせは S3 以降
+> **CLI から到達できない** (env を個別指定しない限り作れない) ため、ベンチ上は
+> `attn+batch2 (composite / not CLI-reachable)` = 参照値扱い。倍率 x1.32 → x1.33 の帯は不変ゆえ
+> 本ベースライン表の秒数はそのまま有効 (S3 走行の絶対秒はクロックドリフトで ~18% 遅く、比較に使わない)。
 >
 > **profile の測り方の注意 (G-1k 判定に効く)**: 上表は `ScopedSyncTimer` = **ブロック境界ごとに cudaDeviceSynchronize を挿入した壁時計** (`src/infer/profile.cuh`)。よって①カーネル間の launch 谷は各バケット時間に**混入**して単独では見えない ②「host roundtrip 0.007s」は host 計算/転送 (scale_model_input/FP16 変換/H2D/D2H/scheduler step) の CPU 時間のみで「同期・launch オーバーヘッドの総量」ではない。ただし profile 推定 21.7s と非 profile warm 実測 20.93s の差 ~0.8s が「同期挿入コスト + launch 谷」の**上界**を与える = 大きくても e2e の ~4% (G-1k の直接効果上限の傍証)。
 
@@ -206,6 +213,113 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
   G-6k 出荷判定の resnet 分母は暫定 **1.212s** (fast+epilogue) を採用 (baseline 1.225s から実質不変)。
   再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の [RESNET-BUCKET] 行で恒久化済。
 
+#### G-4k S3 実測 (2026-07-28・env 配線 + DiffusionPipeline 結線 + ゲート再設計・**G-4k クローズ**)
+
+S1a/S1b/S2 で作った epilogue 融合群を**出荷経路に載せる**段。① `DOLLAMA_EPILOGUE` env を `FastConfig` に追加し
+`--fast` が含意 (batch2/attn_fast と同じ扱い) ② `DiffusionPipeline` (`src/infer/diffusion.cu`) の UNet 呼び出しへ
+epilogue フラグを貫通 ③ `test_diffusion_batch2` のゲートを再設計 ④ e2e 実測。これで **G-4k はクローズ**。
+
+**`--fast` の継承関係 (重要・正典の読み替え)**: 本 doc とベースライン表の **15.88s 行 (x1.32) は
+「`--fast` = attn_fast + batch2」だった pre-S3 の値**。S3 で epilogue が `--fast` に内包されたため、
+**出荷される `--fast` は epilogue 込みの構成が継ぐ**。旧 `attn+batch2` の組み合わせは S3 以降
+**CLI から到達できない** (env を個別に立てない限り作れない) ため、ベンチ上のラベルも
+`attn+batch2 (composite / not CLI-reachable)` = **参照値**、`fast+epilogue (shipping --fast)` = **正典**へ改名した。
+
+##### ゲート設計の欠陥と是正 (次の読み手へ・同じ誤設計に戻らないこと)
+
+S3 初版のゲート① は `fast+epilogue` vs `default` を **guidance=7.5** で SSIM ≥ 0.999 判定していた。これは**二重に誤設計**:
+
+1. `fast` は batch2 を含み、**batch2 単独の g=7.5 発散は既に 0.9966** (G-2k 実測) → **epilogue が完全に正常でも確実に落ちる**ゲート。
+2. しかも**測っている変数が epilogue ではない** (batch2 の発散を epilogue の名前で測っていた)。
+3. さらに **epilogue 自身も bit 一致ではない**。S1a の GroupNorm multi-block は reduction 順が変わるため
+   epilogue vs default は MAE 6.6e-5 = batch2 の 6.4e-5 と**同オーダー**。よって比較対象を
+   `fast+epi vs fast` に直す**だけでは足りず、g=1.0 への移設が必須**。
+
+**実測が的中を証明**: `(fast+epi)` vs `fast` は **g=7.5 で SSIM 0.996533 < 0.999** (下表 characterization)。
+比較対象を正しく直しても g=7.5 では落ちる。
+
+> **教訓 (非交渉)**: **CFG 増幅下 (g>1) で FP16 の微差をゲートしてはいけない。被験変数は g=1.0 で分離する。**
+> ハードゲートを g=1.0 の parity 節に置いた理由はこれ (G-2k のユーザー決裁と同一原則:
+> 「CFG 合成 `uncond+g*(cond-uncond)` は ~1 ULP の差を guidance 倍に増幅する。数学的等価性を測るなら g=1.0」)。
+> g=3 / g=7.5 は**合否を課さない characterization** (回帰監視の目視値) として残す。
+
+**確定した検証構造** (`src/tests/test_diffusion_batch2.cu`):
+
+- **ハードゲート 4 本 = parity 節 (steps=4・meson test 自動枠)**。すべて g=1.0。
+- **g=3 / g=7.5 = characterization (合否なし)**。
+- **DB2_BENCH (20step・手動枠) は速度計測に純化** (合否なし)。guidance は `DB2_BENCH_G` env で指定可 (既定 7.5)。
+- **旧ゲート② (default 二連走) は削除** — parity 節の GATE1 (`:300` = off@g=1.0 二連走) と重複。
+  20step パイプラインを 1 本落とせて **~60-70s 節約**。
+
+##### 実測: ハードゲート 4 本 (研究機・SAC OFF・最終ツリー = C0+C1 同居・steps=4) — **全 PASS**
+
+| ゲート | 内容 | 実測 | 判定 |
+|---|---|---|---|
+| GATE1 | ノイズ床: off@g=1.0 二連走 | MAE=0 / max_abs=0 = **bit-exact** | PASS |
+| GATE2 | batch2 vs off @g=1.0 | MAE=0.0304753 / max_abs=2 / **SSIM=0.999474** | PASS (≥0.999) |
+| GATE3 | epilogue determinism: (fast+epi)@g=1.0 ×2 | MAE=0 / max_abs=0 = **bit-exact** | PASS |
+| GATE4 | **(fast+epi) vs fast @g=1.0** ← 被験変数 = epilogue 単独 | MAE=0.0302668 / max_abs=2 / **SSIM=0.999477** | PASS (≥0.999) |
+
+characterization (合否なし・回帰監視):
+
+| 比較 | g=3 | g=7.5 |
+|---|---|---|
+| batch2 vs off | MAE=0.0870895 / max_abs=9 / SSIM=0.99877 | MAE=0.295126 / max_abs=28 / SSIM=0.996627 |
+| (fast+epi) vs fast | MAE=0.0870231 / max_abs=7 / SSIM=0.998765 | MAE=0.295204 / max_abs=20 / **SSIM=0.996533** |
+
+- epilogue 由来の発散は **batch2 由来とほぼ同じ大きさ・同じ guidance 単調増幅**を示す (両者とも GN/GEMM の蓄積順差 ~1 ULP が源)。
+- 上記は **C1 単独の実験ツリーで取った値と数値まで完全一致** = **C0 (ODR 修正) の混入による数値変化はゼロ**。
+
+##### 実測: DB2_BENCH 20step e2e (warm・guidance=7.5・iters=2 / warmup1 / min 採用・VAE decode 込み)
+
+| 構成 | 実測 | vs default |
+|---|---|---|
+| default (逐次 2 forward) | 24662.8 ms | 1.00x |
+| attn+batch2 (composite / **not CLI-reachable**・参照値) | 18557.8 ms | x1.32898 |
+| **fast+epilogue (shipping `--fast`)** | **18482.4 ms** | **x1.33439** |
+
+- **epilogue の e2e 上乗せは x1.32898 → x1.33439 = +0.4% = ノイズ床内** (#5 節の見積り ~1.02x に対しても届かず、
+  S2 の resnet 再 profile 結論 −1.1% と整合。予告どおりの結果)。
+- **絶対秒は測定条件付きで読むこと**: 本セッションは機体クロック/熱で**全体が遅めにドリフト**していた
+  (同一走行内で同一 default の resnet バケットが 1.28564s → 1.41299s = +9.9%、e2e も正典参照 20.93s に対し
+  24.66s = ~18% 遅)。よって **主指標は相対倍率 x1.33**、絶対秒は条件付き併記とする。相対倍率は
+  G-2k 実測の x1.32 と整合しており、ベースライン表の 15.88s (x1.32) の帯と矛盾しない。
+- **「batch2 単独」は今回のベンチ harness に config が無く未測定** — 参照値 17.59s (x1.19) との直接比較は本走行では取れていない。
+
+##### 実測: test_unet_fast (単独実走・ALL PASSED)
+
+```
+default vs golden  : MAE=7.83832e-05 max_abs=0.000465386 bad=0 SSIM=0.999996
+fast vs default    : MAE=0 max_abs=0 bad=0 SSIM=1        (= bit-exact 維持)
+epilogue vs default: MAE=6.57082e-05 max_abs=0.000488281 bad=0 SSIM=0.999999
+1step latency median (warm): default=485.683 ms / fast=476.265 ms / fast+epilogue=475.881 ms
+```
+
+- **最重要の確認事項 = `default` 無改変の維持** (fast vs default **bit-exact**・default vs golden SSIM 0.999996)。安全弁1 を満たす。
+- 1step warm の絶対値は前回 (469.5 / 402.3 / 400.7ms) より遅く、fast の効きが x1.20 → x1.02 に**縮んで見える**が、
+  これも上記のクロック/熱ドリフトが主因 (同一セッション内で default 自身が +9.9% 揺れている)。数値はそのまま記録し、
+  倍率の解釈はドリフト補正後の別走行に委ねる。
+
+##### 参考: prof_unet_fast_warm (DOLLAMA_PROFILE=1・合否なし)
+
+| 構成 | per-step median | attention/step | resnet/step | [RESNET-BUCKET] ×20step |
+|---|---|---|---|---|
+| default (1回目) | 533.891 ms | 259.124 ms | 64.2821 ms | 1.28564 s |
+| fast (attn only) | 521.154 ms | 220.059 ms | 70.7154 ms | 1.41431 s |
+| fast + epilogue | 523.265 ms | 220.616 ms | 70.2101 ms | 1.4042 s |
+| default 再測 (順序/温度確認) | 613.73 ms | 309.699 ms | 70.6494 ms | 1.41299 s |
+
+`weight_upload=0 s` を全構成で確認 (warm 成立)。**同一時刻帯の default 再測 1.41299s と fast/fast+epi
+(1.41431 / 1.4042s) は実質同値** = epilogue の resnet 効果はノイズ床内、で S2 の結論 (−1.1%) と整合。
+
+##### resnet ≤0.95s ゲートの最終扱い (S2 で確定済・S3 でも変更なし)
+
+**G-4k のスコープ外と確定**。resnet バケットは **conv2d (im2col+GEMM) が質量**で、GN 帯域 4.2x (S1a) は
+バケット秒数に寄与しない。合否は **G-10k (conv2d 真 batch2) / G-8k (im2col の per-conv cudaMalloc/cudaFree 撲滅)**
+完了後の再 profile へ**再割当済み**。再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の
+[RESNET-BUCKET] 行で恒久化されている。G-4k 自身の達成は **(A)(B) のパス数削減 + カーネル単体 bit-exact +
+出荷経路への結線 + parity ゲート 4/4 PASS** をもって満たしたものとする。
+
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。
   softmax / GroupNorm / time embed / 最初と最後の conv は **FP16 のまま残す** (敏感層)。
@@ -221,6 +335,12 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
 | **default** | 現行 golden-SSIM 0.999998 を**無改変で維持** (test_unet / test_vae_decode / test_diffusion 全緑) |
 | **`--fast`** | golden 再ベースライン後、noise_pred SSIM ≥ 0.9999 / 最終 RGB SSIM ≥ 0.999 (絵が実質同一であること) |
 | **`--fast --fp8`** | golden は**使わない**。① 最終 RGB を FP16 経路と LPIPS/SSIM で比較 (知覚等価) ② **reward 順位相関** (best-of-N は絶対値でなく順位のみ使用・崩れなければ実害ゼロ)。**通らなければ FP8 不採用** (層単位で戻す) |
+
+> **最終 RGB SSIM ゲートは必ず guidance=1.0 で測る (非交渉・G-2k 決裁 / G-4k S3 で再確認)**。
+> CFG 合成 `uncond + g*(cond-uncond)` は ~1 ULP の FP16 差を **guidance 倍に増幅**するため、g>1 で測ると
+> 「被験変数が正常でも落ちる」ゲートになる (G-4k S3 初版の実害: (fast+epi) vs fast は g=7.5 で 0.996533 < 0.999)。
+> **被験変数は g=1.0 で分離し、対照は 1 変数だけ違う構成に取る** (例: epilogue を測るなら `fast+epi vs fast`。
+> `fast+epi vs default` は batch2 の発散を混ぜてしまう)。g=3 / g=7.5 は**合否なしの characterization** に留める。
 
 ## 実測手段と SAC 制約 (非交渉)
 
@@ -240,7 +360,7 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
 | **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | ✅ **完了 (S1〜S3c・下記注)。parity gate g=1.0 SSIM 0.9994≥0.999 PASS (sweep g=1 は 0.9995・別走行)・batch2 e2e 1.19x (期待 ~2× に非到達)・合成 --fast 1.32x** |
 | **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)** |
 | **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.20x に是正) | cpp-implementer | G-3k | — | ✅ **完了**: warm ハンドル (unet_weights_create) で計測・default vs golden SSIM 0.999996/bad0・fast vs default bit-exact・warm 1step default 526ms/fast 437ms = **1.20x** |
-| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消)。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | ✅ **S1a/S1b/S2 完了** (実測は #5 節「S1a/S1b/S2 実測」参照。S2=conv2d 後段融合 (P1 conv1.bias+time-bias / P2 conv2.bias+residual) 全 6 形状 memcmp BIT-EXACT・GEMM 経路ガード付・epilogue vs default SSIM 0.999999。resnet ≤0.95s の再 profile は研究機で別途) |
+| **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消) + (C) S3 出荷結線。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | ✅ **クローズ (S1a/S1b/S2/S3 完了・2026-07-28)**。実測は #5 節「S1a/S1b/S2/S3 実測」参照。S3 = `DOLLAMA_EPILOGUE` env + `--fast` 含意 + `DiffusionPipeline` 貫通 + **ゲート再設計 (ハードゲート 4 本を g=1.0 の parity 節へ移設・g=3/7.5 は characterization 化・DB2_BENCH は速度計測に純化)**。**parity 4/4 PASS** (GATE4 = (fast+epi) vs fast @g=1.0 SSIM **0.999477**)・**e2e `--fast` x1.33439** (epilogue 上乗せ +0.4% = ノイズ床内)・**default 無改変維持** (fast vs default bit-exact)。resnet ≤0.95s は G-4k スコープ外と確定し **G-10k/G-8k 後へ再割当** |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
 | **G-6k** | 3段モードの実測まとめ + 出荷判定 (`--fast` の default 昇格是非 / FP8 採否) | PL + gpu-benchmarker | 全部 | — | 🔲 |
 | **G-7k** | cuBLASLt 移行による linear (FFN/attn to_q/k/v/out) の bias epilogue 融合 — transformer バケット残 ~2.39s が対象。GEMM 本体の呼び方が変わるため G-4k と分離 (PL 決裁 2026-07-10・当初仮称「G-5k」は FP8 と衝突するため G-7k で採番) | cuda-kernel-dev | G-4k | ゼロコスト | 🔲 **バックログ** (順序図の主線外・費用対効果を G-4k 後の再 profile で判断) |
@@ -266,15 +386,25 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
 ## 順序 (掛け算で効く)
 
 ```
-G-0/G-0b (profile+枠) ──► G-3k ✅ (attention) ──► G-2k ✅ (CFG batch2) ──► G-4k (融合) ──► [G-1k 条件付き] ──► G-5k (FP8) ──► G-6k (判定)
+G-0/G-0b (profile+枠) ──► G-3k ✅ (attention) ──► G-2k ✅ (CFG batch2) ──► G-4k ✅ (融合) ──► [G-1k 条件付き判定] ──► G-5k (FP8) ──► G-6k (判定)
 ```
+> **G-4k クローズ (2026-07-28)**: S1a/S1b/S2 に S3 (出荷結線 + ゲート再設計 + e2e 実測) を積んで**クローズ**。
+> 精度ゼロコスト 3 手 (#4 attn ✅ / #2 batch2 ✅ / #5 epilogue ✅) の合成が出荷 `--fast` = **x1.33**。
+> **次は G-1k の「条件付き判定」** — 着手ではなく**判定**が先で、ScopedSyncTimer ではなく**非侵襲 profile (nsys 等) で
+> launch 谷を直接観測**し、実測で残るなら着手・残らなければ**不着手クローズ**にできる (上界は e2e の ~4%)。
+> なお G-1k を実際に着手する場合は **G-8k (step ループ内 cudaMalloc/cudaFree 撲滅) が先行必須** (CUDA Graph は
+> capture 中の malloc/free を許さない)。**判定後は G-5k (FP8)** = diffusers 級への最大レバーへ進む。
 > **順序改訂 (2026-07-06)**: G-0 実測で host roundtrip 0.007s と判明したため G-1k (同期撲滅/Graphs) を主線先頭から**末尾の条件付き**へ降格。attention (G-3k) は完了済ゆえ次は #2 CFG batch=2 (G-2k) = UNet 15.3s 全体に効く単独最大レバー。
 > **G-2k クローズ (2026-07-09)**: batch2 1.19x/合成 --fast 1.32x で完了。**次は #5 epilogue 融合 (G-4k)** = batch2 が効かなかった conv/resnet 部が対象 (相補的・スコープは #5 節の PL 決裁参照)。その後 FP8 (G-5k)。GEMM (linear) 側の bias epilogue は G-7k バックログ (主線外)。
 
 **期待値の下方修正 (2026-07-09 実測反映)**: 起草時の「#1/#2 だけで ~10-11s・4手で ~8-10s」は batch2 が素で ~2× 効く前提の見積で、
 **実測で撤回**。実際は #4✅+#2✅ の合成が **1.32x (20.93→15.88s)** に留まった (conv2d per-n 直列で resnet に batch2 が効かず・G-2k 注記)。
-残る精度ゼロコストの現実的な着地は **#5 (G-4k) で ~15.1-15.5s** (面積 ~15%・#5 節の見積り)、#1 (G-1k) は上界 ~0.8s の条件付き。
-つまり **精度ゼロコスト4手の合計は ~15s 帯 (~1.4x) が現実線**で、**diffusers 級 (~3.8s) への主レバーは FP8 (G-5k) と
+残る精度ゼロコストの現実的な着地は ~~**#5 (G-4k) で ~15.1-15.5s** (面積 ~15%・#5 節の見積り)~~
+→ **さらに下方修正 (2026-07-28・G-4k S3 実測)**: **#5 の e2e 上乗せは +0.4% = ノイズ床内**で、`--fast` は
+x1.32898 → **x1.33439** にしか動かなかった (resnet バケットも −1.1%)。原因は resnet の質量が conv2d 側にあり、
+epilogue 融合 (パス数削減) では動かないこと (S2/S3 の診断) → 秒数レバーは **G-10k (conv 真 batch2) / G-8k (malloc 撲滅)** へ移った。
+#1 (G-1k) は上界 ~0.8s の条件付き。
+つまり **精度ゼロコスト4手の合計は ~15s 帯 (~1.33x) が現実線**で、**diffusers 級 (~3.8s) への主レバーは FP8 (G-5k) と
 G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どおり別立ての gated 実験 (絵の等価性はゲートで担保)。
 
 ## 安全弁 (非交渉・既定)
