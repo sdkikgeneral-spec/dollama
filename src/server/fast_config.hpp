@@ -23,7 +23,7 @@ namespace dollama
 //   attn_fast : #4 attention FlashAttn 級 (G-3k)。この Pkg では未配線 (常に既定)。
 //   batch2    : #2 CFG batch=2 (G-2k)。env DOLLAMA_BATCH2 で単独可・fast 含意は DiffusionPipeline 側。
 //   graphs    : #1 GPU 常駐 + CUDA Graphs (G-1k)。同上。
-//   epilogue  : #5 epilogue 融合 (G-4k)。    同上。
+//   epilogue  : #5 epilogue 融合 (G-4k)。env DOLLAMA_EPILOGUE で単独可・fast 含意は DiffusionPipeline 側。
 //   全 default false = 現行 (default) 挙動。
 struct FastConfig
 {
@@ -57,12 +57,13 @@ inline bool fast_env_true(const char* name)
     return false;
 }
 
-// env (DOLLAMA_FAST / DOLLAMA_FP8 / DOLLAMA_BATCH2) と CLI 由来 base を OR 合成し、
-// fp8→fast 含意を適用する。
+// env (DOLLAMA_FAST / DOLLAMA_FP8 / DOLLAMA_BATCH2 / DOLLAMA_EPILOGUE) と CLI 由来 base を
+// OR 合成し、fp8→fast 含意を適用する。
 //   base       : CLI (--fast / --fp8) 由来の初期値。指定が無ければ既定 (全 off)。
 //   戻り値     : env で立ったフラグを OR し、fp8 が立っていれば fast も強制した FastConfig。
-//   attn_fast/graphs/epilogue は base をそのまま透過する (この Pkg では env で触らない)。
-//   batch2 は DOLLAMA_BATCH2 env で単独に立てられる (fast 含意は DiffusionPipeline 側)。
+//   attn_fast/graphs は base をそのまま透過する (この Pkg では env で触らない)。
+//   batch2 は DOLLAMA_BATCH2 env で、epilogue は DOLLAMA_EPILOGUE env で単独に立てられる
+//   (いずれも fast 含意は DiffusionPipeline 側)。
 inline FastConfig resolve_fast_config(const FastConfig& base = FastConfig{})
 {
     FastConfig cfg = base;
@@ -81,6 +82,12 @@ inline FastConfig resolve_fast_config(const FastConfig& base = FastConfig{})
     if (fast_env_true("DOLLAMA_BATCH2"))
     {
         cfg.batch2 = true;
+    }
+    // G-4k: epilogue を fast 抜きで単独に立てる経路 (A/B ベンチ・bisect 用)。
+    // fast による含意は DiffusionPipeline コンストラクタ側で行う。
+    if (fast_env_true("DOLLAMA_EPILOGUE"))
+    {
+        cfg.epilogue = true;
     }
 
     // fp8 は fast を含意する (FP8 単独は無効)。

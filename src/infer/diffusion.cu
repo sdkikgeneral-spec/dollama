@@ -187,6 +187,9 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
         // G-2k フラグ結線: fast の下で CFG batch=2 (batch2) も有効化する。
         // default (fast=false) 経路ではこの if に入らないため batch2 は false のまま。
         fast_cfg_.batch2 = true;
+        // G-4k フラグ結線: fast の下で epilogue 融合 (epilogue) も有効化する。
+        // default (fast=false) 経路ではこの if に入らないため epilogue は false のまま。
+        fast_cfg_.epilogue = true;
     }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
     SafeTensors embeds(embeds_path);
@@ -360,7 +363,8 @@ void DiffusionPipeline::generate(int                   steps,
                     d_text_embeds_,
                     d_time_ids_,
                     d_noise_pred,
-                    fast_cfg_.attn_fast);
+                    fast_cfg_.attn_fast,
+                    fast_cfg_.epilogue);
 
         std::chrono::high_resolution_clock::time_point prof_h2;
         if (prof) { prof_h2 = std::chrono::high_resolution_clock::now(); }
@@ -613,7 +617,8 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
                                 d_txt2,
                                 d_time_ids,
                                 d_noise2,
-                                fast_cfg_.attn_fast);
+                                fast_cfg_.attn_fast,
+                                fast_cfg_.epilogue);
             // 出力スライスを既存 cond/uncond バッファへ写し以降のロジックを共用。
             CUDA_CHECK(cudaMemcpy(d_noise_cond, d_noise2,
                                   kLatentN * sizeof(__half), cudaMemcpyDeviceToDevice));
@@ -630,7 +635,8 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
                         d_cond_txt,
                         d_time_ids,
                         d_noise_cond,
-                        fast_cfg_.attn_fast);
+                        fast_cfg_.attn_fast,
+                        fast_cfg_.epilogue);
 
             // UNet を uncond 埋め込みで 1 回 (同じ d_latent)。
             launch_unet(unet_weights_handle_,
@@ -640,7 +646,8 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
                         d_uncond_txt,
                         d_time_ids,
                         d_noise_unc,
-                        fast_cfg_.attn_fast);
+                        fast_cfg_.attn_fast,
+                        fast_cfg_.epilogue);
         }
 
         // D2H: cond / uncond noise_pred を FP32 へ。
