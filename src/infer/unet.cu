@@ -272,6 +272,27 @@ static void launch_concat_chw(const __half* d_a, const __half* d_b, __half* d_ou
 }
 
 // ----------------------------------------------------------------
+// ODR 注意 (T1b / C0 修正): 以下は本 TU (translation unit) ローカルの実装型で、
+// 必ず匿名 namespace の中に置くこと。外に出すと ODR 違反で実行時に落ちる。
+//
+//   機序: unet.cu と vae_decode.cu は同名の DeviceWeights / Scratch を
+//   それぞれ独自レイアウトで定義している。namespace dollama 直下 (外部リンケージ)
+//   に置くと、暗黙 inline のデストラクタが COMDAT 弱シンボルとして出力され、
+//   リンカが同名 dtor のうち「片方だけ」を選んで両 TU の全 call site に適用する。
+//   どちらが勝つかはリンク単位ごとに変わるため、あるバイナリでは 0xC0000005
+//   (アクセス違反)、別のバイナリでは単なるメモリリークとして現れる。
+//
+//   発火点: L-2 ランタイム LoRA で unet 側 DeviceWeights にだけ 4 メンバ目
+//   std::set<std::string> patched_ を足したことでレイアウトが決定的にずれ、
+//   ~DiffusionPipeline (VAE ハンドルと UNet ハンドルが同居して破棄される経路) で
+//   AV が顕在化した。Scratch も ptrs_ が両方先頭なので現状は無症状なだけの同型の地雷。
+//
+//   よって「他 TU から参照されていないから外でもよい」ではなく、参照されていない
+//   からこそ匿名 namespace が正解。善意で外に出すと再発する。
+// ----------------------------------------------------------------
+namespace
+{
+// ----------------------------------------------------------------
 // 重み管理 (vae_decode と同方針): 名前から FP16 デバイスポインタを引く。
 // ----------------------------------------------------------------
 class DeviceWeights
@@ -479,6 +500,7 @@ private:
     bool                 attn_fast_ = false;
     bool                 epilogue_  = false;
 };
+} // namespace (匿名): TU ローカル型 DeviceWeights / Scratch ここまで
 
 // ----------------------------------------------------------------
 // Linear (x @ W^T + b): [M, K] @ [N, K]^T -> [M, N]
@@ -851,6 +873,9 @@ static void upsample(DeviceWeights& w, const std::string& prefix,
                   d_out, B, C, H2, W2, C, 3, 3, 1, 1, 1, 1, 1, 1);
 }
 
+// TU ローカル型 (上の ODR 注意と同じ理由で匿名 namespace に置く)。
+namespace
+{
 // ----------------------------------------------------------------
 // skip スタック: down 経路の各 resnet/downsample 出力を順に push し、
 // up 経路で逆順に pop する。各エントリは (デバイスバッファ, C, H, W)。
@@ -862,6 +887,7 @@ struct SkipEntry
     int     H;
     int     W;
 };
+} // namespace (匿名): TU ローカル型 SkipEntry ここまで
 
 // ----------------------------------------------------------------
 // UNet 本体 (S1: 重みは DeviceWeights& で受け取り、常駐/都度構築の両方から共有)
