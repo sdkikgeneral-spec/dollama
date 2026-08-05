@@ -697,6 +697,19 @@ if cuda_enabled
   )
   test('bias_add', test_bias_add_exe)
 
+  # device_arena (G-8k S1a) チャンク連結型 bump アリーナ テスト
+  # 既定 (プール有効) と キルスイッチ DOLLAMA_POOL=0 の 2 経路を、同一 exe の
+  # 別プロセス実行で検査する (pool 判定は getenv 初回キャッシュのため 1 プロセスで混ぜられない)。
+  test_device_arena_exe = executable('test_device_arena',
+    sources             : files('tests/test_device_arena.cu', 'kernels/device_arena.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('device_arena', test_device_arena_exe)
+  test('device_arena_pool_off', test_device_arena_exe, env : ['DOLLAMA_POOL=0'])
+
   # VAE decoder ゴールデン突合テスト + レイテンシ計測 (Phase 2 マイルストーン 2-4 本体)
   # vae_decode.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
   # ゴールデンパスはソース相対の絶対パスをコンパイル時に -D 埋め込み (cwd 非依存)。
