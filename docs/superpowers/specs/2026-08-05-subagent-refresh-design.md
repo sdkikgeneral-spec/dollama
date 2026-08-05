@@ -137,9 +137,9 @@ model: opus   # 上位固定の 3 体のみ。他は行ごと書かない (セ�
    定義の記述レビュー (1〜3・5) のみで完了とする
 5. `.claude/agents/*.md` の frontmatter が全件パースされ、エージェント一覧に 10 体が出ることを確認
 
-## スコープ外 (別タスクとして記録)
+## スコープ外 (別タスクとして記録 → 後で処理済み・下記「追補」参照)
 
-改訂作業中に見つかったが、本 spec では扱わない。放置すると効くため別途決裁する。
+改訂作業中に見つかったもの。当初は本 spec の対象外としたが、ユーザー指示により後で処理した。
 
 - **`.claude/settings.json` の `permissions.allow` と `additionalDirectories` が全て旧パス**
   `e:\Develop\Projects\dollama` (実体は `E:\Projects\dollama`) → 許可エントリが 1 つもマッチせず死んでいる。
@@ -191,6 +191,17 @@ model: opus   # 上位固定の 3 体のみ。他は行ごと書かない (セ�
 初版の誤記 1 件を訂正した: SAC 制約を「allow-list 更新を依頼」と書いていたが、正しくは
 「**`meson test` の前に SAC を OFF にしてもらう** (即時反映・再起動不要)」。
 
-**未処理 (スコープ外のまま)**: 上記「スコープ外」節の 2 件 — `.claude/settings.json` の
-`permissions.allow` / `additionalDirectories` が旧パス `e:\Develop\Projects\dollama` で全滅している件と、
-hook 起動が `py -3.12` 固定で fail-open ゆえ保護が静かに無効化され得る件。いずれも別途決裁する。
+### 追補: スコープ外に置いた 2 件も処理 (2026-08-05)
+
+- **`.claude/settings.json`**: `permissions.allow` の 25 件は旧パス `e:\Develop\Projects\dollama` を
+  指すうえ、対象スクリプト自体が repo root に存在しない probe 時代のワンショットだったため**削除**
+  (空配列にした)。`additionalDirectories` はプロジェクトルート自身を指しており意味がないので**削除**。
+- **保護 hook の起動**: `py -3.12` → **`py -3`** へ。特定マイナーバージョンへの固定をやめ、
+  3.12 をアンインストールしても動くようにした。
+  なお調査の結果、**開発機には Python 3.12 が実在するため保護は実際には効いていた** —
+  spec 初出時の「静かに無効化されている」という記述は不正確だった (研究機に 3.12 が無ければ
+  無効化されるというリスクは実在するので、修正自体は有効)。
+- **`scripts/test_dollma_protect_hook.py` を新設**: `settings.json` に登録された hook コマンドを
+  **そのまま取り出して** subprocess で起動し、保護対象 8 パスで deny・非保護 7 パスで素通り・
+  壊れた入力で fail-open を検証する (4/4 緑)。fail-open 設計ゆえインタプリタ指定が壊れると
+  保護が静かに死ぬので、その状態を**テストの失敗として検出**できるようにした。
