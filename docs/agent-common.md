@@ -72,15 +72,51 @@ Get-Content build/meson-info/intro-buildoptions.json   # with_cuda / with_openvi
 **cross-GPU の再生成は bit 非一致になるため、再訓練で代用せず exact コピーを運ぶ。**
 「同じスクリプトを研究機で回せば同じ重みができる」は成立しない。
 
-## 6. 研究機の SAC 制約
+## 6. 研究機のビルドと実走 (SAC)
 
-研究機では**再ビルドした exe の新しいハッシュがブロックされる**。カーネルや C++ を直して
-`dollama.exe` の実走で緑を取りたい場合は:
+### ビルド手順 (研究機・毎回この手順)
 
-1. allow-list 更新をユーザーへ依頼する、または
-2. **開発機でビルド緑 + Python / OpenVINO 経由の数値検証**で回す
+```bash
+export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3/bin:$PATH"
+MESON="/c/Users/sdkik/AppData/Local/Python/pythoncore-3.14-64/Scripts/meson.exe"
+"$MESON" setup build -Dwith_cuda=true   # CUDA 有効化に必須 (既定 false)
+"$MESON" compile -C build
+"$MESON" test -C build
+```
 
-のどちらかを最初に決めてから着手する。「ビルドしたが実走できない」で詰まらないこと。
+- meson は PATH に無いのでフルパスで呼ぶ。**PowerShell からは通らないので Bash ツールを使う。**
+- `-arch=sm_120` はトップレベルで `add_project_arguments` 済み。
+
+### SAC (Smart App Control) — 実走の制約
+
+**新規・変更した exe の実走は SAC にブロックされる。** ビルド・リンク・コミットは SAC ON のまま通る。
+
+- **`meson test` の前に、必ずユーザーへ「SAC を OFF にしてください」と依頼する** (即時反映・
+  再起動は不要)。黙って実行してブロックさせない。
+- 症状は `WinError 4551` / Permission denied / 「アプリケーション制御ポリシーによってブロック」。
+- **コードを疑う前に、既存 exe が走るかで切り分ける。** SAC のブロックを実装バグと誤診しない。
+- 実走できないときの代替: OpenVINO の数値検証は Python (署名済みゆえ SAC に弾かれない) で
+  IR を直接走らせて golden 突合し、ビルド緑をもって健全性の証左とする。
+
+## 6.5 ファイル編集とツールの使い分け
+
+- **部分修正は Edit を使う。大きいファイルを Write で全文置換しない** (事故の元)。
+- 作業前に対象ファイルを必ず Read して現状を把握する。
+- **ライセンス判断はサブエージェントに委譲しない。** 中継された承認を根拠にできないため、
+  ライセンスが絡む決裁はユーザー本人に上げる。
+
+## 6.6 生成スコープ (全エージェント共通・絶対)
+
+**生成対象はキャラクターのみ。背景は生成しない。** 出力は切り抜き済みの**透過 PNG** で、
+背景は Grok / Gemini / SD + CLIP STUDIO PAINT 側で合成される。
+
+- **背景タグ・情景タグを入れない** (`city` / `forest` / `sunset sky` / `futuristic city` /
+  `magical atmosphere` 等)。構図タグは**キャラの写り方**に限る (`upper body` / `full body` /
+  `cowboy shot` / `looking at viewer`)。ライティングも**キャラに乗る光**に限る。
+- **単独キャラが原則** (複数人は破綻しやすく、品質 FB でも worst 帯の主因だった)。
+- `simple background` / `white background` / `transparent background` を使う。これは
+  マッティング (ISNet) の精度に直接効く。
+- 背景生成を要求するタスクは受けずに差し戻す。
 
 ## 7. 実装方針 (使う / 使わない)
 
