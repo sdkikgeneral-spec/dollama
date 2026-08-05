@@ -173,6 +173,24 @@ model: opus   # 上位固定の 3 体のみ。他は行ごと書かない (セ�
 - 実装中の逸脱は 1 点のみ: 検証スクリプトのパス実在チェックが `test_<component>.cpp` のような
   プレースホルダ表記を誤検出したため、`<` `>` を含むトークンを glob と同じくスキップ対象に加えた。
 
+### 追補: `2d27d3d` の実装知識を拾い直し (2026-08-05)
+
+並行改訂 `2d27d3d` を上書きした後、そこに含まれていた実装現場の知識を本構成へ統合した
+(ユーザー判断)。10 体構成・共通ルール 1 枚・検証スクリプトの枠組みは維持したまま、中身を厚くした形。
+
+| 移した先 | 拾った内容 |
+|---|---|
+| `docs/agent-common.md` | 研究機のビルド手順 (CUDA v13.3 の PATH・meson フルパス・**PowerShell では通らず Bash ツールが要る**)・**SAC の正しい運用** (`meson test` の前にユーザーへ OFF を依頼・`WinError 4551`・コードを疑う前に既存 exe で切り分け)・Edit 原則 (大きいファイルを Write で全文置換しない)・ライセンス非委譲・**生成スコープ** (キャラのみ / 背景タグ禁止 / 単独キャラ原則 / `simple background` はマッティング精度に効く) |
+| `cuda-kernel-dev` | **数値パリティ規約**一式 (FP32 蓄積必須・tol は `1e-2*sqrt(K)`・入力ビット一致・row-major と transB・融合は memcmp bit-exact・**`launch_conv2d` の丸め列がGEMM/direct で違うためガードでフォールバック**・UNet は SSIM≥0.999/bad0 かつ default 無改変・**CFG 増幅下でゲートせず g=1.0 で分離**)・**多 TU リンク** (ヘッダ内 `__global__` の LNK2005・`DeviceWeights` の ODR 違反で `0xC0000005`・`#ifndef __CUDACC__` 隔離)・**新規 `.cu` の cuda_args** (`/utf-8` で C1070 回避・`/std:c++14` で cudafe++ の `0xC0000409` 回避・`-DHAVE_CUDA` は cuda_args 側)・cuBLAS は column-major をラッパーに封じ込め |
+| `cpp-implementer` | **既存実装の確定挙動** (`tensor.hpp` の `data()`/`data_ptr()` は `logic_error` を投げる = サイレント nullptr を返さない防御を外さない・`UniqueBuffer` は move 実装済みでコピー禁止・LoRA host 写像の正典は offline merge) |
+| `perf-profiler` | **大原則 4 つ** (計測なき最適化を許さない・同一条件の前後比較・**ノイズ床を先に測る**・パリティが壊れた高速化は改善でない)・prof 系計測 exe と `[RESNET-BUCKET]`・**攻め筋 G-10k (conv 真 batch2) / G-8k (im2col の cudaMalloc 撲滅)**・診断手順 6 段 (**改善余地が薄ければ「触るな」と結論するのも仕事**)・測定環境のドリフトは相対倍率で報告 |
+| `model-converter` | 変換対象表 (**SDXL / 自作 LM は OV 変換しない** = 依頼が来たら差し戻す)・**入出力の申し送り義務** (報告に入力名/shape/element_type と出力名/shape/index を必ず含める) |
+| `npu-benchmarker` / `gpu-benchmarker` | 位置づけと境界 (C++ 本線は実装済み・**Python / diffusers は golden 生成 / 新 checkpoint 下見 / HW 特性の 3 用途に限る**・自作パイプラインの profile は `perf-profiler` の担当) |
+| `dataset-curator` | 廃止した `prompt-engineer` の規約 (**情景語を変換表に載せない**・情景を指定されたら `orange backlight` 等キャラに乗る要素へ落とす・スタイルプリセットはタッチのみで情景プリセットは持たない・**表情の忠実度の穴 3 層**) |
+
+初版の誤記 1 件を訂正した: SAC 制約を「allow-list 更新を依頼」と書いていたが、正しくは
+「**`meson test` の前に SAC を OFF にしてもらう** (即時反映・再起動不要)」。
+
 **未処理 (スコープ外のまま)**: 上記「スコープ外」節の 2 件 — `.claude/settings.json` の
 `permissions.allow` / `additionalDirectories` が旧パス `e:\Develop\Projects\dollama` で全滅している件と、
 hook 起動が `py -3.12` 固定で fail-open ゆえ保護が静かに無効化され得る件。いずれも別途決裁する。

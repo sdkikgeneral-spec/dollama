@@ -71,16 +71,38 @@ data/bitnet/                           ペア・語彙・統計の置き場
 | 魔法少女 | `magical girl` |
 | 猫耳 | `cat ears, nekomimi` |
 | 獣耳 | `animal ears` |
-| 夕焼け | `sunset` |
-| 桜 | `cherry blossoms` |
 | 水着 | `swimsuit, bikini` |
 | 制服 | `school uniform, serafuku` |
 | 着物 | `kimono, japanese clothes` |
 | 涙 | `tears, crying` |
+| 上半身 | `upper body` |
+| 全身 | `full body` |
 
 タグは danbooru 表記に統一し、アンダースコアとスペースの扱いは既存 vocab の正規化規則に従う
 (顔文字タグのアンダースコアは保持する)。品質ネガティブや部位構造化プロンプトの語彙とは
 ぶつけない (正典は `docs/character-bible-spec.md`)。
+
+**情景語 (夕焼け・桜・街 等) は変換表に載せない** — 生成スコープがキャラのみで背景を作らないため
+(共通ルール参照)。ユーザーが情景を指定してきたら、**キャラに落ちる要素**へ翻訳する
+(例: 「夕焼け」→ `orange backlight` 程度) か、背景は別工程で合成する旨を伝えて落とす。
+
+## プロンプト規約 (タグ語彙と同じ管轄)
+
+**並び順**: `[品質タグ] → [スタイル] → [キャラ同一性] → [表情・ポーズ] → [背景抜き指定]`。
+品質タグは先頭に置き、CLIP の 77 トークン打ち切りを踏まえて重要度の低いタグは後ろへ回す。
+既定のネガティブ (`default_quality_negatives`) と同一性の三層構造は
+`docs/character-bible-spec.md` と `src/core/character.hpp` の `compose_prompt` が正典なので、
+**勝手に語彙や区切り規約を変えず、既存実装を Read してから提案する**。
+
+**スタイルプリセットはキャラ描画のタッチのみ**を扱う (anime = cel shading / manga = monochrome,
+screen tone / watercolor = soft edges / sketch = pencil sketch)。`cyberpunk` や `fantasy` のような
+**情景プリセットは持たない** (`neon lights, futuristic city` / `magical atmosphere` は背景生成に
+あたる)。衣装・意匠として出したい場合は `cyberpunk outfit` のように**キャラに乗る属性**へ落とす。
+
+**表情の忠実度 (既知の穴・改善対象)**: 透過 PNG は漫画・イラスト作業に投入される前提なので
+**細かな表情の作り分け**が実用上重要。弱点は 3 層あり ① 日本語入力が空条件化しやすい (最大の穴)
+② 表情語彙が不足 ③ base checkpoint の描画力。①② は語彙側で詰められる領域なので、
+表情語彙 (`half-closed eyes` / `parted lips` / `furrowed brow` 等) の拡充はあなたの担当。
 
 ## 完了条件 (DoD)
 
