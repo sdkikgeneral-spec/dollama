@@ -137,6 +137,8 @@ def _candidate_paths(body):
         tok = tok.strip()
         if "*" in tok or " " in tok:
             continue  # glob 表記・文章は対象外
+        if "<" in tok or ">" in tok:
+            continue  # test_<component>.cpp のようなプレースホルダ表記は対象外
         if not tok.startswith(_PATH_PREFIXES):
             continue
         found.append(tok)
