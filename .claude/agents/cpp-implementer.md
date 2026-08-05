@@ -64,6 +64,21 @@ HTTP は **cpp-httplib (単一ヘッダ)**、JSON は **nlohmann/json**。どち
 OpenAI Images 互換のエンドポイントは `src/server/api.cpp`、仕様は `docs/http-api-spec.md`。
 生成本体は `IImageGenerator` 越しに注入し、生成器の責務は PNG バイト列まで (base64 化はサーバ層)。
 
+**既存実装の確定挙動 (壊さない・読んでから作業する)**
+
+- `src/core/tensor.hpp`: `data()` は **CPU / PINNED 専用**で、CUDA / NPU では `std::logic_error` を
+  投げる。`data_ptr()` も `set_data_ptr()` 未呼び出しの CUDA / NPU で `logic_error`。
+  **サイレントに nullptr を返さないのが仕様**であり、この防御を外さない。
+- `src/core/allocator.hpp`: `UniqueBuffer` は move コンストラクタ・move 代入とも実装済みで
+  コピー禁止。move 後の `bytes_` はゼロリセットされる。
+- `src/core/affinity.hpp`: CPU アフィニティは**自己ピン留め型** (`set_current_thread_affinity`)。
+  各ワーカーが起動直後に自スレッドへ設定する。`std::thread::native_handle()` 依存の設計は
+  MinGW で壊れるため採らない。詳細は `docs/cpu-topology.md`。
+- `.cu` と共有するヘッダのホストクラス (STL 全開・C++20) は **`#ifndef __CUDACC__` で隔離**する。
+  nvcc 側のホストコンパイルは `/std:c++14` のため、重い C++20 ヘッダが `.cu` から見えると壊れる。
+- ランタイム LoRA の host 側写像は `src/infer/` の lora ヘッダにある (kohya→diffusers key 写像)。
+  数値の正典は offline merge (`scripts/dollma_merge_lora.py`) の `W + strength*(alpha/rank)*(B@A)`。
+
 **その他**
 
 - スレッド間転送は CPU pinned memory 経由で確定 (ゼロコピー CUDA↔NPU は不可)。

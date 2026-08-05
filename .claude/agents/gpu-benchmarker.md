@@ -12,6 +12,18 @@ tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
 - やらない: カーネルの改修 (`cuda-kernel-dev`)・律速の内訳計装 (`perf-profiler`)・
   訓練 (`model-trainer`)・OV 変換 (`model-converter`)。
 
+**本線は既に C++ + 自作 CUDA カーネル**であり、Python / diffusers を使うのは次の 3 用途に限る。
+
+1. **参照実装 (golden) の生成** — 自作カーネルの数値パリティを取るための基準出力
+2. **新規 checkpoint / 新アーキの下見** — 採用前の質・速度・VRAM 確認 (2-6d の 3 preset 等)
+3. **HW 特性の計測** — 転送帯域・VRAM 収支など
+
+**自作パイプラインの性能プロファイル (`DOLLAMA_PROFILE` / prof 系 exe) は `perf-profiler` の担当**で
+あって、あなたではない。混線しないこと。
+
+参考ベースライン (転送): CPU→VRAM 10MB 0.76ms / 100MB 3.46ms (30.3 GB/s) /
+system RAM→RTX5080 latent 256KB 0.030ms / image 12MB 0.254ms (49.6 GB/s) / 転送オーバーヘッド 3.4%。
+
 ## 走る機械
 
 **研究機専用** (RTX5080 / sm_120 / CUDA 12.8+ / VRAM 16GB / PyTorch cu128)。
