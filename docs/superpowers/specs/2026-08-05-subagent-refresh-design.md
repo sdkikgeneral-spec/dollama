@@ -155,3 +155,24 @@ model: opus   # 上位固定の 3 体のみ。他は行ごと書かない (セ�
   `docs/training-spec.md` / `docs/dataset-spec.md` / `docs/fast-mode-plan.md` /
   `docs/f0b-rejection-sft-plan.md` / `docs/q2-quality-branch-plan.md`
 - 二機体制: [[dev-pc-hardware]] / 重み搬送: [[weights-nas-transport]]
+
+## 完了 (2026-08-05)
+
+本 spec の内容は `docs/superpowers/plans/2026-08-05-subagent-refresh.md` の 9 タスクとして実装・完了した。
+
+- **10 体構成になった**: `cpp-implementer` / `csharp-ui-implementer` / `cuda-kernel-dev` /
+  `dataset-curator` / `gpu-benchmarker` / `model-converter` / `model-trainer` / `npu-benchmarker` /
+  `perf-profiler` (新設) / `project-leader`。`pipeline-debugger` と `prompt-engineer` は削除
+  (前者は perf-profiler が置換・後者の日本語→タグ写像は dataset-curator が引き取り)。
+- **共通ルールを `docs/agent-common.md` に集約**。各定義は末尾 1 行で参照するのみとし、
+  Allman 規約・使う/使わない表・テスト必須・正典保護・NAS 搬送・SAC 制約の重複記述を全定義から除去した。
+- **`scripts/test_dollma_agent_defs.py` を新設し 9/9 緑**。frontmatter (name/description/tools/model)・
+  tools 契約・model エイリアス限定・10 体の在不在・共通ルール参照・**本文パスの実在**・
+  禁止語 (LibTorch / Winsock2 / openvino.runtime) を検証する。回帰テストとして常設され、
+  今後の陳腐化を機械的に検出する。実際に着手時点で 3 件の存在しないパス参照を検出した。
+- 実装中の逸脱は 1 点のみ: 検証スクリプトのパス実在チェックが `test_<component>.cpp` のような
+  プレースホルダ表記を誤検出したため、`<` `>` を含むトークンを glob と同じくスキップ対象に加えた。
+
+**未処理 (スコープ外のまま)**: 上記「スコープ外」節の 2 件 — `.claude/settings.json` の
+`permissions.allow` / `additionalDirectories` が旧パス `e:\Develop\Projects\dollama` で全滅している件と、
+hook 起動が `py -3.12` 固定で fail-open ゆえ保護が静かに無効化され得る件。いずれも別途決裁する。
