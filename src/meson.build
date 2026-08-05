@@ -57,6 +57,7 @@ diffusion_cu_sources = [
   'infer/unet.cu',
   'kernels/vae_decode.cu',
   'kernels/conv2d.cu',
+  'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
   'kernels/groupnorm.cu',
   'kernels/layernorm.cu',
   'kernels/activation.cu',
@@ -615,7 +616,8 @@ if cuda_enabled
 
   # Conv2d テスト + ベンチ (Phase 2 マイルストーン 2-2-4)
   test_conv2d_exe = executable('test_conv2d',
-    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu'),
+    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu',
+                          'kernels/device_arena.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
@@ -720,6 +722,7 @@ if cuda_enabled
       'tests/test_vae_decode.cu',
       'kernels/vae_decode.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/activation.cu',
       'kernels/attention.cu',
@@ -748,6 +751,7 @@ if cuda_enabled
       'tests/test_unet.cu',
       'infer/unet.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/layernorm.cu',
       'kernels/activation.cu',
@@ -776,6 +780,7 @@ if cuda_enabled
       'tests/test_unet_fast.cu',
       'infer/unet.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/layernorm.cu',
       'kernels/activation.cu',
@@ -809,6 +814,7 @@ if cuda_enabled
       'tests/test_lora_runtime.cu',
       'infer/unet.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/layernorm.cu',
       'kernels/activation.cu',
@@ -836,6 +842,7 @@ if cuda_enabled
       'tests/prof_unet_fast_warm.cu',
       'infer/unet.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/layernorm.cu',
       'kernels/activation.cu',

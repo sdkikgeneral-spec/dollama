@@ -39,6 +39,7 @@
 //     チャネル行ごとに散布コピーする。帯が 1 つ (= 分割なし) のときは帯幅が
 //     Hout*Wout に一致するので、d_out へ直接 GEMM してコピーを省く。
 #include "kernels/conv2d.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/gemm.cuh"
 #include "kernels/utils.cuh"
 
@@ -364,10 +365,17 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
     // 帯分割が発生するか (= tile_rows が Hout 未満)。
     const bool banded = (tile_rows < Hout);
 
+    // G-8k S1b: 中間バッファ (d_col / d_out_band) の cudaMalloc/cudaFree を
+    // デバイスアリーナの bump 確保へ置換する (配管のみ・数値は完全不変)。
+    //   - RAII: 関数スコープ脱出 (早期 return / 例外) で必ず rewind される。
+    //   - DOLLAMA_POOL=0 なら素の cudaMalloc/cudaFree に完全フォールバック (旧経路)。
+    // 数値的な正当性: d_col は帯ごとに im2col が K*Ncol 要素を全書き、d_out_band は
+    // GEMM が beta=0 で Cout*Ncol 要素を全書きするため、再利用領域の残留値は読まれない。
+    DeviceArenaScope arena(DeviceArenaId::UNet);
+
     // 帯 col バッファ確保 (最大帯サイズ分)。
     const long col_elems = static_cast<long>(K) * tile_rows * Wout;
-    __half* d_col = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_col, static_cast<size_t>(col_elems) * sizeof(__half)));
+    __half* d_col = arena.alloc<__half>(static_cast<size_t>(col_elems));
 
     // 帯分割時のみ、GEMM 出力先の連続バッファ (帯幅を leading dim とする) を確保。
     // 分割なしのときは d_out へ直接書ける (帯幅 = 全体行 stride のため)。
@@ -375,7 +383,7 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
     if (banded)
     {
         const long band_out_elems = static_cast<long>(Cout) * tile_rows * Wout;
-        CUDA_CHECK(cudaMalloc(&d_out_band, static_cast<size_t>(band_out_elems) * sizeof(__half)));
+        d_out_band = arena.alloc<__half>(static_cast<size_t>(band_out_elems));
     }
 
     for (int ho_base = 0; ho_base < Hout; ho_base += tile_rows)
@@ -417,11 +425,7 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
         CUDA_CHECK_KERNEL();
     }
 
-    CUDA_CHECK(cudaFree(d_col));
-    if (d_out_band != nullptr)
-    {
-        CUDA_CHECK(cudaFree(d_out_band));
-    }
+    // d_col / d_out_band の解放は arena のデストラクタ (rewind) が行う。
 }
 
 // ----------------------------------------------------------------
