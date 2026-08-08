@@ -1,6 +1,14 @@
 @* 再利用チップ入力。タグ (danbooru タグ) を 1 つずつ追加・削除する。
    プロンプトとネガティブの両方で使う。Tags は親と双方向バインド。
-   チップ表示は TagLang に応じて日本語化するが、保持する Tags の値は英語のまま不変。 *@
+   チップ表示は TagLang に応じて日本語化するが、保持する Tags の値は英語のまま不変。
+
+   未確定テキスト (draft) の扱い (P2-1):
+     - 確定の入口は Enter / カンマ / blur / 親からの CommitPendingAsync() の 4 つ。
+       生成ボタンは blur と別ラウンドトリップになり順序が保証されないため、
+       親 (Generate) が生成前に CommitPendingAsync() を await するのが主経路で、
+       blur は Tab 移動時の取りこぼし救済 (従)。
+     - draft の文字列は親へ渡さない (真実源の二重管理を避ける)。
+       親が必要とするのは「空かどうか」だけなので DraftEmptyChanged で真偽だけ通知する。 *@
 @inject TagLabels Labels
 
 <div class="taginput">
@@ -14,9 +22,10 @@
         }
         <input class="chip-entry"
                placeholder="@(Tags.Count == 0 ? Placeholder : "")"
-               @bind="_draft"
-               @bind:event="oninput"
+               value="@_draft"
+               @oninput="OnDraftInput"
                @onfocus="OnInputFocused"
+               @onblur="CommitPendingAsync"
                @onkeydown="OnKeyDown" />
     </div>
 </div>
@@ -33,10 +42,17 @@
     // パレットの追加先 (プロンプト/ネガティブ) をフォーカス連動させるために使う。
     [Parameter] public EventCallback OnFocused { get; set; }
 
+    // 未確定テキストの「有無だけ」を親へ通知する (文字列は渡さない)。
+    // 親はこれを生成ボタンの活性判定 (GenerateGate) にのみ使う。
+    [Parameter] public EventCallback<bool> DraftEmptyChanged { get; set; }
+
     // タグの表示言語 (Generate から CascadingValue で伝播)。既定は日本語。
     [CascadingParameter(Name = "TagLang")] public string TagLang { get; set; } = "ja";
 
     private string _draft = "";
+
+    // 直近に親へ通知した「draft 空か」。変化したときだけ通知して往復を減らす。
+    private bool _lastDraftEmpty = true;
 
     // 入力欄フォーカス時に親へ通知 (追加先のフォーカス連動)。
     private async Task OnInputFocused()
@@ -44,56 +60,73 @@
         await OnFocused.InvokeAsync();
     }
 
+    // 1 文字ごとに draft を更新し、空/非空が変わったときだけ親へ通知する。
+    private async Task OnDraftInput(ChangeEventArgs e)
+    {
+        _draft = e.Value?.ToString() ?? "";
+        await NotifyDraftEmpty();
+    }
+
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" || e.Key == ",")
         {
-            await CommitDraft();
+            await CommitPendingAsync();
         }
         else if (e.Key == "Backspace" && string.IsNullOrEmpty(_draft) && Tags.Count > 0)
         {
-            // 空入力で Backspace → 末尾チップを削除
-            Tags.RemoveAt(Tags.Count - 1);
-            await TagsChanged.InvokeAsync(Tags);
+            // 空入力で Backspace → 末尾チップを削除 (新リスト再代入)
+            var next = new List<string>(Tags);
+            next.RemoveAt(next.Count - 1);
+            Tags = next;
+            await TagsChanged.InvokeAsync(next);
         }
     }
 
-    // 入力中テキストを (カンマ区切りも展開して) タグ化して確定する
-    private async Task CommitDraft()
+    // 未確定テキストを (カンマ区切りも展開して) タグ化して確定する。
+    // 親から生成直前に await されるため public。確定規則は TagCommit (純クラス・テスト済) に集約。
+    public async Task CommitPendingAsync()
     {
-        var parts = _draft.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var added = false;
-        foreach (var p in parts)
+        if (string.IsNullOrWhiteSpace(_draft))
         {
-            if (AddOne(p))
-            {
-                added = true;
-            }
+            _draft = "";
+            await NotifyDraftEmpty();
+            return;
         }
+
+        var next = TagCommit.Merge(Tags, _draft);
+        var added = next.Count != Tags.Count;
+
         _draft = "";
+        await NotifyDraftEmpty();
+
         if (added)
         {
-            await TagsChanged.InvokeAsync(Tags);
+            Tags = next;
+            await TagsChanged.InvokeAsync(next);
         }
-    }
-
-    // 1 タグを正規化して追加。重複は無視。追加できたら true。
-    private bool AddOne(string raw)
-    {
-        var tag = raw.Trim().ToLowerInvariant();
-        if (tag.Length == 0 || Tags.Contains(tag))
-        {
-            return false;
-        }
-        Tags.Add(tag);
-        return true;
     }
 
     private async Task Remove(string tag)
     {
-        if (Tags.Remove(tag))
+        var next = Tags.Where(t => !string.Equals(t, tag, StringComparison.Ordinal)).ToList();
+        if (next.Count == Tags.Count)
         {
-            await TagsChanged.InvokeAsync(Tags);
+            return;
         }
+        Tags = next;
+        await TagsChanged.InvokeAsync(next);
+    }
+
+    // draft の空/非空が変わったときだけ親へ通知する。
+    private async Task NotifyDraftEmpty()
+    {
+        var empty = string.IsNullOrWhiteSpace(_draft);
+        if (empty == _lastDraftEmpty)
+        {
+            return;
+        }
+        _lastDraftEmpty = empty;
+        await DraftEmptyChanged.InvokeAsync(empty);
     }
 }

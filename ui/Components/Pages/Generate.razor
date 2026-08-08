@@ -53,16 +53,21 @@
             <PresetSidebar @ref="_presetSidebar" OnLoad="LoadPreset" />
         </aside>
 
-        <!-- 中央: 生成コントロール -->
-        <section class="gen">
-            <TagPresetField Label="プロンプト" Kind="prompt"
+        <!-- 中央: 生成コントロール。
+             Ctrl+Enter はチップ入力にフォーカスがあっても効くよう、section で keydown を拾う
+             (子の入力欄から素直にバブリングしてくる)。 -->
+        <section class="gen" @onkeydown="OnSectionKeyDown">
+            <TagPresetField @ref="_promptField"
+                            Label="プロンプト" Kind="prompt"
                             @bind-Tags="_promptTags"
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
                             OnFocused="SetTarget"
+                            DraftEmptyChanged="OnPromptDraftEmptyChanged"
                             Placeholder="例: 1girl と入力して Enter" />
 
-            <TagPresetField Label="ネガティブ" Kind="negative"
+            <TagPresetField @ref="_negativeField"
+                            Label="ネガティブ" Kind="negative"
                             @bind-Tags="_negativeTags"
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
@@ -87,15 +92,28 @@
             <!-- ランタイム LoRA 選択チップ (L-2)。未選択なら loras キーを送らない。 -->
             <LoraChips @bind-Selected="_loras" />
 
+            @* 生成できるか / 押せないなら理由は何か は純クラス GenerateGate に集約する
+               (razor に条件式を散らさない・Ctrl+Enter も同じ判定を通る)。
+               未確定テキストがあれば確定タグ 0 でも押せる = 押したときに確定してから生成する。 *@
+            @{
+                var gate = GenerateGate.Evaluate(_busy, _connected, _promptTags.Count, _promptDraftEmpty);
+            }
+
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
-                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@_busy">
+                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
                     @((_busy && !_runningDraft) ? "生成中…" : "生成")
                 </button>
-                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@_busy">
+                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
                     @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
                 </button>
             </div>
+
+            @* 押せない理由を明示する (無言失敗の根絶・課題 #2)。押せるときは何も出さない。 *@
+            @if (gate.Reason is not null)
+            {
+                <div class="gen-reason">@gate.Reason</div>
+            }
 
             @if (_error is not null)
             {
@@ -166,6 +184,31 @@
     // 左ペインのプリセット一覧。保存/削除後に Refresh して最新化する。
     private PresetSidebar? _presetSidebar;
 
+    // 中央 2 フィールドへの参照。生成直前に未確定テキストを確定させる (P2-1) ために持つ。
+    private TagPresetField? _promptField;
+    private TagPresetField? _negativeField;
+
+    // プロンプト欄の未確定テキストが空か (子から真偽だけ通知される)。
+    // 生成ボタンの活性判定にのみ使う。draft の文字列そのものは子が真実源で親は持たない。
+    private bool _promptDraftEmpty = true;
+
+    // プロンプト欄の未確定テキストの有無を受け取り、生成ボタンの活性を追従させる。
+    private void OnPromptDraftEmptyChanged(bool empty)
+    {
+        _promptDraftEmpty = empty;
+    }
+
+    // Ctrl+Enter (Mac は Cmd+Enter) で生成する (P2-8)。
+    // section で拾うのでチップ入力にフォーカスがあっても効く。
+    // 可否判定は GenerateAsync 内の GenerateGate に一本化されている。
+    private async Task OnSectionKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && (e.CtrlKey || e.MetaKey))
+        {
+            await GenerateAsync(false);
+        }
+    }
+
     // 中央入力欄のフォーカスを受けて追加先を更新する (フォーカス連動)。
     // プロンプト欄にフォーカス → 追加先=プロンプト、ネガティブ欄にフォーカス → 追加先=ネガティブ。
     // お気に入り入力欄のフォーカスは TagPalette 側で追加先=favorites に切り替える。
@@ -221,7 +264,8 @@
     // ここへは来ない想定だが、万一来ても prompt へ誤混入させない)。
     private void AddTag(TagAdd add)
     {
-        var tag = (add.Tag ?? "").Trim().ToLowerInvariant();
+        // 正規化規則はチップ確定 (TagInput) と同じ TagCommit.Normalize に寄せる。
+        var tag = TagCommit.Normalize(add.Tag);
         if (tag.Length == 0)
         {
             return;
@@ -270,7 +314,24 @@
     // _size 自体は書き換えず req.Size をローカルに上書きするだけ (下書き後に本番を押せば選択サイズで出る)。
     private async Task GenerateAsync(bool draft = false)
     {
-        if (_busy || _promptTags.Count == 0)
+        if (_busy)
+        {
+            return;
+        }
+
+        // 未確定テキストを先に確定させる (P2-1)。blur は生成ボタンの click と別の
+        // SignalR ラウンドトリップになり順序が保証されないので、ここで明示的に await する。
+        if (_promptField is not null)
+        {
+            await _promptField.CommitPendingAsync();
+        }
+        if (_negativeField is not null)
+        {
+            await _negativeField.CommitPendingAsync();
+        }
+
+        // 確定後の状態で可否を判定する (ボタン disabled と同じ純ロジックを通す)。
+        if (!GenerateGate.Evaluate(_busy, _connected, _promptTags.Count, _promptDraftEmpty).CanGenerate)
         {
             return;
         }
