@@ -39,6 +39,8 @@ public sealed class AppCssTokenTests
             "--accent-weak", "--accent-border", "--focus-ring",
             "--ng-soft", "--ng-weak",
             "--dev-cpu", "--dev-npu", "--dev-igpu", "--dev-gpu",
+            // P2-2 で追加: 生成中オーバーレイの暗幕
+            "--overlay",
         };
 
         foreach (var name in expected)

@@ -137,18 +137,35 @@
             {
                 <div class="gen-mode">@_lastMode</div>
             }
+
+            @* 生成画像の保存導線 (P2-3 / 課題 #8)。data URI の a[download] なので JS interop は要らない。
+               生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
+            @if (_imageData is not null && !_busy)
+            {
+                <a class="preview-save" download="@_downloadName"
+                   href="data:image/png;base64,@_imageData"
+                   title="@_downloadName として保存します">PNG 保存</a>
+            }
+            @* 生成中も前回画像を破棄せず減光して残す (P2-2 / 課題 #6)。
+               下書き → 本番の見比べができ、生成のたびにプレースホルダへフラッシュしない。
+               スピナーと経過秒 (課題 #7) はその上へ絶対配置でかぶせる。 *@
             <div class="preview">
-                @if (_busy)
+                @if (_imageData is not null)
                 {
-                    <div class="spinner"></div>
+                    <img class="@(_busy ? "preview-dim" : null)"
+                         src="data:image/png;base64,@_imageData" alt="generated" />
                 }
-                else if (_imageData is not null)
-                {
-                    <img src="data:image/png;base64,@_imageData" alt="generated" />
-                }
-                else
+                else if (!_busy)
                 {
                     <div class="placeholder">生成画像がここに表示されます</div>
+                }
+
+                @if (_busy)
+                {
+                    <div class="preview-overlay">
+                        <div class="spinner"></div>
+                        <div class="preview-elapsed">@ElapsedFormat.Mmss(_elapsed)</div>
+                    </div>
                 }
             </div>
         </section>
@@ -189,6 +206,16 @@
 
     // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
     private string? _lastMode;
+
+    // 「PNG 保存」の download 属性に出すファイル名 (P2-3)。表示中の画像が生成された
+    // 時刻と実送信サイズで決まるので、成功時に 1 回だけ組み立てて保持する。
+    private string? _downloadName;
+
+    // 生成開始からの経過時間 (生成中オーバーレイの表示用・P2-2)。表示整形は ElapsedFormat。
+    private TimeSpan _elapsed;
+
+    // 経過秒タイマーの停止用。生成の finally と DisposeAsync の両方から必ず落とす。
+    private CancellationTokenSource? _tickCts;
 
     private HubConnection? _hub;
     private TelemetrySample? _sample;
@@ -370,9 +397,16 @@
         _busy = true;
         _runningDraft = draft;
         _error = null;
-        _imageData = null;
-        _imageBytes = null;
+        // ★ _imageData / _imageBytes はここで破棄しない (P2-2)。前回画像を減光して残し、
+        //   成功したときだけ差し替える (失敗しても直前の絵が消えない)。
         StateHasChanged();
+
+        // 経過秒タイマーを起動する (1 秒刻み)。fire-and-forget にはせず、
+        // 下の finally で Cancel → await して必ず終わらせる。
+        _elapsed = TimeSpan.Zero;
+        var tickCts = new CancellationTokenSource();
+        _tickCts = tickCts;
+        var tickTask = TickElapsedAsync(DateTimeOffset.UtcNow, tickCts.Token);
 
         // 実際に C++ サーバーへ送る size。下書きのときだけ落とす。
         var sendSize = draft ? DraftPreview.ResolveDraftSize(_size) : _size;
@@ -397,6 +431,8 @@
             _connected = true;
             // 成功後にモードバッジを記録 (例「下書き 768²」「本番 1024²」)。
             _lastMode = $"{(draft ? "下書き" : "本番")} {ModeBadge(sendSize)}";
+            // 保存ファイル名も同時に確定する (表示中の画像と必ず対になる)。
+            _downloadName = DownloadName.ForPng(DateTime.Now, sendSize);
         }
         catch (GenerationException ex)
         {
@@ -411,6 +447,39 @@
         {
             Activity.Exit();
             _busy = false;
+
+            // 成功・失敗のどちらでもタイマーを確実に止める (経路 1・2)。
+            // 先に参照を外してから Cancel/Dispose するので、DisposeAsync から
+            // 破棄済みの cts が見えることはない。
+            _tickCts = null;
+            tickCts.Cancel();
+            await tickTask;
+            tickCts.Dispose();
+        }
+    }
+
+    // 生成中の経過秒を 1 秒刻みで更新する (P2-2)。
+    // System.Timers.Timer ではなく PeriodicTimer を使い、UI 更新は InvokeAsync(StateHasChanged) で
+    // レンダラのコンテキストへ戻す。ループは ct のキャンセルでのみ終わる。
+    private async Task TickElapsedAsync(DateTimeOffset startedAt, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                // 加算ではなく開始時刻との差を取る (刻みがずれても表示が遅れない)。
+                _elapsed = DateTimeOffset.UtcNow - startedAt;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 生成完了 / エラー / ページ離脱によるキャンセル。正常系。
+        }
+        catch (ObjectDisposedException)
+        {
+            // 離脱直後にレンダラが落ちた場合。もう表示更新は要らないので黙って抜ける。
         }
     }
 
@@ -427,6 +496,11 @@
 
     public async ValueTask DisposeAsync()
     {
+        // 生成中にページを離れてもタイマーを止める (経路 3)。
+        // GenerateAsync 側は「参照を外す → Cancel → Dispose」の順なので、
+        // ここから見える cts は必ず生存している。
+        _tickCts?.Cancel();
+
         if (_hub is not null)
         {
             await _hub.DisposeAsync();

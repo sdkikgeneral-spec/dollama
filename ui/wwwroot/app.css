@@ -31,6 +31,9 @@
     --ng-soft: #ffb4ae;
     --ng-weak: rgba(248, 81, 73, 0.12);
 
+    /* 生成中オーバーレイの暗幕 (P2-2)。減光した前回画像の上でも文字が読めるようにする */
+    --overlay: rgba(0, 0, 0, 0.45);
+
     /* テレメトリのデバイス色 (§4.4-1)。4 色が並んで動く = 4 HW 協調の可視化 */
     --dev-cpu: #6ea8fe;
     --dev-npu: #a78bfa;
@@ -376,8 +379,10 @@ textarea, select, input[type="range"]
 
 /* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
 /* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
-   リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。 */
-textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginput .chips:focus-within
+   リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。
+   .preview-save は button ではなく a[download] (P2-3) なので個別に足す — ここを
+   別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。 */
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .preview-save:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
@@ -480,9 +485,39 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginp
     white-space: nowrap;
 }
 
+/* ── 生成画像の保存導線 (右ペイン右上・P2-3 / 課題 #8) ──
+   `<a download href="data:image/png;base64,…">` だけで保存できるので JS interop は要らない。
+   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。 */
+.preview-save
+{
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.preview-save:hover
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 /* プレビュー枠は右ペイン (.canvas) を埋める */
 .preview
 {
+    /* position は生成中オーバーレイ (.preview-overlay) の絶対配置の基準 (P2-2) */
+    position: relative;
     flex: 1;
     width: 100%;
     height: 100%;
@@ -501,6 +536,36 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginp
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+}
+
+/* 生成中は前回画像を破棄せず減光して残す (P2-2 / 課題 #6)。
+   下書き → 本番の見比べができ、毎回プレースホルダへフラッシュしない。 */
+.preview img.preview-dim
+{
+    opacity: 0.35;
+}
+
+/* 生成中オーバーレイ: スピナー + 経過秒 (P2-2 / 課題 #7)。
+   減光した前回画像の上にかぶせるので、文字が読めるよう薄い暗幕を敷く。 */
+.preview-overlay
+{
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: var(--overlay);
+}
+
+/* 経過秒 (mm:ss)。桁が揺れないよう等幅数字にする。整形は Services/ElapsedFormat.cs */
+.preview-elapsed
+{
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
 .placeholder

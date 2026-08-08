@@ -3,6 +3,7 @@
    選択状態は List<LoraSpec> として親 (Generate.razor) へ @bind-Selected で双方向共有する。
    TagInput の流儀に合わせ、変更のたびに新リストを再代入して親へ通知する。
    カタログが空 (loras.json 不在) のときは控えめに「LoRA なし」を表示する。 *@
+@using System.Globalization
 @inject LoraCatalog Catalog
 
 <div class="lora-chips">
@@ -24,11 +25,17 @@
 
                 @if (on)
                 {
+                    @* 数値表示をドラッグに追従させるため @onchange (離した時) ではなく
+                       @oninput (動かしている間) で拾う (P2-4 / 課題 #10)。
+                       値は float 1 個なので SignalR の往復が増えても軽い。
+                       ブラウザが送ってくる range の値は常に "0.85" 形式 (小数点はドット)
+                       なので、parse も表示も InvariantCulture で固定する
+                       — 現在カルチャ依存だと de-DE 等で TryParse が落ちて強度が動かない。 *@
                     <span class="lora-strength" title="強度 (0.0–1.5)">
                         <input type="range" min="0" max="1.5" step="0.05"
-                               value="@sel!.Strength.ToString("0.00")"
-                               @onchange="(e) => SetStrength(entry.Name, e.Value)" />
-                        <span class="lora-val">@sel.Strength.ToString("0.00")</span>
+                               value="@sel!.Strength.ToString("0.00", CultureInfo.InvariantCulture)"
+                               @oninput="(e) => SetStrength(entry.Name, e.Value)" />
+                        <span class="lora-val">@sel.Strength.ToString("0.00", CultureInfo.InvariantCulture)</span>
                     </span>
                 }
             </div>
@@ -76,9 +83,11 @@
     }
 
     // スライダ変更で強度を更新。新リスト再代入で親へ通知する。
+    // parse は InvariantCulture 固定 (input[type=range] の値は常に "0.85" 形式で来るため。
+    // 現在カルチャ依存だと小数点がカンマのロケールで TryParse が失敗し強度が動かない)。
     private async Task SetStrength(string name, object? raw)
     {
-        if (!float.TryParse(raw?.ToString(), out var v))
+        if (!float.TryParse(raw?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
         {
             return;
         }
