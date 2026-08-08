@@ -294,6 +294,40 @@ affine gamma/beta はチャネルごと [C] (PyTorch 仕様)。1 グループ=1 
 
 ---
 
+## UI テスト (Blazor Server・meson の外)
+
+`ui/` は C++ 研究コアとは別プロセス・別デプロイの「配管」なので、テストも meson ではなく
+.NET のテストランナーで回す。C++ 側 (`src/`) には一切依存しない。
+
+```bash
+# UI テスト全件実行 (リポジトリルートから)
+dotnet test ui.Tests/Dollama.Ui.Tests.csproj
+
+# ビルドのみ
+dotnet build ui/Dollama.Ui.csproj
+```
+
+### `ui.Tests` (C#/xUnit)
+
+方針: **依存追加は最小限** (bUnit は入れない)。razor のレンダリングを組むのではなく、
+**ロジックを純クラスへ切り出して**そこを検証する (`DraftPreview` が手本)。
+CSS/razor は「壊れると気づきにくい性質」だけをテキスト検査で機械的に固定する。
+
+| ファイル | 対象 | 内容 |
+|---|---|---|
+| `DraftPreviewTests.cs` | `Services/DraftPreview.cs` | 下書きモードの送信サイズ決定 (幅>768 は 768² へ・768 以下は据え置き・パース不能/空は 768²・例外を投げない) |
+| `PresetStoreTests.cs` | `Services/PresetStore.cs` | presets.json の保存/削除・サムネ (ImageSharp で 128px 上限) の生成と削除・`thumbnailPng == null` で既存温存・サムネ無しレガシー JSON の後方互換・危険な名前でも `thumbs/` 配下に収まる・日本語名の保持 |
+| `FavoriteTagStoreTests.cs` | `Services/FavoriteTagStore.cs` | favorites.json の追加/削除/重複排除・アトミック書込・壊れ JSON 耐性 |
+| `TagPaletteCatalogTests.cs` | `Services/TagPaletteCatalog.cs` | tag-palette.json の読込 (不在/壊れで空カタログ・起動を止めない) |
+| `TagLabelsTests.cs` | `Services/TagLabels.cs` | 英語タグ → 日本語ラベル写像 (未登録は英語フォールバック・表示専用で内部値は不変) |
+| `LoraCatalogTests.cs` | `Services/LoraCatalog.cs`, `Services/Dtos.cs` | loras.json の読込 (不在/壊れで空・strength 既定 1.0)・生成リクエスト JSON の snake_case 出力 (未選択なら `loras` キーを出さない) |
+| `DeviceStyleTests.cs` | `Services/DeviceStyle.cs` | テレメトリのデバイス名 → CSS クラス (`tm-cpu`/`tm-npu`/`tm-igpu`/`tm-gpu`)・大小文字非依存・未知/null/空は `""` で既定グラデへフォールバック |
+| `AppCssTokenTests.cs` | `wwwroot/app.css` + scoped CSS + `Generate.razor` | 配色トークン層の回帰止め: `:root` のトークン定義・**WCAG 相対輝度で計算したコントラスト下限** (hex 完全一致では検査しない)・`:root` 外に直書き色ゼロ・`var()` 未定義ゼロ・フォーカス統一リングのセレクタ・`::placeholder`・デバイス色・エラー UI/再接続モーダルの P1-7 回帰止め (Blazor JS 契約の id/class が残っていること) |
+
+設計の出典は `docs/ui-brushup-plan.md` (§4.1 トークン改訂表 / §7 検証)。
+
+---
+
 ## テストファイルの追加方法
 
 ### 1. テストファイルを作成

@@ -1,7 +1,7 @@
 # dollama UI ブラッシュアップ計画 (設計ドキュメント)
 
-> 対象: `ui/` (Blazor Server)。**本ドキュメントは計画のみでコード無改変**。
-> 実装は後日 csharp-ui-implementer が本 doc の実装バックログ (P1→P2→P3) に沿って着手する。
+> 対象: `ui/` (Blazor Server)。**P1-1〜P1-5 / P1-7 実装済 (2026-08-08 / `feat/ui-p1-tokens`)・P1-6 以降は計画**。
+> 残りは本 doc の実装バックログ (P1-6 → P2 → P3) に沿って csharp-ui-implementer が着手する。
 > レビュー日: 2026-07-14 / レビュー対象コミット: `feat/fast-mode-g0b-g3k` ブランチ先端 (3f16d6c 時点の ui ツリー)。
 
 ---
@@ -76,8 +76,8 @@
 |---|---|---|---|---|---|
 | 1 | UX | **未確定テキストのまま生成すると無視される**。「1girl」と打って Enter せず生成ボタンを押すと、`_draft` は `Tags` に入らずプロンプト空 → #2 と合わさり完全な無言失敗 | `TagInput` は Enter/カンマでのみ確定。blur・生成時の確定なし | **高** | `TagInput.razor`, `Generate.razor` |
 | 2 | UX | **プロンプト空だと生成ボタンが「効いているのに何も起きない」**。`GenerateAsync` 冒頭で `_promptTags.Count == 0` なら silent return。ボタンは有効に見える | disabled は `_busy` のみ。空時の理由表示なし | **高** | `Generate.razor` |
-| 3 | 配色 | **チップ入力にフォーカス表示がゼロ**。`.chip-entry:focus { outline: none; }` のみで、外枠 `.chips` も光らない。キーボード利用時に現在地が分からない | `textarea/select` は border 色替えのみ、`.chip-entry` は完全無表示 | **高** | `app.css` |
-| 4 | 配色 | **入力・カード境界がほぼ見えない**。`--border #2c313b` vs `--panel-2 #23272f` ≈ **1.15:1**、vs `--panel` ≈ **1.26:1** (UI 非テキストの目安 3:1 に遠い)。入力欄とパネルの区別が輝度でつかない | 全境界が単一の `--border` | **高** | `app.css` |
+| 3 | 配色 | **チップ入力にフォーカス表示がゼロ**。`.chip-entry:focus { outline: none; }` のみで、外枠 `.chips` も光らない。キーボード利用時に現在地が分からない **→ P1-2 で解消 (2026-08-08)** | `textarea/select` は border 色替えのみ、`.chip-entry` は完全無表示 | **高** | `app.css` |
+| 4 | 配色 | **入力・カード境界がほぼ見えない**。`--border #2c313b` vs `--panel-2 #23272f` ≈ **1.15:1**、vs `--panel` ≈ **1.26:1** (UI 非テキストの目安 3:1 に遠い)。入力欄とパネルの区別が輝度でつかない **→ P1-1/P1-4 で部分解消 (2026-08-08・境界 2 段化で vs panel 1.26→1.46 / 操作要素 vs panel 2.10。3:1 まで上げると縞模様化するため意図的に手前で止めている)** | 全境界が単一の `--border` | **高** | `app.css` |
 | 5 | UX | **IME 変換確定の Enter でタグが誤確定しうる**。日本語 UI なのに `OnKeyDown` が composing を見ない (変換確定 Enter で未変換ローマ字や変換途中文字列がタグ化する恐れ) | `e.Key == "Enter"` のみ判定 | 中 | `TagInput.razor`, `TagPalette.razor` |
 | 6 | UX | **生成開始で前回画像を即破棄** (`_imageData = null`)。下書き→本番の比較ができず、画面が毎回プレースホルダへフラッシュする | busy 中はスピナーのみ | 中 | `Generate.razor`, `app.css` |
 | 7 | UX | **生成中フィードバックがスピナーのみ**。1024² 本番は 20 秒前後かかるのに経過時間も目安もない (進捗 API は C++ に無いので進捗バーは対象外) | `.spinner` 単体 | 中 | `Generate.razor`, `app.css` |
@@ -85,17 +85,17 @@
 | 9 | UX | **追加先フォーカス連動が暗黙的すぎる**。お気に入り入力欄に一度触れると以降のパレットクリックが全部 favorites 行きになるが、変化はパレット上部トグルの小さなハイライトだけ。追加先のフィールド側には何も出ない | トグル label の `.on` (accent 枠) のみ | 中 | `app.css` (+ 軽微に `TagPresetField.razor`) |
 | 10 | UX | **LoRA 強度スライダの数値表示がドラッグに追従しない**。`@onchange` (離した時) なので操作中は古い値が見え続ける | `@onchange` バインド | 中 | `LoraChips.razor` |
 | 11 | UX | **テレメトリの「生成中」が視覚に出ない**。`Generating` フラグは title 属性 (ホバー) のみ。全 HW 協調の見せ場が眠っている | バー幅の変化だけ | 中 | `Generate.razor`, `app.css` |
-| 12 | 配色 | **placeholder が未スタイル**。ブラウザ既定色 (UA 依存・半透明) でダーク背景ではコントラスト不定。例示文言 (「例: 1girl と入力して Enter」) が導線なのに読みにくい | `::placeholder` 宣言なし | 中 | `app.css` |
+| 12 | 配色 | **placeholder が未スタイル**。ブラウザ既定色 (UA 依存・半透明) でダーク背景ではコントラスト不定。例示文言 (「例: 1girl と入力して Enter」) が導線なのに読みにくい **→ P1-3 で解消 (2026-08-08)** | `::placeholder` 宣言なし | 中 | `app.css` |
 | 13 | 配色 | **accent 青一色に役割が集中**。主ボタン・選択チップ・hover・保存完了メッセージ・テレメトリ%・言語トグル on がすべて `--accent`。「操作できる」「選択中」「情報」の区別が色で付かない | 単一 `--accent` | 中 | `app.css` |
-| 14 | 一貫性 | **色の直書きが散在**。`rgba(110,168,254,…)` (チップ 2 箇所)、`#0d1117`/`#0b1220`/`#0b0f17` (accent 上の暗文字が 3 種微妙に違う)、`#ffb4ae` (エラー淡色 2 箇所)、`#9d7bff` (バーのグラデ)。accent を差し替えるとチップだけ旧色で残る | トークン未経由 | 中 | `app.css` |
-| 15 | 一貫性 | **ボタン系が 5 系統の重複定義**。`.preset-btn` / `.fav-plus` / `.lang-toggle button` / `.generate.secondary` / `.ps-del` がほぼ同じ見た目を別々に宣言。hover 作法も border 色替え/文字色替えが混在 | 共通クラスなし | 中 | `app.css` |
+| 14 | 一貫性 | **色の直書きが散在**。`rgba(110,168,254,…)` (チップ 2 箇所)、`#0d1117`/`#0b1220`/`#0b0f17` (accent 上の暗文字が 3 種微妙に違う)、`#ffb4ae` (エラー淡色 2 箇所)、`#9d7bff` (バーのグラデ)。accent を差し替えるとチップだけ旧色で残る **→ P1-1 で解消 (2026-08-08・`:root` 外の直書き色ゼロを `AppCssTokenTests` で機械保証)** | トークン未経由 | 中 | `app.css` |
+| 15 | 一貫性 | **ボタン系が 5 系統の重複定義**。`.preset-btn` / `.fav-plus` / `.lang-toggle button` / `.generate.secondary` / `.ps-del` がほぼ同じ見た目を別々に宣言。hover 作法も border 色替え/文字色替えが混在 **→ P1 で部分解消 (2026-08-08・境界とフォーカスの作法は統一。ボタン統合は P3-1 に残)** | 共通クラスなし | 中 | `app.css` |
 | 16 | レイアウト | **タイポ階層がフラット**。11/12/13/14/15px がアドホックに散在し、ペイン見出し (`palette-head` 13px) と本文の差が 1px。視線が「どこから読むか」を掴めない | スケール定義なし | 中 | `app.css` |
 | 17 | レイアウト | **1100px 縦積みで生成ボタンとプレビューが分断**。縦積み順が 左→中央→右 のため、生成ボタンを押した後に画面最下部までスクロールしないと結果が見えない | `@media (max-width:1100px)` 単純 1fr | 中 | `app.css` |
-| 18 | 配色 | **`--muted` の小サイズ使用が余裕薄**。#8b92a0 on `--panel` ≈ **5.3:1**、on `--panel-2` ≈ **4.8:1** で AA は満たすが、11px 箇所 (`tm-item`, `palette-empty`, `lora-val`) はぎりぎり感 | 単一 muted | 低 | `app.css` |
+| 18 | 配色 | **`--muted` の小サイズ使用が余裕薄**。#8b92a0 on `--panel` ≈ **5.3:1**、on `--panel-2` ≈ **4.8:1** で AA は満たすが、11px 箇所 (`tm-item`, `palette-empty`, `lora-val`) はぎりぎり感 **→ P1-1 で解消 (2026-08-08・#9aa2b1 で on panel 6.42:1 / on panel-2 5.83:1)** | 単一 muted | 低 | `app.css` |
 | 19 | UX | **プリセット同名保存が確認なし上書き**。`PresetStore.Save` は同 kind 同名を黙って置換する仕様 (store 側は正しい)。UI で一言も出ない | 保存メッセージは成功文言のみ | 低 | `TagPresetField.razor` |
 | 20 | UX | **保存バーが常時表示でノイズ**。タグ 0 個でもプリセット名入力+保存ボタンが両フィールドに出続ける | 常時表示 | 低 | `TagPresetField.razor`, `app.css` |
 | 21 | UX | **キーボードで生成できない**。タグ確定後に毎回マウスでボタンへ移動する。Ctrl+Enter 等のショートカットなし | なし | 低 | `Generate.razor`, `TagInput.razor` |
-| 22 | 一貫性 | **再接続モーダル/エラーバーが英語+ライト配色**。`ReconnectModal` は "Rejoining the server..."、`MainLayout.razor.css` の `#blazor-error-ui` は `lightyellow` でダークテーマ内で異物 | テンプレート既定のまま | 低 | `ReconnectModal.razor(.css)`, `MainLayout.razor(.css)` |
+| 22 | 一貫性 | **再接続モーダル/エラーバーが英語+ライト配色**。`ReconnectModal` は "Rejoining the server..."、`MainLayout.razor.css` の `#blazor-error-ui` は `lightyellow` でダークテーマ内で異物 **→ P1-7 で解消 (2026-08-08)** | テンプレート既定のまま | 低 | `ReconnectModal.razor(.css)`, `MainLayout.razor(.css)` |
 | 23 | 一貫性 | **角丸・チップの微差**。radius 4/6/8/10/999px が混在 (それ自体は可) だが体系がなく、`fav-chip` と `tag-chip` は同じ「タグチップ」なのに padding/font-size が別定義 | 個別指定 | 低 | `app.css` |
 | 24 | レイアウト | **中央列の上限 400px が窮屈**。長いタグ列 (15 個超) でチップが縦に積み上がる一方、右ペイン 1fr は正方形画像の左右に大きな余白が残る | `minmax(340px,400px)` 固定 | 低 | `app.css` |
 
@@ -143,6 +143,7 @@
 | `--ok` | `#3fb950` | **据え置き** | 6.5:1 |
 | `--ng` | `#f85149` | **据え置き** | 枠・ドット用。4.9:1 |
 | `--ng-soft` | — (新設) | `#ffb4ae` | エラー本文用の淡色。#ffb4ae 直書き 2 箇所を統合。on エラー地 ≈ 9:1 超 |
+| `--ng-weak` | — (新設) | `rgba(248, 81, 73, 0.12)` | **PL 裁定で追加** (`.error` 背景の直書き `rgba(248,81,73,0.12)` が本表から漏れていた。置換してトークン経由率 100% を例外なしで成立させるため) |
 | `--focus-ring` | — (新設) | `rgba(110,168,254,0.45)` | `box-shadow: 0 0 0 2px var(--focus-ring)` の全フォーカス統一リング。リング自体の視認 3:1 相当 |
 | `--dev-cpu` | — (新設) | `#6ea8fe` | テレメトリ・デバイス色 (青=CPU)。on panel ≈ 6.8:1 |
 | `--dev-npu` | — (新設) | `#a78bfa` | 紫=NPU (現グラデ #9d7bff の系譜)。on panel ≈ 5.8:1 |
@@ -222,6 +223,11 @@
 1. **デバイス固有色** (P1・CSS のみ): バーの fill を全デバイス同一グラデ → デバイス別単色へ
    (`--dev-cpu/npu/igpu/gpu`)。`tm-item` に `data-dev` 属性 (または device 名の CSS クラス) を付けて
    fill と `tm-pct` を各色に。**4 色が並んで動く = 4 HW が協調して動いている**が一瞥で伝わる。
+   **実装済 (2026-08-08)**: デバイス名 → クラス名 (`tm-cpu`/`tm-npu`/`tm-igpu`/`tm-gpu`) の写像は
+   razor の三項演算子ではなく純クラス `Services/DeviceStyle.cs` に切り出した (`DraftPreview` と同じ流儀・
+   `ui.Tests/DeviceStyleTests.cs` で検証)。未知デバイスは `""` を返し既定グラデへフォールバックする。
+   なお既定グラデに残っていた直書き `#9d7bff` は `--dev-npu` (`#a78bfa`) に置換した — **意図的な微変更**
+   (トークン経由率 100% を優先し、ほぼ同系の紫へ寄せた)。
 2. **生成中の強調** (P1–P2): `_sample.Generating == true` のとき `telemetry-mini` にクラス `generating`
    を付け、(a) 各バーに `box-shadow: 0 0 6px <デバイス色 40%>` の淡いグロー、(b) ブランド横に
    小さな「生成中」pill (accent 塗り) を出す。title 頼みをやめる (#11)。
@@ -241,13 +247,20 @@
 
 | ID | 課題# | 変更内容 | 対象 | 工数 | リスク・可逆性 | 依存 |
 |---|---|---|---|---|---|---|
-| P1-1 | 4, 18, 14 | `:root` トークン改訂 (§4.1 の表どおり): `--border` 明度上げ・`--border-strong`/`--on-accent`/`--accent-weak`/`--accent-border`/`--ng-soft`/`--focus-ring`/`--dev-*` 新設・`--muted` 更新。既存の直書き色 (`rgba(110,168,254,…)`, `#0d1117`, `#0b1220`, `#0b0f17`, `#ffb4ae`, `#9d7bff`) を `var()` へ置換 | `app.css` | S | ほぼゼロ。git revert 1 発で戻る | なし |
-| P1-2 | 3 | フォーカス統一リング: `textarea:focus, select:focus, input:focus-visible, button:focus-visible, .chips:focus-within` に `box-shadow: 0 0 0 2px var(--focus-ring)` + border-color accent。`.chip-entry:focus { outline:none }` は残すが親 `.chips:focus-within` で必ず光らせる | `app.css` | S | ゼロ | P1-1 |
-| P1-3 | 12 | `::placeholder { color: var(--muted); opacity: 1; }` を明示 | `app.css` | S | ゼロ | P1-1 |
-| P1-4 | 4, 15 | 操作可能要素 (`textarea/select/.preset-name/.fav-entry/.chips/.preset-btn/.fav-plus/.ps-card/.palette-tag/.lora-chip`) の境界を `--border-strong` へ。非操作 (ペイン枠・区切り) は `--border` のまま | `app.css` | S | 低。見た目のみ | P1-1 |
-| P1-5 | — (§4.4-1) | テレメトリのデバイス別色: `tm-fill`/`tm-pct` をデバイス色に。razor 側は `tm-item` にデバイス名クラス (`tm-cpu` 等) を 1 属性足すだけ | `app.css`, `Generate.razor` (1 行) | S | 低 | P1-1 |
-| P1-6 | 16, 23 | タイポ/スペーシング/角丸トークン (§4.2) を `:root` に追加し、既存宣言を段階置換。ペイン見出しをセクションヘッダ型へ | `app.css` | M | 低。px 実値ほぼ不変 | P1-1 |
-| P1-7 | 22 | `#blazor-error-ui` (`MainLayout.razor.css`) をダーク配色へ (app.css 側の同名定義と重複しているので css 側を整理)。`ReconnectModal` の文言を日本語化 + ダーク配色 | `MainLayout.razor(.css)`, `ReconnectModal.razor(.css)` | S | 低 | なし |
+| P1-1 ✅ 2026-08-08 | 4, 18, 14 | `:root` トークン改訂 (§4.1 の表どおり): `--border` 明度上げ・`--border-strong`/`--on-accent`/`--accent-weak`/`--accent-border`/`--ng-soft`/`--focus-ring`/`--dev-*` 新設・`--muted` 更新。既存の直書き色 (`rgba(110,168,254,…)`, `#0d1117`, `#0b1220`, `#0b0f17`, `#ffb4ae`, `#9d7bff`) を `var()` へ置換 | `app.css` | S | ほぼゼロ。git revert 1 発で戻る | なし |
+| P1-2 ✅ 2026-08-08 | 3 | フォーカス統一リング: `textarea:focus, select:focus, input:focus-visible, button:focus-visible, .chips:focus-within` に `box-shadow: 0 0 0 2px var(--focus-ring)` + border-color accent。`.chip-entry:focus { outline:none }` は残すが親 `.chips:focus-within` で必ず光らせる | `app.css` | S | ゼロ | P1-1 |
+| P1-3 ✅ 2026-08-08 | 12 | `::placeholder { color: var(--muted); opacity: 1; }` を明示 | `app.css` | S | ゼロ | P1-1 |
+| P1-4 ✅ 2026-08-08 | 4, 15 | 操作可能要素 (`textarea/select/.preset-name/.fav-entry/.chips/.preset-btn/.fav-plus/.ps-card/.palette-tag/.lora-chip`) の境界を `--border-strong` へ。非操作 (ペイン枠・区切り) は `--border` のまま | `app.css` | S | 低。見た目のみ | P1-1 |
+| P1-5 ✅ 2026-08-08 | — (§4.4-1) | テレメトリのデバイス別色: `tm-fill`/`tm-pct` をデバイス色に。razor 側は `tm-item` にデバイス名クラス (`tm-cpu` 等) を 1 属性足すだけ | `app.css`, `Generate.razor` (1 行), `Services/DeviceStyle.cs` | S | 低 | P1-1 |
+| P1-6 🔲 | 16, 23 | タイポ/スペーシング/角丸トークン (§4.2) を `:root` に追加し、既存宣言を段階置換。ペイン見出しをセクションヘッダ型へ | `app.css` | M | 低。px 実値ほぼ不変 | P1-1 |
+| P1-7 ✅ 2026-08-08 | 22 | `#blazor-error-ui` (`MainLayout.razor.css`) をダーク配色へ (app.css 側の同名定義と重複しているので css 側を整理)。`ReconnectModal` の文言を日本語化 + ダーク配色 | `MainLayout.razor(.css)`, `ReconnectModal.razor(.css)` | S | 低 | なし |
+
+> **P1 実装メモ (2026-08-08)**: 重複整理の実体は「app.css 側が死にコードだった」。scoped CSS は
+> `#blazor-error-ui[b-xxxx]` へ書き換わり裸のセレクタより詳細度で必ず勝つため、実際に効いていたのは
+> `MainLayout.razor.css` の `lightyellow` 側。app.css 側のブロックを削除し scoped 側をダーク化して一本化した。
+> P1-4 の `--border-strong` は 13 箇所 (上記 + `.generate.secondary`/`.ps-del`/`.palette-target label`/`.lang-toggle` 外枠)、
+> `--border` 据え置きは 10 箇所 (`.topbar`/`.gen`/`.canvas`/`.palette,.preset-sidebar`/`.preview`/`.ps-noimg`/
+> `.gen-mode`/`.palette-cat`/`.lang-toggle` 内側区切り/`.spinner`)。規準は「クリック/フォーカスできる要素の外周 = strong」。
 
 ### P2 — 挙動を伴う UX 改善 (razor/cs 変更・各項目独立)
 
@@ -278,16 +291,19 @@
 
 ## 6. 段階適用の順序
 
-1. **P1-1 (トークン改訂) が筆頭**。`:root` 差し替え + 直書き置換だけで境界・muted・チップ・
+1. ✅ **P1-1 (トークン改訂) が筆頭** (2026-08-08 完了)。`:root` 差し替え + 直書き置換だけで境界・muted・チップ・
    エラー色が全画面に効く。挙動無変更・1 コミット・revert 容易。
-2. **P1-2〜P1-4 (フォーカス/placeholder/境界)** — 高深刻度 #3/#4 をコードロジックに触れず解消。
-3. **P1-5 + P2-10 (テレメトリ色と生成中強調)** — dollama らしさの即効改善。見た目の変化が
-   最も分かりやすく、ユーザーの体感リターンが早い。
+2. ✅ **P1-2〜P1-4 (フォーカス/placeholder/境界)** (2026-08-08 完了) — 高深刻度 #3/#4 をコードロジックに触れず解消。
+3. ✅ **P1-5 (テレメトリのデバイス色)** (2026-08-08 完了) / 🔲 P2-10 (生成中強調) は P2 で — dollama らしさの即効改善。
+   見た目の変化が最も分かりやすく、ユーザーの体感リターンが早い。
+   ※ P1-7 (エラー UI ダーク化・再接続モーダル日本語化) も同時に完了させた (依存なし・独立)。
 4. **P2-1 (無言失敗の根絶)** — 挙動変更の第一弾。UX 深刻度は最高だが razor ロジックに触れるため
    P1 の安定後に。ui.Tests を同時に追加。
 5. **P2-2/P2-3 (プレビュー保持・保存)** → 残りの P2 を小さく順次。
 6. **P1-6/P3-1 (タイポトークン→ボタン統合)** はリファクタ性格なので、機能系 P2 が落ち着いた
-   タイミングでまとめて。P3-2 (レスポンシブ) と P3-5 (履歴) は最後・P3-5 は着手前にユーザー確認。
+   タイミングで**まとめて後日**。P1 実装時も P1-6 は意図的に見送り、P3-1 と一緒に扱う方針を維持する
+   (タイポ/スペーシングを先に畳んでもボタン 5 系統の重複が残ると二度手間になるため)。
+   P3-2 (レスポンシブ) と P3-5 (履歴) は最後・P3-5 は着手前にユーザー確認。
 
 各段階で `dotnet build ui/Dollama.Ui.csproj` + `dotnet test ui.Tests` 緑を確認してからマージする。
 
@@ -297,6 +313,20 @@
 
 ### 自動 (ui.Tests / xUnit)
 
+- **P1 (実装済・依存追加ゼロ / bUnit 不使用)** — 2 ファイル追加。CSS/razor をテキストとして読み、
+  壊れると気づきにくい性質だけを機械検査する。
+  - `ui.Tests/AppCssTokenTests.cs` (28 件): ① `:root` に既存 7 + 新設 13 のトークンが定義済で値が空でない
+    ② **コントラスト比を hex 完全一致ではなく WCAG 相対輝度で計算**して下限を守る (`--text`/`--panel` ≥ 7.0、
+    `--muted` ≥ 4.5、`--on-accent`/`--accent` ≥ 4.5、`--ng-soft` ≥ 4.5、`--dev-*` 4 色 ≥ 4.5、
+    `--border-strong`/`--panel` ≥ 2.0、`--border`/`--panel` ≥ 1.4)。値一致は単なる変更検知器になるため採らない
+    ③ 半透明トークン 4 種が `rgba()` としてパースでき α が (0,1) ④ **`:root` 外に直書き色ゼロ** (hex / rgba とも・許可リストなし)
+    ⑤ `app.css` + scoped CSS 2 本の `var(--x)` が全て `:root` 定義済 (かつ scoped に `:root` を書いていない)
+    ⑥ フォーカス統一リングが 1 ブロックで 5 セレクタ全部を覆い `.chip-entry` の二重リング打ち消しがある
+    ⑦ `::placeholder` が `color: var(--muted)` + `opacity: 1` ⑧ `.tm-cpu/npu/igpu/gpu` が各 `--dev-*` を参照し
+    `Generate.razor` が `DeviceStyle.CssClass` を呼ぶ ⑨ P1-7 の回帰止め (app.css に `#blazor-error-ui` が無い・
+    scoped が `lightyellow`/`color-scheme: light only` でない・`ReconnectModal` の Blazor JS 契約 id/class が全部残っている)。
+  - `ui.Tests/DeviceStyleTests.cs` (17 件): `DeviceStyle.CssClass` の 4 デバイス正常系・大小文字非依存・
+    未知/null/空は `""` (既定グラデへフォールバック)。
 - **P2-1**: draft 確定の正規化 (trim/lowercase/カンマ展開/重複排除) をロジック単体で検証。
   TagInput のロジックをテスト可能な static/サービスに切り出すか、bUnit 導入は**しない**
   (依存追加は最小限の方針)。既存 PresetStore テストの流儀 (一時ディレクトリ) を踏襲。
