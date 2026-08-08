@@ -370,6 +370,48 @@ public sealed class AppCssTokenTests
         Assert.Contains("fav-target", palette);
     }
 
+    // ────────────────────────────────────────────────
+    // (11) P2-10 生成中のテレメトリ強調 (課題 #11 / §4.4-2)
+    //      「全 HW 協調」の見せ場が title 属性 (ホバー) に埋もれていた回帰止め。
+    // ────────────────────────────────────────────────
+    [Theory]
+    [InlineData(".tm-cpu", "var(--dev-cpu)")]
+    [InlineData(".tm-npu", "var(--dev-npu)")]
+    [InlineData(".tm-igpu", "var(--dev-igpu)")]
+    [InlineData(".tm-gpu", "var(--dev-gpu)")]
+    public void TelemetryGenerating_GlowsWithDeviceColor(string cls, string token)
+    {
+        var glow = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => b.Selector.Contains(".generating") && b.Selector.Contains(cls)).ToList();
+
+        Assert.True(glow.Count == 1, $"{cls} の生成中グロー宣言は 1 つであること (実際 {glow.Count} 件)");
+        var body = Normalize(glow[0].Body);
+        Assert.Contains("box-shadow", body);
+        Assert.Contains(token, body);
+
+        // グローは .tm-bar 側に出す。.tm-fill (子) に付けると .tm-bar の
+        // overflow: hidden でクリップされて 1px も見えない。
+        Assert.EndsWith(".tm-bar", glow[0].Selector);
+    }
+
+    [Fact]
+    public void GeneratingPill_IsAccentFilledAndDrivenByTelemetryFlag()
+    {
+        var pill = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => b.Selector.Contains(".gen-pill")).ToList();
+
+        Assert.True(pill.Count == 1, $".gen-pill の宣言は 1 つであること (実際 {pill.Count} 件)");
+        var body = Normalize(pill[0].Body);
+        Assert.Contains("background: var(--accent)", body);
+        Assert.Contains("color: var(--on-accent)", body);
+
+        var razor = File.ReadAllText(GenerateRazorPath);
+        Assert.Contains("gen-pill", razor);
+        Assert.Contains("生成中", razor);
+        // 生成中クラスの真実源はテレメトリの Generating (_busy ではない)
+        Assert.Contains("_sample?.Generating == true ? \"generating\"", razor);
+    }
+
     // ══════════════════════════════════════════════════
     //  以下ヘルパー
     // ══════════════════════════════════════════════════

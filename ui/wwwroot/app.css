@@ -300,6 +300,46 @@ html, body
     color: var(--dev-gpu);
 }
 
+/* 生成中の強調 (P2-10 / §4.4-2 / 課題 #11)。
+   Generating を title 属性 (ホバー) にしか出していなかったのをやめ、面で見せる。
+   グローは .tm-bar 側に出す — .tm-fill (子) に付けると .tm-bar の overflow: hidden で
+   クリップされて見えない。色は P1-5 のデバイス色をそのまま使い (color-mix は使わない)、
+   6px ぼかしで淡く光らせる。新トークンは足さない。 */
+.telemetry-mini.generating .tm-cpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-cpu);
+}
+
+.telemetry-mini.generating .tm-npu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-npu);
+}
+
+.telemetry-mini.generating .tm-igpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-igpu);
+}
+
+.telemetry-mini.generating .tm-gpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-gpu);
+}
+
+/* ブランド横の「生成中」pill (P2-10)。accent 塗り + 暗文字で、テレメトリのグローと対。
+   真実源はテレメトリ側の Generating フラグ (_busy ではない)。 */
+.gen-pill
+{
+    background: var(--accent);
+    color: var(--on-accent);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
 /* ── メイン 3 ペイン (左ペイン + 中央コントロール + 右プレビュー) ── */
 .main
 {

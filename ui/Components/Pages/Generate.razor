@@ -13,8 +13,17 @@
     <header class="topbar">
         <div class="brand">dollama <span class="brand-sub">/ 全 HW 協調 2D キャラ生成</span></div>
 
-        <!-- HW テレメトリ・ミニメーター (上部バーに横並び) -->
-        <div class="telemetry-mini" title="@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")">
+        @* 生成中バッジ (P2-10 / 課題 #11)。テレメトリのグローと対で「今 HW が動いている」を
+           面で示す。従来は Generating が title 属性 (ホバー) にしか出ていなかった。 *@
+        @if (_sample?.Generating == true)
+        {
+            <span class="gen-pill">生成中</span>
+        }
+
+        <!-- HW テレメトリ・ミニメーター (上部バーに横並び)。
+             生成中は generating クラスでバーを各デバイス色に光らせる (P2-10)。 -->
+        <div class="telemetry-mini @(_sample?.Generating == true ? "generating" : null)"
+             title="@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")">
             @if (_sample is null)
             {
                 <span class="tm-hint">テレメトリ接続待ち…</span>
