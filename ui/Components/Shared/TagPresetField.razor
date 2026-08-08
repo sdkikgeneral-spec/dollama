@@ -8,8 +8,8 @@
 <div class="field">
     <span>@Label</span>
 
-    <TagInput Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
-              OnFocused="NotifyFocused" />
+    <TagInput @ref="_input" Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
+              OnFocused="NotifyFocused" DraftEmptyChanged="DraftEmptyChanged" />
 
     <!-- 保存バー -->
     <div class="presetbar">
@@ -46,8 +46,22 @@
     // 親 (Generate) はこれを追加先 (_target) に反映し、パレットの追加先をフォーカス連動させる。
     [Parameter] public EventCallback<string> OnFocused { get; set; }
 
+    // 配下 TagInput の「未確定テキストが空か」をそのまま親へ中継する (P2-1)。
+    // 文字列は流さない — 親が持つのは真偽だけで、draft の真実源は TagInput のまま。
+    [Parameter] public EventCallback<bool> DraftEmptyChanged { get; set; }
+
     private string _newName = "";
     private string? _msg;
+
+    // 配下 TagInput への参照 (未確定テキストの確定を中継するため)。
+    private TagInput? _input;
+
+    // 親 (Generate) が生成直前に await する。配下 TagInput の未確定テキストを確定させる。
+    // 2 段中継 (Generate → TagPresetField → TagInput)。
+    public Task CommitPendingAsync()
+    {
+        return _input?.CommitPendingAsync() ?? Task.CompletedTask;
+    }
 
     private async Task OnTagsChanged(List<string> tags)
     {
