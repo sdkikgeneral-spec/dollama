@@ -371,6 +371,40 @@ html, body
     text-align: right;
 }
 
+/* 役割ラベル (P3-3 / §4.4-3)。Role ("CLIP enc" / "SDXL UNet" …) は title 属性 =
+   ホバーしないと見えなかった。画面に出すことで「NPU が CLIP を、RTX5080 が UNet を
+   やっている」というパイプライン理解が UI から得られる (dollama らしさの核)。
+
+   ★ 既定は display: none。通常フローに 1px も入らないので、バーの幅 (64px 固定) も
+     位置も、ラベルを足す前とまったく同じ。
+   ★ 寸法 (font-size / padding / margin / width) は 1 つも宣言しない。字は .tm-item の
+     --fs-xs を、間隔は .tm-item の gap をそのまま使う = 新トークンも不要で、
+     P1-6 の実効 px ベースライン (ui.Tests/AppCssScaleBaselineTests.cs) も動かない。
+   ★ 色は --muted。数値 (--dev-*) より一段落として「データ = 数値 / 説明 = ラベル」の
+     階層を保つ (デバイス色にすると % と同格になり、どちらを読むべきか迷う)。 */
+.tm-role
+{
+    display: none;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* 幅に余裕がある時だけ常時表示する (§4.4-3 の 2 案のうち後者)。
+   1500px は「4 デバイス分のラベル (計 ~250px) を足しても .telemetry-mini が
+   ブランド・言語トグル・接続表示を押し出さない」目安。これ未満では従来どおり
+   title 属性 (ホバー) が受け皿になる。
+
+   ★ ホバーで .tm-bar の下へ出す案は採らなかった: .telemetry-mini は overflow: hidden
+     (トップバーからの溢れ止め) なので、絶対配置でバーの外へ出したラベルはクリップされて
+     1px も見えない。overflow を外すと今度は狭い幅で溢れる。 */
+@media (min-width: 1500px)
+{
+    .tm-role
+    {
+        display: block;
+    }
+}
+
 /* デバイス別の色 (P1-5 / §4.4-1)。tm-item のクラスは Services/DeviceStyle.cs が決める。
    4 色が別々に動くことで「4 つの HW が協調して働いている」が一瞥で伝わる。
    未知のデバイスはクラスが付かず上の既定グラデへフォールバックする。 */

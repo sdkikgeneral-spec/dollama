@@ -36,6 +36,12 @@
                         <span class="tm-dev">@d.Device</span>
                         <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
                         <span class="tm-pct">@d.Percent.ToString("0")%</span>
+                        @* 役割ラベル (P3-3 / §4.4-3)。「NPU が CLIP を、RTX5080 が UNet を」という
+                           パイプライン理解を title 属性 (ホバー) 頼みにしない。
+                           出す/出さないは CSS だけで決まる (既定 display:none・幅に余裕がある時だけ表示) —
+                           razor に状態は増やさない (テレメトリの真実源は _sample のまま)。
+                           バーの開始位置が役割名の長さでずれないよう、必ず行の末尾に置く。 *@
+                        <span class="tm-role">@d.Role</span>
                     </div>
                 }
             }
