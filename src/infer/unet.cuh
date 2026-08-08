@@ -5,6 +5,7 @@
 #include <cuda_fp16.h>
 
 #include "io/safetensors.hpp"
+#include "infer/lora.hpp"
 
 namespace dollama
 {
@@ -53,13 +54,20 @@ using UnetStageHook = void (*)(const char* name, const __half* d_buf, size_t n);
 void unet_set_stage_hook(UnetStageHook hook);
 
 // 後方互換: 呼び出しごとに全重みをデバイスへ転送する版 (test_unet が使用)。
+//   attn_fast: FAST モード (G-3k)。true で self/cross attention を launch_attention_fast
+//              へ切り替える。既定 false = 現行 (default) 挙動を 1 命令も変えず通す。
+//   epilogue : FAST モード (G-4k S1a)。true で resnet の norm1/norm2 と conv_norm_out の
+//              GroupNorm を multi-block 版 (launch_group_norm_mb) へ切り替える。
+//              既定 false = 現行 (default) 挙動を 1 命令も変えず通す。
 void launch_unet(const SafeTensors& weights,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out);
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast = false,
+                 bool               epilogue = false);
 
 // ----------------------------------------------------------------
 // デバイス常駐重みハンドル (S1 最適化)
@@ -84,13 +92,57 @@ UnetWeightsHandle unet_weights_create(const SafeTensors& weights);
 // ハンドルが保持する全デバイス重みを解放する。nullptr は無視。
 void unet_weights_destroy(UnetWeightsHandle handle);
 
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2)。常駐重みへの適用時マージ / bit-exact 復元。
+// ----------------------------------------------------------------
+// unet_apply_loras:
+//   各 LoraModule (lora.hpp / load_lora_modules の出力) について、常駐重み W に
+//     W += scale * (B @ A)
+//   をデバイス上で焼き込む (delta = launch_gemm_fp16(B, A, alpha=scale, beta=0) →
+//   launch_add で in-place 加算)。forward 経路・カーネルは 1 命令も変えない。
+//   patch した base_key はハンドル内で追跡され unet_clear_loras で復元される。
+//   shape 不整合・重み不在は std::runtime_error (途中で失敗した場合、それまでに
+//   適用済みの module は patched のまま残る → 呼び出し側は clear してから再試行する)。
+void unet_apply_loras(UnetWeightsHandle handle, const LoraModule* mods, int n);
+
+// unet_clear_loras:
+//   patch 済みの全 key を base SafeTensors の host バイトから再 upload して
+//   bit-exact 復元する (デバイス側 base コピーは持たない)。patch なしなら no-op。
+void unet_clear_loras(UnetWeightsHandle handle);
+
+// 常駐重みのデバイスポインタを引く (テスト・検証用)。未ロードの key は常駐化してから返す。
+const __half* unet_weight_device_ptr(UnetWeightsHandle handle, const std::string& name);
+
 // 常駐重みハンドルを使う launch_unet。重み転送/再 malloc は発生しない (2step 目以降)。
+//   attn_fast: FAST モード (G-3k)。既定 false = 現行 (default) 挙動。
+//   epilogue : FAST モード (G-4k S1a)。既定 false = 現行 (default) 挙動。
 void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out);
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast = false,
+                 bool               epilogue = false);
+
+// ----------------------------------------------------------------
+// バッチ (B>1) forward (G-2k S2)。CFG cond/uncond を B=2 に束ねて 1 forward で回す
+// 下地。常駐重みハンドルを使う。各テンソルは b-major で連続:
+//   d_latent [B,4,128,128] / d_encoder_hidden_states [B,77,2048] /
+//   d_text_embeds [B,1280] / d_time_ids [6] (全 b 共有) / d_noise_pred_out [B,4,128,128]。
+// B=1 で呼べば launch_unet(handle,...) と各カーネル起動列・数値が完全同一 (default 無改変)。
+//   attn_fast: FAST モード (G-3k)。既定 false = 現行 (default) 挙動。
+//   epilogue : FAST モード (G-4k S1a)。既定 false = 現行 (default) 挙動。
+void launch_unet_batched(UnetWeightsHandle  handle,
+                         int                B,
+                         const __half*      d_latent,
+                         float              timestep,
+                         const __half*      d_encoder_hidden_states,
+                         const __half*      d_text_embeds,
+                         const __half*      d_time_ids,
+                         __half*            d_noise_pred_out,
+                         bool               attn_fast = false,
+                         bool               epilogue = false);
 
 } // namespace dollama

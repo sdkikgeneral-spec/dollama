@@ -13,8 +13,17 @@
     <header class="topbar">
         <div class="brand">dollama <span class="brand-sub">/ 全 HW 協調 2D キャラ生成</span></div>
 
-        <!-- HW テレメトリ・ミニメーター (上部バーに横並び) -->
-        <div class="telemetry-mini" title="@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")">
+        @* 生成中バッジ (P2-10 / 課題 #11)。テレメトリのグローと対で「今 HW が動いている」を
+           面で示す。従来は Generating が title 属性 (ホバー) にしか出ていなかった。 *@
+        @if (_sample?.Generating == true)
+        {
+            <span class="gen-pill">生成中</span>
+        }
+
+        <!-- HW テレメトリ・ミニメーター (上部バーに横並び)。
+             生成中は generating クラスでバーを各デバイス色に光らせる (P2-10)。 -->
+        <div class="telemetry-mini @(_sample?.Generating == true ? "generating" : null)"
+             title="@(_sample?.Generating == true ? "生成中 — RTX5080 が拡散を回しています" : "アイドル")">
             @if (_sample is null)
             {
                 <span class="tm-hint">テレメトリ接続待ち…</span>
@@ -23,7 +32,7 @@
             {
                 @foreach (var d in _sample.Devices)
                 {
-                    <div class="tm-item" title="@d.Device @d.Role @d.Percent.ToString("0")%">
+                    <div class="tm-item @DeviceStyle.CssClass(d.Device)" title="@d.Device @d.Role @d.Percent.ToString("0")%">
                         <span class="tm-dev">@d.Device</span>
                         <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
                         <span class="tm-pct">@d.Percent.ToString("0")%</span>
@@ -40,8 +49,17 @@
                     @onclick="@(() => SetTagLang("en"))">EN</button>
         </div>
 
+        @* 接続インジケータ。未接続のときだけ「再接続」ボタンを添える (P2-9)。
+           定期ポーリングはしない — 再判定は「初回描画」「生成の成否」「このボタン」の 3 経路のみ。 *@
         <div class="conn @(_connected ? "ok" : "ng")">
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
+            @if (!_connected)
+            {
+                <button type="button" class="conn-retry" @onclick="ReconnectAsync"
+                        disabled="@_reconnecting" title="GET /health を 1 回だけ再試行します">
+                    @(_reconnecting ? "確認中…" : "再接続")
+                </button>
+            }
         </div>
     </header>
 
@@ -53,20 +71,29 @@
             <PresetSidebar @ref="_presetSidebar" OnLoad="LoadPreset" />
         </aside>
 
-        <!-- 中央: 生成コントロール -->
-        <section class="gen">
-            <TagPresetField Label="プロンプト" Kind="prompt"
+        <!-- 中央: 生成コントロール。
+             Ctrl+Enter はチップ入力にフォーカスがあっても効くよう、section で keydown を拾う
+             (子の入力欄から素直にバブリングしてくる)。 -->
+        <section class="gen" @onkeydown="OnSectionKeyDown">
+            @* IsTarget は「パレットのタグが今ここに入る」の可視化 (P2-6 / 課題 #9)。
+               判定は親のここで行い、子は結果を受け取るだけ (真実源は _target のまま)。 *@
+            <TagPresetField @ref="_promptField"
+                            Label="プロンプト" Kind="prompt"
                             @bind-Tags="_promptTags"
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
                             OnFocused="SetTarget"
+                            IsTarget="@(_target == "prompt")"
+                            DraftEmptyChanged="OnPromptDraftEmptyChanged"
                             Placeholder="例: 1girl と入力して Enter" />
 
-            <TagPresetField Label="ネガティブ" Kind="negative"
+            <TagPresetField @ref="_negativeField"
+                            Label="ネガティブ" Kind="negative"
                             @bind-Tags="_negativeTags"
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
                             OnFocused="SetTarget"
+                            IsTarget="@(_target == "negative")"
                             Placeholder="例: lowres, bad anatomy" />
 
             <div class="row">
@@ -84,15 +111,31 @@
                 </label>
             </div>
 
+            <!-- ランタイム LoRA 選択チップ (L-2)。未選択なら loras キーを送らない。 -->
+            <LoraChips @bind-Selected="_loras" />
+
+            @* 生成できるか / 押せないなら理由は何か は純クラス GenerateGate に集約する
+               (razor に条件式を散らさない・Ctrl+Enter も同じ判定を通る)。
+               未確定テキストがあれば確定タグ 0 でも押せる = 押したときに確定してから生成する。 *@
+            @{
+                var gate = GenerateGate.Evaluate(_busy, _connected, _promptTags.Count, _promptDraftEmpty);
+            }
+
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
-                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@_busy">
+                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
                     @((_busy && !_runningDraft) ? "生成中…" : "生成")
                 </button>
-                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@_busy">
+                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
                     @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
                 </button>
             </div>
+
+            @* 押せない理由を明示する (無言失敗の根絶・課題 #2)。押せるときは何も出さない。 *@
+            @if (gate.Reason is not null)
+            {
+                <div class="gen-reason">@gate.Reason</div>
+            }
 
             @if (_error is not null)
             {
@@ -107,18 +150,35 @@
             {
                 <div class="gen-mode">@_lastMode</div>
             }
+
+            @* 生成画像の保存導線 (P2-3 / 課題 #8)。data URI の a[download] なので JS interop は要らない。
+               生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
+            @if (_imageData is not null && !_busy)
+            {
+                <a class="preview-save" download="@_downloadName"
+                   href="data:image/png;base64,@_imageData"
+                   title="@_downloadName として保存します">PNG 保存</a>
+            }
+            @* 生成中も前回画像を破棄せず減光して残す (P2-2 / 課題 #6)。
+               下書き → 本番の見比べができ、生成のたびにプレースホルダへフラッシュしない。
+               スピナーと経過秒 (課題 #7) はその上へ絶対配置でかぶせる。 *@
             <div class="preview">
-                @if (_busy)
+                @if (_imageData is not null)
                 {
-                    <div class="spinner"></div>
+                    <img class="@(_busy ? "preview-dim" : null)"
+                         src="data:image/png;base64,@_imageData" alt="generated" />
                 }
-                else if (_imageData is not null)
-                {
-                    <img src="data:image/png;base64,@_imageData" alt="generated" />
-                }
-                else
+                else if (!_busy)
                 {
                     <div class="placeholder">生成画像がここに表示されます</div>
+                }
+
+                @if (_busy)
+                {
+                    <div class="preview-overlay">
+                        <div class="spinner"></div>
+                        <div class="preview-elapsed">@ElapsedFormat.Mmss(_elapsed)</div>
+                    </div>
                 }
             </div>
         </section>
@@ -131,6 +191,9 @@
     private List<string> _negativeTags = new();
     private string _size = "1024x1024";
     private int _steps = 20;
+
+    // 選択中の LoRA (LoraChips と @bind-Selected で双方向共有)。空なら生成時に null にして送らない。
+    private List<LoraSpec> _loras = new();
 
     // パレットのタグ追加先 ("prompt" / "negative" / "favorites") の真実源。
     // 中央入力欄・お気に入り入力欄のフォーカスで自動更新し (SetTarget / パレット側 onfocus)、
@@ -151,14 +214,71 @@
     private byte[]? _imageBytes;  // 生成画像の生バイト (プリセット保存サムネ用)
     private bool _connected;
 
+    // 「再接続」ボタンの二度押し防止 (P2-9)。押している間だけ true。
+    private bool _reconnecting;
+
     // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
     private string? _lastMode;
+
+    // 「PNG 保存」の download 属性に出すファイル名 (P2-3)。表示中の画像が生成された
+    // 時刻と実送信サイズで決まるので、成功時に 1 回だけ組み立てて保持する。
+    private string? _downloadName;
+
+    // 生成開始からの経過時間 (生成中オーバーレイの表示用・P2-2)。表示整形は ElapsedFormat。
+    private TimeSpan _elapsed;
+
+    // 経過秒タイマーの停止用。生成の finally と DisposeAsync の両方から必ず落とす。
+    private CancellationTokenSource? _tickCts;
 
     private HubConnection? _hub;
     private TelemetrySample? _sample;
 
     // 左ペインのプリセット一覧。保存/削除後に Refresh して最新化する。
     private PresetSidebar? _presetSidebar;
+
+    // 中央 2 フィールドへの参照。生成直前に未確定テキストを確定させる (P2-1) ために持つ。
+    private TagPresetField? _promptField;
+    private TagPresetField? _negativeField;
+
+    // プロンプト欄の未確定テキストが空か (子から真偽だけ通知される)。
+    // 生成ボタンの活性判定にのみ使う。draft の文字列そのものは子が真実源で親は持たない。
+    private bool _promptDraftEmpty = true;
+
+    // プロンプト欄の未確定テキストの有無を受け取り、生成ボタンの活性を追従させる。
+    private void OnPromptDraftEmptyChanged(bool empty)
+    {
+        _promptDraftEmpty = empty;
+    }
+
+    // 未接続時の「再接続」(P2-9)。GET /health を 1 回だけ叩き直す (定期ポーリングはしない)。
+    // HealthAsync は内部で例外を握りつぶすので、ここは二度押し防止だけを見る。
+    private async Task ReconnectAsync()
+    {
+        if (_reconnecting)
+        {
+            return;
+        }
+        _reconnecting = true;
+        try
+        {
+            _connected = await Client.HealthAsync();
+        }
+        finally
+        {
+            _reconnecting = false;
+        }
+    }
+
+    // Ctrl+Enter (Mac は Cmd+Enter) で生成する (P2-8)。
+    // section で拾うのでチップ入力にフォーカスがあっても効く。
+    // 可否判定は GenerateAsync 内の GenerateGate に一本化されている。
+    private async Task OnSectionKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && (e.CtrlKey || e.MetaKey))
+        {
+            await GenerateAsync(false);
+        }
+    }
 
     // 中央入力欄のフォーカスを受けて追加先を更新する (フォーカス連動)。
     // プロンプト欄にフォーカス → 追加先=プロンプト、ネガティブ欄にフォーカス → 追加先=ネガティブ。
@@ -215,7 +335,8 @@
     // ここへは来ない想定だが、万一来ても prompt へ誤混入させない)。
     private void AddTag(TagAdd add)
     {
-        var tag = (add.Tag ?? "").Trim().ToLowerInvariant();
+        // 正規化規則はチップ確定 (TagInput) と同じ TagCommit.Normalize に寄せる。
+        var tag = TagCommit.Normalize(add.Tag);
         if (tag.Length == 0)
         {
             return;
@@ -264,7 +385,24 @@
     // _size 自体は書き換えず req.Size をローカルに上書きするだけ (下書き後に本番を押せば選択サイズで出る)。
     private async Task GenerateAsync(bool draft = false)
     {
-        if (_busy || _promptTags.Count == 0)
+        if (_busy)
+        {
+            return;
+        }
+
+        // 未確定テキストを先に確定させる (P2-1)。blur は生成ボタンの click と別の
+        // SignalR ラウンドトリップになり順序が保証されないので、ここで明示的に await する。
+        if (_promptField is not null)
+        {
+            await _promptField.CommitPendingAsync();
+        }
+        if (_negativeField is not null)
+        {
+            await _negativeField.CommitPendingAsync();
+        }
+
+        // 確定後の状態で可否を判定する (ボタン disabled と同じ純ロジックを通す)。
+        if (!GenerateGate.Evaluate(_busy, _connected, _promptTags.Count, _promptDraftEmpty).CanGenerate)
         {
             return;
         }
@@ -272,9 +410,16 @@
         _busy = true;
         _runningDraft = draft;
         _error = null;
-        _imageData = null;
-        _imageBytes = null;
+        // ★ _imageData / _imageBytes はここで破棄しない (P2-2)。前回画像を減光して残し、
+        //   成功したときだけ差し替える (失敗しても直前の絵が消えない)。
         StateHasChanged();
+
+        // 経過秒タイマーを起動する (1 秒刻み)。fire-and-forget にはせず、
+        // 下の finally で Cancel → await して必ず終わらせる。
+        _elapsed = TimeSpan.Zero;
+        var tickCts = new CancellationTokenSource();
+        _tickCts = tickCts;
+        var tickTask = TickElapsedAsync(DateTimeOffset.UtcNow, tickCts.Token);
 
         // 実際に C++ サーバーへ送る size。下書きのときだけ落とす。
         var sendSize = draft ? DraftPreview.ResolveDraftSize(_size) : _size;
@@ -285,6 +430,8 @@
             NegativePrompt = _negativeTags.Count == 0 ? null : string.Join(", ", _negativeTags),
             Size = sendSize,
             Steps = _steps,
+            // LoRA 未選択なら null にして "loras" キー自体を送らない (従来経路無改変・ガード1)。
+            Loras = _loras.Count == 0 ? null : new List<LoraSpec>(_loras),
         };
 
         // 生成中フラグを立てる → TelemetryBroadcaster が GPU を高負荷側に振る
@@ -297,6 +444,8 @@
             _connected = true;
             // 成功後にモードバッジを記録 (例「下書き 768²」「本番 1024²」)。
             _lastMode = $"{(draft ? "下書き" : "本番")} {ModeBadge(sendSize)}";
+            // 保存ファイル名も同時に確定する (表示中の画像と必ず対になる)。
+            _downloadName = DownloadName.ForPng(DateTime.Now, sendSize);
         }
         catch (GenerationException ex)
         {
@@ -311,6 +460,39 @@
         {
             Activity.Exit();
             _busy = false;
+
+            // 成功・失敗のどちらでもタイマーを確実に止める (経路 1・2)。
+            // 先に参照を外してから Cancel/Dispose するので、DisposeAsync から
+            // 破棄済みの cts が見えることはない。
+            _tickCts = null;
+            tickCts.Cancel();
+            await tickTask;
+            tickCts.Dispose();
+        }
+    }
+
+    // 生成中の経過秒を 1 秒刻みで更新する (P2-2)。
+    // System.Timers.Timer ではなく PeriodicTimer を使い、UI 更新は InvokeAsync(StateHasChanged) で
+    // レンダラのコンテキストへ戻す。ループは ct のキャンセルでのみ終わる。
+    private async Task TickElapsedAsync(DateTimeOffset startedAt, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                // 加算ではなく開始時刻との差を取る (刻みがずれても表示が遅れない)。
+                _elapsed = DateTimeOffset.UtcNow - startedAt;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 生成完了 / エラー / ページ離脱によるキャンセル。正常系。
+        }
+        catch (ObjectDisposedException)
+        {
+            // 離脱直後にレンダラが落ちた場合。もう表示更新は要らないので黙って抜ける。
         }
     }
 
@@ -327,6 +509,11 @@
 
     public async ValueTask DisposeAsync()
     {
+        // 生成中にページを離れてもタイマーを止める (経路 3)。
+        // GenerateAsync 側は「参照を外す → Cancel → Dispose」の順なので、
+        // ここから見える cts は必ず生存している。
+        _tickCts?.Cancel();
+
         if (_hub is not null)
         {
             await _hub.DisposeAsync();

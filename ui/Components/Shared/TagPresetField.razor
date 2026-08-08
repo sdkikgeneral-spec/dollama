@@ -5,21 +5,30 @@
    保存後は OnSaved を呼び、親が PresetSidebar を Refresh して一覧へ反映する。 *@
 @inject PresetStore Presets
 
-<div class="field">
+@* is-target = パレットのタグが今ここに入る (P2-6 / 課題 #9)。
+   判定はしない — 親 (Generate) が真実源 _target と自分の Kind を比べて降ろしてくる。
+   見た目は app.css の .field.is-target が .chips に inset の左縁を出す
+   (border-left にするとレイアウトが 3px ずれるので box-shadow)。 *@
+<div class="field @(IsTarget ? "is-target" : null)">
     <span>@Label</span>
 
-    <TagInput Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
-              OnFocused="NotifyFocused" />
+    <TagInput @ref="_input" Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
+              OnFocused="NotifyFocused" DraftEmptyChanged="DraftEmptyChanged" />
 
-    <!-- 保存バー -->
-    <div class="presetbar">
-        <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
-        <button type="button" class="preset-btn" @onclick="SaveCurrent"
-                disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
-    </div>
-    @if (_msg is not null)
+    @* 保存バー (P2-7 / 課題 #20)。タグ 0 個のときは「保存するものが無い」ので出さない。
+       常時表示だと両フィールドに空の入力欄 + ボタンが並び続けてノイズになる。
+       保存後メッセージも同じ条件に載せる (バーだけ消えて文言が浮くのを避ける)。 *@
+    @if (Tags.Count > 0)
     {
-        <div class="preset-msg">@_msg</div>
+        <div class="presetbar">
+            <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
+            <button type="button" class="preset-btn" @onclick="SaveCurrent"
+                    disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
+        </div>
+        @if (_msg is not null)
+        {
+            <div class="preset-msg">@_msg</div>
+        }
     }
 </div>
 
@@ -36,6 +45,10 @@
 
     [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
 
+    // パレットの追加先が今このフィールドか (P2-6)。親が _target と Kind を比べて降ろす。
+    // 子は自前で判定を持たない (追加先の真実源は Generate.razor のまま)。
+    [Parameter] public bool IsTarget { get; set; }
+
     // 直近生成画像の生バイト (PNG)。保存時にサムネとして使う。無ければサムネ無し保存。
     [Parameter] public byte[]? CurrentImage { get; set; }
 
@@ -46,8 +59,22 @@
     // 親 (Generate) はこれを追加先 (_target) に反映し、パレットの追加先をフォーカス連動させる。
     [Parameter] public EventCallback<string> OnFocused { get; set; }
 
+    // 配下 TagInput の「未確定テキストが空か」をそのまま親へ中継する (P2-1)。
+    // 文字列は流さない — 親が持つのは真偽だけで、draft の真実源は TagInput のまま。
+    [Parameter] public EventCallback<bool> DraftEmptyChanged { get; set; }
+
     private string _newName = "";
     private string? _msg;
+
+    // 配下 TagInput への参照 (未確定テキストの確定を中継するため)。
+    private TagInput? _input;
+
+    // 親 (Generate) が生成直前に await する。配下 TagInput の未確定テキストを確定させる。
+    // 2 段中継 (Generate → TagPresetField → TagInput)。
+    public Task CommitPendingAsync()
+    {
+        return _input?.CommitPendingAsync() ?? Task.CompletedTask;
+    }
 
     private async Task OnTagsChanged(List<string> tags)
     {
@@ -68,6 +95,12 @@
         {
             return;
         }
+        // 同名が既にあるか (P2-7 / 課題 #19)。PresetStore.Save は同一 kind の同名を
+        // 黙って上書きするので、保存**前**に一覧を読んで上書きかどうかを控えておく
+        // (store 側は不可侵・照合規則は PresetStore.SameKey と同じ OrdinalIgnoreCase)。
+        var overwrite = Presets.All(Kind)
+            .Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
         Presets.Save(new TagPreset
         {
             Name = name,
@@ -75,9 +108,7 @@
             Tags = new List<string>(Tags),
         }, CurrentImage);
         _newName = "";
-        _msg = CurrentImage is not null
-            ? $"「{name}」をサムネ付きで保存しました"
-            : $"「{name}」を保存しました";
+        _msg = PresetSaveMessage.Build(name, overwrite, CurrentImage is not null);
 
         // 左ペインのプリセット一覧を最新化させる。
         await OnSaved.InvokeAsync();

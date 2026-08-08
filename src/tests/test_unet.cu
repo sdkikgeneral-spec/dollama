@@ -322,6 +322,183 @@ static int run_test()
     return ok ? 0 : 1;
 }
 
+// ----------------------------------------------------------------
+// B=2 バッチ forward の per-sample パリティ突合 (G-2k S2 フォローアップ)。
+// launch_unet_batched(handle, 2, ...) 1 回の出力を、launch_unet(handle,...) を
+// 2 サンプル個別に呼んで連結したリファレンスと突合する。
+// 主眼: cross-attn to_k/to_v が M=B*77=154 で wmma M タイル 16 を跨ぐ B=2 の
+//       サンプル行相対位置ずれを実測で塞ぐ (sample1 = 2 番目のバッチ行が要)。
+// noise_pred の MAE=0 (ビット一致) が第一目標。届かねば FP16 tol 内許容。
+// ----------------------------------------------------------------
+static int run_batch_parity_test()
+{
+    const std::string wpath  = UNET_WEIGHTS_PATH;
+    const std::string iopath = UNET_IO_PATH;
+
+    std::cout << "[test_unet] === batch parity (B=2 per-sample) ===\n";
+
+    {
+        std::ifstream fw(wpath, std::ios::binary), fio(iopath, std::ios::binary);
+        if (!fw.good() || !fio.good())
+        {
+            std::cout << "[test_unet] [SKIP] golden data not found (batch parity)\n";
+            return 0;
+        }
+    }
+
+    SafeTensors weights(wpath);
+    SafeTensors io(iopath);
+
+    // sample0 = 既存 golden 入力をそのまま流用。
+    std::vector<__half> h_latent0 = load_f16(io, "input_sample_scaled_step0_f16");
+    std::vector<__half> h_ehs0    = load_f16(io, "input_encoder_hidden_states_f16");
+    std::vector<__half> h_txt0    = load_f16(io, "input_text_embeds_f16");
+    std::vector<__half> h_tids    = load_f16(io, "input_time_ids_f16");
+    std::vector<float>  h_ts      = load_f32(io, "input_timestep_f32");
+    const float timestep = h_ts[0];
+
+    const size_t latent_n = (size_t)4 * 128 * 128;
+    const size_t ehs_n    = (size_t)77 * 2048;
+    if (h_latent0.size() != latent_n) { std::cerr << "latent size\n"; return 1; }
+    if (h_ehs0.size()    != ehs_n)    { std::cerr << "ehs size\n";    return 1; }
+    if (h_txt0.size()    != 1280)     { std::cerr << "txt size\n";    return 1; }
+    if (h_tids.size()    != 6)        { std::cerr << "tids size\n";   return 1; }
+
+    // sample1 = sample0 を決定的に微小摂動したもの (乱数不使用・再現可能)。
+    // index 依存の微小オフセットを FP16 精度で加える。摂動により 2 番目のバッチ行が
+    // 1 番目と異なる値を持ち、タイル内相対位置の取り違えがあれば MAE が跳ねる。
+    std::vector<__half> h_latent1(latent_n);
+    for (size_t i = 0; i < latent_n; ++i)
+    {
+        const float v   = __half2float(h_latent0[i]);
+        const float off = 0.01f * std::sin(0.001f * static_cast<float>(i));
+        h_latent1[i]    = __float2half(v + off);
+    }
+    std::vector<__half> h_ehs1(ehs_n);
+    for (size_t i = 0; i < ehs_n; ++i)
+    {
+        const float v   = __half2float(h_ehs0[i]);
+        const float off = 0.005f * std::cos(0.0007f * static_cast<float>(i));
+        h_ehs1[i]       = __float2half(v + off);
+    }
+    std::vector<__half> h_txt1(1280);
+    for (size_t i = 0; i < 1280; ++i)
+    {
+        const float v   = __half2float(h_txt0[i]);
+        const float off = 0.003f * static_cast<float>((int)(i % 7) - 3);
+        h_txt1[i]       = __float2half(v + off);
+    }
+
+    // 常駐ハンドルを 1 個作り、参照/バッチ両経路で共有する。
+    UnetWeightsHandle handle = unet_weights_create(weights);
+
+    // --- 参照経路: sample0 / sample1 を B=1 で個別に 2 回呼んで連結 ---
+    __half *d_latent = nullptr, *d_ehs = nullptr, *d_txt = nullptr, *d_tids = nullptr, *d_np = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_latent, latent_n * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_ehs,    ehs_n    * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_txt,    1280     * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_tids,   6        * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_np,     latent_n * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_tids, h_tids.data(), 6 * sizeof(__half), cudaMemcpyHostToDevice));
+
+    std::vector<__half> ref(2 * latent_n);
+
+    // sample0
+    CUDA_CHECK(cudaMemcpy(d_latent, h_latent0.data(), latent_n * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ehs,    h_ehs0.data(),    ehs_n    * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_txt,    h_txt0.data(),    1280     * sizeof(__half), cudaMemcpyHostToDevice));
+    launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, /*attn_fast=*/false);
+    CUDA_CHECK(cudaMemcpy(ref.data(), d_np, latent_n * sizeof(__half), cudaMemcpyDeviceToHost));
+
+    // sample1
+    CUDA_CHECK(cudaMemcpy(d_latent, h_latent1.data(), latent_n * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_ehs,    h_ehs1.data(),    ehs_n    * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_txt,    h_txt1.data(),    1280     * sizeof(__half), cudaMemcpyHostToDevice));
+    launch_unet(handle, d_latent, timestep, d_ehs, d_txt, d_tids, d_np, /*attn_fast=*/false);
+    CUDA_CHECK(cudaMemcpy(ref.data() + latent_n, d_np, latent_n * sizeof(__half), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_latent));
+    CUDA_CHECK(cudaFree(d_ehs));
+    CUDA_CHECK(cudaFree(d_txt));
+    CUDA_CHECK(cudaFree(d_np));
+
+    // --- バッチ経路: b-major 連続に詰めて launch_unet_batched(handle, 2, ...) を 1 回 ---
+    const int B = 2;
+    __half *db_latent = nullptr, *db_ehs = nullptr, *db_txt = nullptr, *db_np = nullptr;
+    CUDA_CHECK(cudaMalloc(&db_latent, B * latent_n * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&db_ehs,    B * ehs_n    * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&db_txt,    B * 1280     * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&db_np,     B * latent_n * sizeof(__half)));
+
+    // latent [B,4,128,128] b-major
+    CUDA_CHECK(cudaMemcpy(db_latent,            h_latent0.data(), latent_n * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(db_latent + latent_n, h_latent1.data(), latent_n * sizeof(__half), cudaMemcpyHostToDevice));
+    // ehs [B,77,2048] b-major
+    CUDA_CHECK(cudaMemcpy(db_ehs,         h_ehs0.data(), ehs_n * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(db_ehs + ehs_n, h_ehs1.data(), ehs_n * sizeof(__half), cudaMemcpyHostToDevice));
+    // txt [B,1280] b-major
+    CUDA_CHECK(cudaMemcpy(db_txt,        h_txt0.data(), 1280 * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(db_txt + 1280, h_txt1.data(), 1280 * sizeof(__half), cudaMemcpyHostToDevice));
+
+    {
+        size_t freeb = 0, totalb = 0;
+        CUDA_CHECK(cudaMemGetInfo(&freeb, &totalb));
+        std::cout << "[test_unet] VRAM free=" << (freeb >> 20) << "MB / total="
+                  << (totalb >> 20) << "MB (before batched forward)\n";
+    }
+
+    // time_ids は 6 要素で B 共有 (複製しない・d_tids をそのまま渡す)。
+    launch_unet_batched(handle, B, db_latent, timestep, db_ehs, db_txt, d_tids, db_np, /*attn_fast=*/false);
+
+    std::vector<__half> got(B * latent_n);
+    CUDA_CHECK(cudaMemcpy(got.data(), db_np, B * latent_n * sizeof(__half), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_tids));
+    CUDA_CHECK(cudaFree(db_latent));
+    CUDA_CHECK(cudaFree(db_ehs));
+    CUDA_CHECK(cudaFree(db_txt));
+    CUDA_CHECK(cudaFree(db_np));
+    unet_weights_destroy(handle);
+
+    // --- 突合: 両サンプルを個別に比較。sample1 (2 番目のバッチ行) を主眼にログ ---
+    bool ok = true;
+    for (int b = 0; b < B; ++b)
+    {
+        const size_t off = static_cast<size_t>(b) * latent_n;
+        double sum_abs = 0, max_abs = 0;
+        size_t exact = 0;
+        long   bad = 0;
+        for (size_t i = 0; i < latent_n; ++i)
+        {
+            const float g = __half2float(got[off + i]);
+            const float r = __half2float(ref[off + i]);
+            if (std::isnan(g) || std::isinf(g)) { ++bad; }
+            const double d = std::fabs((double)g - (double)r);
+            sum_abs += d;
+            max_abs = std::max(max_abs, d);
+            if (got[off + i] == ref[off + i]) { ++exact; }
+        }
+        const double mae = sum_abs / static_cast<double>(latent_n);
+        const bool bit_exact = (max_abs == 0.0);
+        const char* tag = (b == 0)
+            ? "sample0"
+            : "sample1 (2nd batch row = wmma M-tile 相対位置ずれ検証の主眼)";
+        std::cout << "[test_unet]   " << tag
+                  << "  MAE=" << mae << " max_abs=" << max_abs
+                  << " exact=" << exact << "/" << latent_n
+                  << " bad=" << bad
+                  << (bit_exact ? "  (BIT-EXACT)" : "  (not bit-exact)") << "\n";
+
+        // ビット一致が第一目標。届かなくても既存 noise_pred と同じ FP16 tol 内なら緑。
+        if (bad != 0)   { std::cerr << "[test_unet] FAIL: Inf/NaN in batch sample " << b << "\n"; ok = false; }
+        if (mae > 5e-3) { std::cerr << "[test_unet] FAIL: batch sample " << b
+                                    << " MAE " << mae << " > 5e-3\n"; ok = false; }
+    }
+
+    std::cout << "[test_unet] batch parity " << (ok ? "OK" : "FAIL") << "\n";
+    return ok ? 0 : 1;
+}
+
 #endif // HAVE_CUDA
 
 } // namespace dollama
@@ -337,7 +514,13 @@ int main()
         const int rc = dollama::run_test();
         if (rc == 0) { std::cout << "[test_unet] ALL PASSED\n"; }
         else         { std::cerr << "[test_unet] FAILED\n"; }
-        return rc;
+
+        // G-2k S2 フォローアップ: B=2 per-sample パリティ突合を続けて実行。
+        const int rc_batch = dollama::run_batch_parity_test();
+        if (rc_batch == 0) { std::cout << "[test_unet] BATCH PARITY PASSED\n"; }
+        else               { std::cerr << "[test_unet] BATCH PARITY FAILED\n"; }
+
+        return (rc == 0 && rc_batch == 0) ? 0 : 1;
     }
     catch (const std::exception& e)
     {

@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -271,6 +272,27 @@ static void launch_concat_chw(const __half* d_a, const __half* d_b, __half* d_ou
 }
 
 // ----------------------------------------------------------------
+// ODR 注意 (T1b / C0 修正): 以下は本 TU (translation unit) ローカルの実装型で、
+// 必ず匿名 namespace の中に置くこと。外に出すと ODR 違反で実行時に落ちる。
+//
+//   機序: unet.cu と vae_decode.cu は同名の DeviceWeights / Scratch を
+//   それぞれ独自レイアウトで定義している。namespace dollama 直下 (外部リンケージ)
+//   に置くと、暗黙 inline のデストラクタが COMDAT 弱シンボルとして出力され、
+//   リンカが同名 dtor のうち「片方だけ」を選んで両 TU の全 call site に適用する。
+//   どちらが勝つかはリンク単位ごとに変わるため、あるバイナリでは 0xC0000005
+//   (アクセス違反)、別のバイナリでは単なるメモリリークとして現れる。
+//
+//   発火点: L-2 ランタイム LoRA で unet 側 DeviceWeights にだけ 4 メンバ目
+//   std::set<std::string> patched_ を足したことでレイアウトが決定的にずれ、
+//   ~DiffusionPipeline (VAE ハンドルと UNet ハンドルが同居して破棄される経路) で
+//   AV が顕在化した。Scratch も ptrs_ が両方先頭なので現状は無症状なだけの同型の地雷。
+//
+//   よって「他 TU から参照されていないから外でもよい」ではなく、参照されていない
+//   からこそ匿名 namespace が正解。善意で外に出すと再発する。
+// ----------------------------------------------------------------
+namespace
+{
+// ----------------------------------------------------------------
 // 重み管理 (vae_decode と同方針): 名前から FP16 デバイスポインタを引く。
 // ----------------------------------------------------------------
 class DeviceWeights
@@ -335,18 +357,122 @@ public:
         }
     }
 
+    // ----------------------------------------------------------------
+    // ランタイム LoRA (L-2): 常駐重みへ delta = scale*(B@A) を焼き込む。
+    //   forward 経路は 1 命令も変えない (重みバッファの中身だけが変わる)。
+    //   scratch (A/B/delta) は都度確保・解放 (適用は generate 律速の外・sub 秒)。
+    // ----------------------------------------------------------------
+    void apply_lora(const LoraModule& m)
+    {
+        // base の numel と B@A の numel 整合 (load_lora_modules 済みだが防御的に再検証)
+        const std::vector<size_t>& shp   = st_.shape(m.base_key);
+        size_t                     numel = 1;
+        for (size_t d : shp)
+        {
+            numel *= d;
+        }
+        const size_t delta_numel =
+            static_cast<size_t>(m.out_dim) * static_cast<size_t>(m.in_flat);
+        if (numel != delta_numel)
+        {
+            throw std::runtime_error("unet lora: '" + m.base_key + "' numel mismatch (base " +
+                                     std::to_string(numel) + " vs delta " +
+                                     std::to_string(delta_numel) + ")");
+        }
+        if (m.a_fp16.size() != static_cast<size_t>(m.rank) * m.in_flat ||
+            m.b_fp16.size() != static_cast<size_t>(m.out_dim) * m.rank)
+        {
+            throw std::runtime_error("unet lora: '" + m.base_key + "' A/B buffer size mismatch vs shape");
+        }
+
+        // cache miss の key は先に常駐化してから patch する
+        __half* d_w = const_cast<__half*>(get(m.base_key));
+
+        // 変異前に patched_ へ登録する。GEMM/加算が途中失敗すると W は
+        // 中途半端に書き換わり得るため、失敗しても unet_clear_loras が
+        // base host バイトから必ず復元できるよう先に追跡する
+        // (未変異のまま登録されても revert は base 再 upload なので無害)。
+        patched_.insert(m.base_key);
+
+        // scratch: A [rank, in_flat] / B [out, rank] / delta [out, in_flat]
+        __half* d_a     = nullptr;
+        __half* d_b     = nullptr;
+        __half* d_delta = nullptr;
+        try
+        {
+            CUDA_CHECK(cudaMalloc(&d_a, m.a_fp16.size() * sizeof(__half)));
+            CUDA_CHECK(cudaMalloc(&d_b, m.b_fp16.size() * sizeof(__half)));
+            CUDA_CHECK(cudaMalloc(&d_delta, delta_numel * sizeof(__half)));
+            CUDA_CHECK(cudaMemcpy(d_a, m.a_fp16.data(), m.a_fp16.size() * sizeof(__half),
+                                  cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(d_b, m.b_fp16.data(), m.b_fp16.size() * sizeof(__half),
+                                  cudaMemcpyHostToDevice));
+
+            // delta = scale * (B @ A): [out, rank] @ [rank, in_flat] -> [out, in_flat]
+            //   alpha=scale, beta=0 → delta は初めからスケール済み (FP32 蓄積)。
+            launch_gemm_fp16(d_b, d_a, d_delta,
+                             /*M=*/m.out_dim, /*N=*/m.in_flat, /*K=*/m.rank,
+                             /*alpha=*/m.scale, /*beta=*/0.0f,
+                             /*transA=*/false, /*transB=*/false);
+
+            // W += delta (launch_add は out==a の in-place 安全)
+            launch_add(d_w, d_delta, d_w, static_cast<int>(delta_numel));
+            CUDA_CHECK(cudaDeviceSynchronize());
+        }
+        catch (...)
+        {
+            if (d_a != nullptr)     { cudaFree(d_a); }
+            if (d_b != nullptr)     { cudaFree(d_b); }
+            if (d_delta != nullptr) { cudaFree(d_delta); }
+            throw;
+        }
+        cudaFree(d_a);
+        cudaFree(d_b);
+        cudaFree(d_delta);
+    }
+
+    // patch 済みの全 key を base SafeTensors の host バイトから再 upload して
+    // bit-exact 復元する (st_ が base の真実源なのでデバイス側コピーは不要)。
+    void revert_all()
+    {
+        for (const std::string& key : patched_)
+        {
+            auto it = cache_.find(key);
+            if (it == cache_.end())
+            {
+                continue;  // 論理上到達しない (patch 時に必ず常駐化している)
+            }
+            size_t         nbytes = 0;
+            const uint8_t* src    = st_.tensor_bytes(key, nbytes);
+            CUDA_CHECK(cudaMemcpy(it->second, src, nbytes, cudaMemcpyHostToDevice));
+        }
+        patched_.clear();
+    }
+
 private:
     const SafeTensors&             st_;
     std::map<std::string, __half*> cache_;
     std::vector<__half*>           ptrs_;
+    std::set<std::string>          patched_;  // L-2: LoRA patch 済み key (clear で復元)
 };
 
 // ----------------------------------------------------------------
 // 局所スクラッチプール (FP16)。段内で確保しスコープ脱出で全解放。
+//   attn_fast: FAST モード (G-3k)。true のとき transformer_block の attention を
+//              launch_attention_fast へ切り替える。既定 false = 現行 (default) 挙動。
+//              Scratch は段 (down/mid/up ブロック) 単位で生成され transformer_block まで
+//              流れるため、フラグの運搬役をそのまま兼ねる (追加の引数配線を避ける最小差分)。
+//   epilogue : FAST モード (G-4k S1a)。true のとき resnet_block の norm1/norm2 の
+//              GroupNorm を multi-block 版 (launch_group_norm_mb) へ切り替える。
+//              既定 false = 現行 (default) 挙動。運搬方式は attn_fast の厳密ミラー。
 // ----------------------------------------------------------------
 class Scratch
 {
 public:
+    Scratch() = default;
+    explicit Scratch(bool attn_fast, bool epilogue = false)
+        : attn_fast_(attn_fast), epilogue_(epilogue) {}
+
     __half* alloc(size_t n)
     {
         __half* p = nullptr;
@@ -354,6 +480,12 @@ public:
         ptrs_.push_back(p);
         return p;
     }
+
+    // FAST モードで attention 高速バリアントを使うか。
+    bool attn_fast() const { return attn_fast_; }
+
+    // FAST モードで GroupNorm multi-block 版 (epilogue 経路) を使うか。
+    bool epilogue() const { return epilogue_; }
 
     ~Scratch()
     {
@@ -365,7 +497,10 @@ public:
 
 private:
     std::vector<__half*> ptrs_;
+    bool                 attn_fast_ = false;
+    bool                 epilogue_  = false;
 };
+} // namespace (匿名): TU ローカル型 DeviceWeights / Scratch ここまで
 
 // ----------------------------------------------------------------
 // Linear (x @ W^T + b): [M, K] @ [N, K]^T -> [M, N]
@@ -393,7 +528,7 @@ static void linear(DeviceWeights& w, const std::string& wname, const std::string
 //   d_out は x と別バッファ。スクラッチは sc から確保。
 // ----------------------------------------------------------------
 static void resnet_block(DeviceWeights& w, const std::string& prefix,
-                         const __half* d_x, int Cin, int Cout, int H, int W,
+                         const __half* d_x, int B, int Cin, int Cout, int H, int W,
                          const __half* d_temb_silu, __half* d_out, Scratch& sc)
 {
     // S0 カテゴリ計時: resnet_block 全体を resnet バケットへ (conv/groupnorm 主体)。
@@ -405,40 +540,118 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
     const size_t chw_in  = (size_t)Cin  * HW;
     const size_t chw_out = (size_t)Cout * HW;
 
-    __half* d_a = sc.alloc(chw_in > chw_out ? chw_in : chw_out);
-    __half* d_b = sc.alloc(chw_out);
+    // G-2k S2: 中間バッファは B サンプル分。B=1 では従来と同一サイズ・同一呼び出し。
+    __half* d_a = sc.alloc((size_t)B * (chw_in > chw_out ? chw_in : chw_out));
+    __half* d_b = sc.alloc((size_t)B * chw_out);
 
-    // norm1 -> silu -> conv1 (Cin -> Cout)
-    launch_group_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
-                      d_a, 1, Cin, H, W, groups, eps);
-    launch_silu(d_a, d_a, Cin * HW);
-    launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
-                  d_b, 1, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
-
-    // time embedding: silu(temb) -> Linear -> [Cout] -> channel broadcast add
-    __half* d_tproj = sc.alloc(Cout);
-    linear(w, prefix + "time_emb_proj.weight", prefix + "time_emb_proj.bias",
-           d_temb_silu, d_tproj, 1, Cout, 1280, true);
-    launch_bias_add_channel(d_b, d_tproj, d_b, 1, Cout, H, W);
-
-    // norm2 -> silu -> conv2 (Cout -> Cout)
-    launch_group_norm(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
-                      d_a, 1, Cout, H, W, groups, eps);
-    launch_silu(d_a, d_a, Cout * HW);
-    launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
-                  d_out, 1, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
-
-    // skip
-    if (Cin == Cout)
+    // norm1 -> silu -> conv1 (Cin -> Cout)。group_norm/conv2d は N=B を渡すだけ。
+    // G-4k S1a/S1b: epilogue=on のみ multi-block GN + SiLU 融合 1 パス
+    // (mb→別 launch_silu の 2 パスとビット一致・default から隔離)。
+    if (sc.epilogue())
     {
-        launch_add(d_out, d_x, d_out, Cout * HW);
+        launch_group_norm_silu(d_x, w.get(prefix + "norm1.weight"),
+                               w.get(prefix + "norm1.bias"),
+                               d_a, B, Cin, H, W, groups, eps);
     }
     else
     {
-        launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
-                      w.get(prefix + "conv_shortcut.bias"),
-                      d_b, 1, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
-        launch_add(d_out, d_b, d_out, Cout * HW);
+        launch_group_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
+                          d_a, B, Cin, H, W, groups, eps);
+        launch_silu(d_a, d_a, B * Cin * HW);
+    }
+    // G-4k S2: epilogue=on のみ conv1.bias を後段融合カーネルへ移す (conv は bias なし)。
+    //   融合が GEMM 経路の 2 段丸め列 (conv_bias_add_rows → bias_add_channel) と
+    //   bit 一致するのは conv が GEMM 経路のときのみ。direct 経路 shape (GEMM 下限割れ)
+    //   は bias の丸め列が違う (FP32 蓄積へ畳む単一丸め) ため、ガードで従来 2 パスへ
+    //   フォールバックする (静かな bit 崩れ防止)。epilogue=off は従来経路そのまま。
+    const bool fuse1 = sc.epilogue()
+        && conv2d_uses_gemm_bias_path(B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    if (fuse1)
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv1.weight"), /*d_bias=*/nullptr,
+                      d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    }
+    else
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv1.weight"), w.get(prefix + "conv1.bias"),
+                      d_b, B, Cin, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    }
+
+    // time embedding: silu(temb) -> Linear -> [B,Cout] -> channel broadcast add。
+    //   temb proj は per-b で異なる (temb は cond/uncond で別) ため M=B で射影し、
+    //   bias_add_channel は bias が per-b で異なるので per-b に加算する (カーネル無改修)。
+    __half* d_tproj = sc.alloc((size_t)B * Cout);
+    linear(w, prefix + "time_emb_proj.weight", prefix + "time_emb_proj.bias",
+           d_temb_silu, d_tproj, B, Cout, 1280, true);
+    if (fuse1)
+    {
+        // G-4k S2 P1: conv1.bias broadcast + per-(n,c) time-bias を 1 カーネルに融合
+        //   (2 段丸めを 1:1 再現し per-b ループ B+1 発を 1 発に置換)。
+        launch_conv_bias_biasch(d_b, w.get(prefix + "conv1.bias"), d_tproj,
+                                d_b, B, Cout, H, W);
+    }
+    else
+    {
+        for (int b = 0; b < B; ++b)
+        {
+            launch_bias_add_channel(d_b + (size_t)b * Cout * HW, d_tproj + (size_t)b * Cout,
+                                    d_b + (size_t)b * Cout * HW, 1, Cout, H, W);
+        }
+    }
+
+    // norm2 -> silu -> conv2 (Cout -> Cout)
+    // G-4k S1b: norm1 と同じく epilogue=on は GN+SiLU 融合 1 パス。
+    if (sc.epilogue())
+    {
+        launch_group_norm_silu(d_b, w.get(prefix + "norm2.weight"),
+                               w.get(prefix + "norm2.bias"),
+                               d_a, B, Cout, H, W, groups, eps);
+    }
+    else
+    {
+        launch_group_norm(d_b, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
+                          d_a, B, Cout, H, W, groups, eps);
+        launch_silu(d_a, d_a, B * Cout * HW);
+    }
+    // G-4k S2: epilogue=on のみ conv2.bias + residual add を後段融合 (ガードは conv1 と同じ
+    //   GEMM 経路保証のみ。false なら従来 2 パス)。conv_shortcut 自体は無改修 (bias 込み)。
+    const bool fuse2 = sc.epilogue()
+        && conv2d_uses_gemm_bias_path(B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+    if (fuse2)
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv2.weight"), /*d_bias=*/nullptr,
+                      d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+        // residual 決定: Cin==Cout は x そのまま、それ以外は 1x1 conv_shortcut(x) を d_b へ。
+        const __half* d_res = d_x;
+        if (Cin != Cout)
+        {
+            launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
+                          w.get(prefix + "conv_shortcut.bias"),
+                          d_b, B, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
+            d_res = d_b;
+        }
+        // G-4k S2 P2: conv2.bias broadcast + residual add を 1 カーネルに融合
+        //   (conv_bias_add_rows → add_fp16 の 2 段丸めを 1:1 再現)。
+        launch_conv_bias_residual(d_out, w.get(prefix + "conv2.bias"), d_res,
+                                  d_out, B, Cout, H, W);
+    }
+    else
+    {
+        launch_conv2d(d_a, w.get(prefix + "conv2.weight"), w.get(prefix + "conv2.bias"),
+                      d_out, B, Cout, H, W, Cout, 3, 3, 1, 1, 1, 1, 1, 1);
+
+        // skip
+        if (Cin == Cout)
+        {
+            launch_add(d_out, d_x, d_out, B * Cout * HW);
+        }
+        else
+        {
+            launch_conv2d(d_x, w.get(prefix + "conv_shortcut.weight"),
+                          w.get(prefix + "conv_shortcut.bias"),
+                          d_b, B, Cin, H, W, Cout, 1, 1, 1, 1, 0, 0, 1, 1);
+            launch_add(d_out, d_b, d_out, B * Cout * HW);
+        }
     }
     (void)chw_out;
 }
@@ -455,7 +668,7 @@ static void resnet_block(DeviceWeights& w, const std::string& prefix,
 //   d_ctx: encoder_hidden_states [ctx_tokens, ctx_dim] (cross K/V 源)
 // ----------------------------------------------------------------
 static void transformer_block(DeviceWeights& w, const std::string& prefix,
-                              __half* d_x, int tokens, int C,
+                              __half* d_x, int B, int tokens, int C,
                               const __half* d_ctx, int ctx_tokens, int ctx_dim,
                               Scratch& sc)
 {
@@ -463,79 +676,117 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
     const int   Dh     = 64;
     const int   heads  = C / Dh;
     const float scale  = 1.0f / sqrtf((float)Dh);
-    const size_t tc    = (size_t)tokens * C;
+    const size_t tc    = (size_t)tokens * C;   // 1 サンプルの [tokens,C]
+    // G-2k S2: レイアウトは [B,tokens,C] 連続 = [B*tokens, C]。linear は M=B*tokens、
+    //   split/merge heads は per-b オフセット呼び (in+b*tokens*C)、attention は B を渡す。
+    //   B=1 では M=tokens・offset 0 の 1 周で従来と完全同一。
+    const int    Mt    = B * tokens;           // GEMM の行数 (B サンプル束ね)
 
-    __half* d_norm = sc.alloc(tc);
-    __half* d_q    = sc.alloc(tc);
-    __half* d_k    = sc.alloc((size_t)tokens * C);  // self: tokens x C
-    __half* d_v    = sc.alloc((size_t)tokens * C);
-    __half* d_qh   = sc.alloc(tc);                  // split-heads Q
-    __half* d_kh   = sc.alloc((size_t)tokens * C);
-    __half* d_vh   = sc.alloc((size_t)tokens * C);
-    __half* d_oh   = sc.alloc(tc);                  // attn 出力 (heads,tokens,Dh)
-    __half* d_o    = sc.alloc(tc);                  // merge-heads 出力 (tokens,C)
+    __half* d_norm = sc.alloc((size_t)B * tc);
+    __half* d_q    = sc.alloc((size_t)B * tc);
+    __half* d_k    = sc.alloc((size_t)B * tc);  // self: B x tokens x C
+    __half* d_v    = sc.alloc((size_t)B * tc);
+    __half* d_qh   = sc.alloc((size_t)B * tc);  // split-heads Q [B,heads,tokens,Dh]
+    __half* d_kh   = sc.alloc((size_t)B * tc);
+    __half* d_vh   = sc.alloc((size_t)B * tc);
+    __half* d_oh   = sc.alloc((size_t)B * tc);  // attn 出力 (B,heads,tokens,Dh)
+    __half* d_o    = sc.alloc((size_t)B * tc);  // merge-heads 出力 (B,tokens,C)
 
     // ---- (1) self-attn ----
     launch_layer_norm(d_x, w.get(prefix + "norm1.weight"), w.get(prefix + "norm1.bias"),
-                      d_norm, tokens, C, ln_eps);
-    linear(w, prefix + "attn1.to_q.weight", "", d_norm, d_q, tokens, C, C, false);
-    linear(w, prefix + "attn1.to_k.weight", "", d_norm, d_k, tokens, C, C, false);
-    linear(w, prefix + "attn1.to_v.weight", "", d_norm, d_v, tokens, C, C, false);
-    launch_split_heads(d_q, d_qh, tokens, heads, Dh);
-    launch_split_heads(d_k, d_kh, tokens, heads, Dh);
-    launch_split_heads(d_v, d_vh, tokens, heads, Dh);
+                      d_norm, Mt, C, ln_eps);
+    linear(w, prefix + "attn1.to_q.weight", "", d_norm, d_q, Mt, C, C, false);
+    linear(w, prefix + "attn1.to_k.weight", "", d_norm, d_k, Mt, C, C, false);
+    linear(w, prefix + "attn1.to_v.weight", "", d_norm, d_v, Mt, C, C, false);
+    for (int b = 0; b < B; ++b)
+    {
+        const size_t off = (size_t)b * tokens * C;
+        launch_split_heads(d_q + off, d_qh + off, tokens, heads, Dh);
+        launch_split_heads(d_k + off, d_kh + off, tokens, heads, Dh);
+        launch_split_heads(d_v + off, d_vh + off, tokens, heads, Dh);
+    }
     {
         // S0 計時: self-attention のみ attention バケットへ。
         ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
                            profile_enabled());
-        launch_attention(d_qh, d_kh, d_vh, d_oh, 1, heads, tokens, tokens, Dh, scale);
+        // FAST: attn_fast のとき高速バリアント (数学同一・SSIM=1.0)。既定は従来経路 (無改変)。
+        if (sc.attn_fast())
+        {
+            launch_attention_fast(d_qh, d_kh, d_vh, d_oh, B, heads, tokens, tokens, Dh, scale);
+        }
+        else
+        {
+            launch_attention(d_qh, d_kh, d_vh, d_oh, B, heads, tokens, tokens, Dh, scale);
+        }
     }
-    launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
+    for (int b = 0; b < B; ++b)
+    {
+        const size_t off = (size_t)b * tokens * C;
+        launch_merge_heads(d_oh + off, d_o + off, tokens, heads, Dh);
+    }
     // to_out.0 (Linear + bias)
     linear(w, prefix + "attn1.to_out.0.weight", prefix + "attn1.to_out.0.bias",
-           d_o, d_norm, tokens, C, C, true);
-    launch_add(d_x, d_norm, d_x, (int)tc);
+           d_o, d_norm, Mt, C, C, true);
+    launch_add(d_x, d_norm, d_x, (int)((size_t)B * tc));
 
     // ---- (2) cross-attn ----
     launch_layer_norm(d_x, w.get(prefix + "norm2.weight"), w.get(prefix + "norm2.bias"),
-                      d_norm, tokens, C, ln_eps);
-    // Q from d_norm [tokens,C]; K/V from d_ctx [ctx_tokens, ctx_dim] -> [ctx_tokens, C]
-    linear(w, prefix + "attn2.to_q.weight", "", d_norm, d_q, tokens, C, C, false);
-    __half* d_kc = sc.alloc((size_t)ctx_tokens * C);
-    __half* d_vc = sc.alloc((size_t)ctx_tokens * C);
-    linear(w, prefix + "attn2.to_k.weight", "", d_ctx, d_kc, ctx_tokens, C, ctx_dim, false);
-    linear(w, prefix + "attn2.to_v.weight", "", d_ctx, d_vc, ctx_tokens, C, ctx_dim, false);
-    __half* d_kch = sc.alloc((size_t)ctx_tokens * C);
-    __half* d_vch = sc.alloc((size_t)ctx_tokens * C);
-    launch_split_heads(d_q,  d_qh,  tokens,     heads, Dh);
-    launch_split_heads(d_kc, d_kch, ctx_tokens, heads, Dh);
-    launch_split_heads(d_vc, d_vch, ctx_tokens, heads, Dh);
+                      d_norm, Mt, C, ln_eps);
+    // Q from d_norm [B*tokens,C]; K/V from d_ctx [B,ctx_tokens,ctx_dim] -> [B,ctx_tokens,C]
+    linear(w, prefix + "attn2.to_q.weight", "", d_norm, d_q, Mt, C, C, false);
+    __half* d_kc = sc.alloc((size_t)B * ctx_tokens * C);
+    __half* d_vc = sc.alloc((size_t)B * ctx_tokens * C);
+    linear(w, prefix + "attn2.to_k.weight", "", d_ctx, d_kc, B * ctx_tokens, C, ctx_dim, false);
+    linear(w, prefix + "attn2.to_v.weight", "", d_ctx, d_vc, B * ctx_tokens, C, ctx_dim, false);
+    __half* d_kch = sc.alloc((size_t)B * ctx_tokens * C);
+    __half* d_vch = sc.alloc((size_t)B * ctx_tokens * C);
+    for (int b = 0; b < B; ++b)
+    {
+        launch_split_heads(d_q  + (size_t)b * tokens * C,     d_qh  + (size_t)b * tokens * C,
+                           tokens,     heads, Dh);
+        launch_split_heads(d_kc + (size_t)b * ctx_tokens * C, d_kch + (size_t)b * ctx_tokens * C,
+                           ctx_tokens, heads, Dh);
+        launch_split_heads(d_vc + (size_t)b * ctx_tokens * C, d_vch + (size_t)b * ctx_tokens * C,
+                           ctx_tokens, heads, Dh);
+    }
     {
         // S0 計時: cross-attention のみ attention バケットへ。
         ScopedSyncTimer at(profile_enabled() ? &profile_counters().cat_attention_sec : nullptr,
                            profile_enabled());
-        launch_attention(d_qh, d_kch, d_vch, d_oh, 1, heads, tokens, ctx_tokens, Dh, scale);
+        // FAST: cross-attn も同様に切り替え (非対応 Dh は内部で従来経路へフォールバック)。
+        if (sc.attn_fast())
+        {
+            launch_attention_fast(d_qh, d_kch, d_vch, d_oh, B, heads, tokens, ctx_tokens, Dh, scale);
+        }
+        else
+        {
+            launch_attention(d_qh, d_kch, d_vch, d_oh, B, heads, tokens, ctx_tokens, Dh, scale);
+        }
     }
-    launch_merge_heads(d_oh, d_o, tokens, heads, Dh);
+    for (int b = 0; b < B; ++b)
+    {
+        const size_t off = (size_t)b * tokens * C;
+        launch_merge_heads(d_oh + off, d_o + off, tokens, heads, Dh);
+    }
     linear(w, prefix + "attn2.to_out.0.weight", prefix + "attn2.to_out.0.bias",
-           d_o, d_norm, tokens, C, C, true);
-    launch_add(d_x, d_norm, d_x, (int)tc);
+           d_o, d_norm, Mt, C, C, true);
+    launch_add(d_x, d_norm, d_x, (int)((size_t)B * tc));
 
     // ---- (3) GEGLU FF ----
     //   ff.net.0.proj: Linear [C -> 2*ff]  (+bias)
-    //   GEGLU: [tokens, 2*ff] -> [tokens, ff]
+    //   GEGLU: [B*tokens, 2*ff] -> [B*tokens, ff]
     //   ff.net.2: Linear [ff -> C]  (+bias)
     const int ff = 4 * C;  // SDXL: ff_inner = 4*C (640->2560 proj は 5120=2*2560)
     launch_layer_norm(d_x, w.get(prefix + "norm3.weight"), w.get(prefix + "norm3.bias"),
-                      d_norm, tokens, C, ln_eps);
-    __half* d_proj = sc.alloc((size_t)tokens * 2 * ff);
+                      d_norm, Mt, C, ln_eps);
+    __half* d_proj = sc.alloc((size_t)Mt * 2 * ff);
     linear(w, prefix + "ff.net.0.proj.weight", prefix + "ff.net.0.proj.bias",
-           d_norm, d_proj, tokens, 2 * ff, C, true);
-    __half* d_geglu = sc.alloc((size_t)tokens * ff);
-    launch_geglu(d_proj, d_geglu, tokens, ff);
+           d_norm, d_proj, Mt, 2 * ff, C, true);
+    __half* d_geglu = sc.alloc((size_t)Mt * ff);
+    launch_geglu(d_proj, d_geglu, Mt, ff);
     linear(w, prefix + "ff.net.2.weight", prefix + "ff.net.2.bias",
-           d_geglu, d_norm, tokens, C, ff, true);
-    launch_add(d_x, d_norm, d_x, (int)tc);
+           d_geglu, d_norm, Mt, C, ff, true);
+    launch_add(d_x, d_norm, d_x, (int)((size_t)B * tc));
 }
 
 // ----------------------------------------------------------------
@@ -550,7 +801,7 @@ static void transformer_block(DeviceWeights& w, const std::string& prefix,
 //   x = h + residual (in-place)
 // ----------------------------------------------------------------
 static void transformer2d(DeviceWeights& w, const std::string& prefix,
-                          __half* d_x, int C, int H, int W, int num_layers,
+                          __half* d_x, int B, int C, int H, int W, int num_layers,
                           const __half* d_ctx, int ctx_tokens, int ctx_dim,
                           Scratch& sc)
 {
@@ -559,61 +810,72 @@ static void transformer2d(DeviceWeights& w, const std::string& prefix,
                           profile_enabled());
     const float gn_eps = 1e-6f;
     const int   groups = 32;
-    const int   S      = H * W;       // tokens
+    const int   S      = H * W;       // tokens (1 サンプル)
     const size_t cs    = (size_t)C * S;
+    // G-2k S2: group_norm は N=B、chw<->sc 転置は per-b オフセット呼び、proj は M=B*S。
+    const int    Ms    = B * S;
 
-    __half* d_gn  = sc.alloc(cs);
-    __half* d_sc  = sc.alloc(cs);     // [tokens, C]
-    __half* d_pin = sc.alloc(cs);     // proj_in 出力 [tokens, C]
+    __half* d_gn  = sc.alloc((size_t)B * cs);
+    __half* d_sc  = sc.alloc((size_t)B * cs);     // [B, tokens, C]
+    __half* d_pin = sc.alloc((size_t)B * cs);     // proj_in 出力 [B, tokens, C]
 
-    // group_norm (CHW) -> [tokens, C]
+    // group_norm (CHW, N=B) -> per-b で [C,HW] を [tokens,C] へ転置
     launch_group_norm(d_x, w.get(prefix + "norm.weight"), w.get(prefix + "norm.bias"),
-                      d_gn, 1, C, H, W, groups, gn_eps);
-    launch_chw_to_sc(d_gn, d_sc, C, S);
+                      d_gn, B, C, H, W, groups, gn_eps);
+    for (int b = 0; b < B; ++b)
+    {
+        launch_chw_to_sc(d_gn + (size_t)b * cs, d_sc + (size_t)b * cs, C, S);
+    }
 
     // proj_in (Linear C->C +bias)
     linear(w, prefix + "proj_in.weight", prefix + "proj_in.bias",
-           d_sc, d_pin, S, C, C, true);
+           d_sc, d_pin, Ms, C, C, true);
 
     // transformer_blocks
     for (int l = 0; l < num_layers; ++l)
     {
         const std::string bp = prefix + "transformer_blocks." + std::to_string(l) + ".";
-        transformer_block(w, bp, d_pin, S, C, d_ctx, ctx_tokens, ctx_dim, sc);
+        transformer_block(w, bp, d_pin, B, S, C, d_ctx, ctx_tokens, ctx_dim, sc);
     }
 
     // proj_out (Linear C->C +bias) -> d_sc
     linear(w, prefix + "proj_out.weight", prefix + "proj_out.bias",
-           d_pin, d_sc, S, C, C, true);
+           d_pin, d_sc, Ms, C, C, true);
 
-    // [tokens, C] -> [C, HW] に戻し residual 加算
-    launch_sc_to_chw(d_sc, d_gn, C, S);
-    launch_add(d_x, d_gn, d_x, (int)cs);
+    // [tokens, C] -> [C, HW] に per-b で戻し residual 加算
+    for (int b = 0; b < B; ++b)
+    {
+        launch_sc_to_chw(d_sc + (size_t)b * cs, d_gn + (size_t)b * cs, C, S);
+    }
+    launch_add(d_x, d_gn, d_x, (int)((size_t)B * cs));
 }
 
 // ----------------------------------------------------------------
 // Downsample2D: 3x3 stride2 pad1 conv (Cin->Cin)。H,W -> H/2,W/2
 // ----------------------------------------------------------------
 static void downsample(DeviceWeights& w, const std::string& prefix,
-                       const __half* d_in, int C, int H, int W, __half* d_out)
+                       const __half* d_in, int B, int C, int H, int W, __half* d_out)
 {
     launch_conv2d(d_in, w.get(prefix + "conv.weight"), w.get(prefix + "conv.bias"),
-                  d_out, 1, C, H, W, C, 3, 3, 2, 2, 1, 1, 1, 1);
+                  d_out, B, C, H, W, C, 3, 3, 2, 2, 1, 1, 1, 1);
 }
 
 // ----------------------------------------------------------------
 // Upsample2D: nearest2x + 3x3 pad1 conv (Cin->Cin)。H,W -> 2H,2W
 // ----------------------------------------------------------------
 static void upsample(DeviceWeights& w, const std::string& prefix,
-                     const __half* d_in, int C, int H, int W, __half* d_out, Scratch& sc)
+                     const __half* d_in, int B, int C, int H, int W, __half* d_out, Scratch& sc)
 {
     const int H2 = H << 1, W2 = W << 1;
-    __half* d_up = sc.alloc((size_t)C * H2 * W2);
-    launch_upsample_nearest2x(d_in, d_up, 1, C, H, W);
+    __half* d_up = sc.alloc((size_t)B * C * H2 * W2);
+    launch_upsample_nearest2x(d_in, d_up, B, C, H, W);
     launch_conv2d(d_up, w.get(prefix + "conv.weight"), w.get(prefix + "conv.bias"),
-                  d_out, 1, C, H2, W2, C, 3, 3, 1, 1, 1, 1, 1, 1);
+                  d_out, B, C, H2, W2, C, 3, 3, 1, 1, 1, 1, 1, 1);
 }
 
+// TU ローカル型 (上の ODR 注意と同じ理由で匿名 namespace に置く)。
+namespace
+{
 // ----------------------------------------------------------------
 // skip スタック: down 経路の各 resnet/downsample 出力を順に push し、
 // up 経路で逆順に pop する。各エントリは (デバイスバッファ, C, H, W)。
@@ -625,17 +887,21 @@ struct SkipEntry
     int     H;
     int     W;
 };
+} // namespace (匿名): TU ローカル型 SkipEntry ここまで
 
 // ----------------------------------------------------------------
 // UNet 本体 (S1: 重みは DeviceWeights& で受け取り、常駐/都度構築の両方から共有)
 // ----------------------------------------------------------------
 static void launch_unet_impl(DeviceWeights&     w,
+                             int                B,
                              const __half*      d_latent,
                              float              timestep,
                              const __half*      d_encoder_hidden_states,
                              const __half*      d_text_embeds,
                              const __half*      d_time_ids,
-                             __half*            d_noise_pred_out)
+                             __half*            d_noise_pred_out,
+                             bool               attn_fast,
+                             bool               epilogue)
 {
 
     // ============ S0 プロファイル計時 (DOLLAMA_PROFILE 有効時のみ) ============
@@ -666,158 +932,171 @@ static void launch_unet_impl(DeviceWeights&     w,
     const int   C0 = 320, C1 = 640, C2 = 1280;
 
     // ============ time embedding ============
-    // sinusoidal(320) -> linear_1(1280,320)+SiLU -> linear_2(1280,1280) = temb[1280]
+    // sinusoidal(320) -> linear_1(1280,320)+SiLU -> linear_2(1280,1280) = temb[B,1280]
+    //   G-2k S2: timestep は cond/uncond 共通スカラ。sinusoidal を [B,320] に複製して
+    //   linear を M=B で通す。add embedding は text_embeds が per-b で異なるので per-b に
+    //   埋める。B=1 では複製ループが回らず従来と完全同一 (バッファも 320/1280/2816)。
     __half* d_temb = nullptr;
     {
         Scratch sc;
-        __half* d_sin = sc.alloc(320);
+        __half* d_sin = sc.alloc((size_t)B * 320);
         launch_timestep_embedding(d_sin, timestep, 320, 10000.0f);
-        __half* d_h1 = sc.alloc(1280);
+        for (int b = 1; b < B; ++b)
+        {
+            CUDA_CHECK(cudaMemcpy(d_sin + (size_t)b * 320, d_sin, 320 * sizeof(__half),
+                                  cudaMemcpyDeviceToDevice));
+        }
+        __half* d_h1 = sc.alloc((size_t)B * 1280);
         linear(w, "time_embedding.linear_1.weight", "time_embedding.linear_1.bias",
-               d_sin, d_h1, 1, 1280, 320, true);
-        launch_silu(d_h1, d_h1, 1280);
-        CUDA_CHECK(cudaMalloc(&d_temb, 1280 * sizeof(__half)));
+               d_sin, d_h1, B, 1280, 320, true);
+        launch_silu(d_h1, d_h1, B * 1280);
+        CUDA_CHECK(cudaMalloc(&d_temb, (size_t)B * 1280 * sizeof(__half)));
         linear(w, "time_embedding.linear_2.weight", "time_embedding.linear_2.bias",
-               d_h1, d_temb, 1, 1280, 1280, true);
-        dbg_stat("time_embedding_out", d_temb, 1280);
+               d_h1, d_temb, B, 1280, 1280, true);
+        dbg_stat("time_embedding_out", d_temb, (size_t)B * 1280);
 
         // ============ add embedding (SDXL) ============
-        // time_ids[6] を各成分 sinusoidal(256) 展開し concat[1536]、text_embeds[1280] を
-        // 前に置いて [2816] -> linear_1+SiLU -> linear_2 -> temb に加算。
+        // time_ids[6] を各成分 sinusoidal(256) 展開し concat[1536]、text_embeds[b][1280] を
+        // 前に置いて [B,2816] -> linear_1+SiLU -> linear_2 -> temb に加算。
         std::vector<__half> h_time_ids(6);
         CUDA_CHECK(cudaMemcpy(h_time_ids.data(), d_time_ids, 6 * sizeof(__half),
                               cudaMemcpyDeviceToHost));
-        __half* d_addin = sc.alloc(2816);
-        // 先頭 1280 = text_embeds
-        CUDA_CHECK(cudaMemcpy(d_addin, d_text_embeds, 1280 * sizeof(__half),
-                              cudaMemcpyDeviceToDevice));
-        // 後続 1536 = 6 x sinusoidal(256)
-        for (int i = 0; i < 6; ++i)
+        __half* d_addin = sc.alloc((size_t)B * 2816);
+        for (int b = 0; b < B; ++b)
         {
-            const float tid = __half2float(h_time_ids[i]);
-            launch_timestep_embedding(d_addin + 1280 + i * 256, tid, 256, 10000.0f);
+            // 先頭 1280 = text_embeds[b] (cond/uncond で異なる)
+            CUDA_CHECK(cudaMemcpy(d_addin + (size_t)b * 2816, d_text_embeds + (size_t)b * 1280,
+                                  1280 * sizeof(__half), cudaMemcpyDeviceToDevice));
+            // 後続 1536 = 6 x sinusoidal(256) (time_ids は共有)
+            for (int i = 0; i < 6; ++i)
+            {
+                const float tid = __half2float(h_time_ids[i]);
+                launch_timestep_embedding(d_addin + (size_t)b * 2816 + 1280 + i * 256,
+                                          tid, 256, 10000.0f);
+            }
         }
-        __half* d_ah = sc.alloc(1280);
+        __half* d_ah = sc.alloc((size_t)B * 1280);
         linear(w, "add_embedding.linear_1.weight", "add_embedding.linear_1.bias",
-               d_addin, d_ah, 1, 1280, 2816, true);
-        launch_silu(d_ah, d_ah, 1280);
-        __half* d_aout = sc.alloc(1280);
+               d_addin, d_ah, B, 1280, 2816, true);
+        launch_silu(d_ah, d_ah, B * 1280);
+        __half* d_aout = sc.alloc((size_t)B * 1280);
         linear(w, "add_embedding.linear_2.weight", "add_embedding.linear_2.bias",
-               d_ah, d_aout, 1, 1280, 1280, true);
-        dbg_stat("add_embedding_out", d_aout, 1280);
+               d_ah, d_aout, B, 1280, 1280, true);
+        dbg_stat("add_embedding_out", d_aout, (size_t)B * 1280);
         // temb += add_embed
-        launch_add(d_temb, d_aout, d_temb, 1280);
+        launch_add(d_temb, d_aout, d_temb, B * 1280);
     }
-    dbg_stat("temb_final", d_temb, 1280);
+    dbg_stat("temb_final", d_temb, (size_t)B * 1280);
 
     // ResnetBlock 内で使う silu(temb) を 1 回計算して共有。
     __half* d_temb_silu = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_temb_silu, 1280 * sizeof(__half)));
-    launch_silu(d_temb, d_temb_silu, 1280);
+    CUDA_CHECK(cudaMalloc(&d_temb_silu, (size_t)B * 1280 * sizeof(__half)));
+    launch_silu(d_temb, d_temb_silu, B * 1280);
     prof_lap(&pc.unet_embed_sec);
 
     // skip スタック (down 経路 push, up 経路 pop)。
     std::vector<SkipEntry> skips;
     auto push_skip = [&](const __half* d_src, int C, int H, int W)
     {
+        // G-2k S2: skip エントリは [B,C,H,W]。B=1 では従来と同一サイズ。
         __half* p = nullptr;
-        CUDA_CHECK(cudaMalloc(&p, (size_t)C * H * W * sizeof(__half)));
-        CUDA_CHECK(cudaMemcpy(p, d_src, (size_t)C * H * W * sizeof(__half),
-                              cudaMemcpyDeviceToDevice));
+        const size_t sz = (size_t)B * C * H * W;
+        CUDA_CHECK(cudaMalloc(&p, sz * sizeof(__half)));
+        CUDA_CHECK(cudaMemcpy(p, d_src, sz * sizeof(__half), cudaMemcpyDeviceToDevice));
         skips.push_back({p, C, H, W});
     };
 
     // ============ conv_in (3x3 pad1, 4->320), 128x128 ============
     __half* d_cur = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C0 * 128 * 128 * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * 128 * 128 * sizeof(__half)));
     launch_conv2d(d_latent, w.get("conv_in.weight"), w.get("conv_in.bias"),
-                  d_cur, 1, 4, 128, 128, C0, 3, 3, 1, 1, 1, 1, 1, 1);
-    dbg_stat("conv_in_out", d_cur, (size_t)C0 * 128 * 128);
+                  d_cur, B, 4, 128, 128, C0, 3, 3, 1, 1, 1, 1, 1, 1);
+    dbg_stat("conv_in_out", d_cur, (size_t)B * C0 * 128 * 128);
     push_skip(d_cur, C0, 128, 128);   // res_samples[0] = conv_in 出力
 
     // ============ down_blocks[0]: DownBlock2D (resnet x2, downsample) 128->64 ============
     {
         const int H = 128, Wd = 128;
-        Scratch sc;
-        __half* d_r0 = sc.alloc((size_t)C0 * H * Wd);
-        resnet_block(w, "down_blocks.0.resnets.0.", d_cur, C0, C0, H, Wd, d_temb_silu, d_r0, sc);
-        dbg_stat("down_block_0_resnet0_out", d_r0, (size_t)C0 * H * Wd);
+        Scratch sc(attn_fast, epilogue);
+        __half* d_r0 = sc.alloc((size_t)B * C0 * H * Wd);
+        resnet_block(w, "down_blocks.0.resnets.0.", d_cur, B, C0, C0, H, Wd, d_temb_silu, d_r0, sc);
+        dbg_stat("down_block_0_resnet0_out", d_r0, (size_t)B * C0 * H * Wd);
         push_skip(d_r0, C0, H, Wd);
-        __half* d_r1 = sc.alloc((size_t)C0 * H * Wd);
-        resnet_block(w, "down_blocks.0.resnets.1.", d_r0, C0, C0, H, Wd, d_temb_silu, d_r1, sc);
+        __half* d_r1 = sc.alloc((size_t)B * C0 * H * Wd);
+        resnet_block(w, "down_blocks.0.resnets.1.", d_r0, B, C0, C0, H, Wd, d_temb_silu, d_r1, sc);
         push_skip(d_r1, C0, H, Wd);
         // downsample 128->64
         CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C0 * 64 * 64 * sizeof(__half)));
-        downsample(w, "down_blocks.0.downsamplers.0.", d_r1, C0, H, Wd, d_cur);
+        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * 64 * 64 * sizeof(__half)));
+        downsample(w, "down_blocks.0.downsamplers.0.", d_r1, B, C0, H, Wd, d_cur);
         push_skip(d_cur, C0, 64, 64);
-        dbg_stat("down_block_0_out", d_cur, (size_t)C0 * 64 * 64);
+        dbg_stat("down_block_0_out", d_cur, (size_t)B * C0 * 64 * 64);
     }
 
     // ============ down_blocks[1]: CrossAttnDownBlock (resnet+T2D[L=2] x2, downsample) 64->32 ============
     {
         const int H = 64, Wd = 64, Ln = 2;
-        Scratch sc;
+        Scratch sc(attn_fast, epilogue);
         // resnet0: 320->640
-        __half* d_r0 = sc.alloc((size_t)C1 * H * Wd);
-        resnet_block(w, "down_blocks.1.resnets.0.", d_cur, C0, C1, H, Wd, d_temb_silu, d_r0, sc);
-        dbg_stat("down_block_1_resnet0_out", d_r0, (size_t)C1 * H * Wd);
-        transformer2d(w, "down_blocks.1.attentions.0.", d_r0, C1, H, Wd, Ln,
+        __half* d_r0 = sc.alloc((size_t)B * C1 * H * Wd);
+        resnet_block(w, "down_blocks.1.resnets.0.", d_cur, B, C0, C1, H, Wd, d_temb_silu, d_r0, sc);
+        dbg_stat("down_block_1_resnet0_out", d_r0, (size_t)B * C1 * H * Wd);
+        transformer2d(w, "down_blocks.1.attentions.0.", d_r0, B, C1, H, Wd, Ln,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
-        dbg_stat("down_block_1_attn0_out", d_r0, (size_t)C1 * H * Wd);
+        dbg_stat("down_block_1_attn0_out", d_r0, (size_t)B * C1 * H * Wd);
         push_skip(d_r0, C1, H, Wd);
         // resnet1+T2D: 640->640
-        __half* d_r1 = sc.alloc((size_t)C1 * H * Wd);
-        resnet_block(w, "down_blocks.1.resnets.1.", d_r0, C1, C1, H, Wd, d_temb_silu, d_r1, sc);
-        transformer2d(w, "down_blocks.1.attentions.1.", d_r1, C1, H, Wd, Ln,
+        __half* d_r1 = sc.alloc((size_t)B * C1 * H * Wd);
+        resnet_block(w, "down_blocks.1.resnets.1.", d_r0, B, C1, C1, H, Wd, d_temb_silu, d_r1, sc);
+        transformer2d(w, "down_blocks.1.attentions.1.", d_r1, B, C1, H, Wd, Ln,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
         push_skip(d_r1, C1, H, Wd);
         // downsample 64->32
         CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C1 * 32 * 32 * sizeof(__half)));
-        downsample(w, "down_blocks.1.downsamplers.0.", d_r1, C1, H, Wd, d_cur);
+        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * 32 * 32 * sizeof(__half)));
+        downsample(w, "down_blocks.1.downsamplers.0.", d_r1, B, C1, H, Wd, d_cur);
         push_skip(d_cur, C1, 32, 32);
-        dbg_stat("down_block_1_out", d_cur, (size_t)C1 * 32 * 32);
+        dbg_stat("down_block_1_out", d_cur, (size_t)B * C1 * 32 * 32);
     }
 
     // ============ down_blocks[2]: CrossAttnDownBlock (resnet+T2D[L=10] x2, downsample なし) 32x32 ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc;
+        Scratch sc(attn_fast, epilogue);
         // resnet0: 640->1280
-        __half* d_r0 = sc.alloc((size_t)C2 * H * Wd);
-        resnet_block(w, "down_blocks.2.resnets.0.", d_cur, C1, C2, H, Wd, d_temb_silu, d_r0, sc);
-        dbg_stat("down_block_2_resnet0_out", d_r0, (size_t)C2 * H * Wd);
-        transformer2d(w, "down_blocks.2.attentions.0.", d_r0, C2, H, Wd, Ln,
+        __half* d_r0 = sc.alloc((size_t)B * C2 * H * Wd);
+        resnet_block(w, "down_blocks.2.resnets.0.", d_cur, B, C1, C2, H, Wd, d_temb_silu, d_r0, sc);
+        dbg_stat("down_block_2_resnet0_out", d_r0, (size_t)B * C2 * H * Wd);
+        transformer2d(w, "down_blocks.2.attentions.0.", d_r0, B, C2, H, Wd, Ln,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
-        dbg_stat("down_block_2_attn0_out", d_r0, (size_t)C2 * H * Wd);
+        dbg_stat("down_block_2_attn0_out", d_r0, (size_t)B * C2 * H * Wd);
         push_skip(d_r0, C2, H, Wd);
-        __half* d_r1 = sc.alloc((size_t)C2 * H * Wd);
-        resnet_block(w, "down_blocks.2.resnets.1.", d_r0, C2, C2, H, Wd, d_temb_silu, d_r1, sc);
-        transformer2d(w, "down_blocks.2.attentions.1.", d_r1, C2, H, Wd, Ln,
+        __half* d_r1 = sc.alloc((size_t)B * C2 * H * Wd);
+        resnet_block(w, "down_blocks.2.resnets.1.", d_r0, B, C2, C2, H, Wd, d_temb_silu, d_r1, sc);
+        transformer2d(w, "down_blocks.2.attentions.1.", d_r1, B, C2, H, Wd, Ln,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
         push_skip(d_r1, C2, H, Wd);
         // d_cur <- d_r1 (block 出力, downsample なし)
         CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C2 * H * Wd * sizeof(__half)));
-        CUDA_CHECK(cudaMemcpy(d_cur, d_r1, (size_t)C2 * H * Wd * sizeof(__half),
+        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * H * Wd * sizeof(__half)));
+        CUDA_CHECK(cudaMemcpy(d_cur, d_r1, (size_t)B * C2 * H * Wd * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
-        dbg_stat("down_block_2_out", d_cur, (size_t)C2 * H * Wd);
+        dbg_stat("down_block_2_out", d_cur, (size_t)B * C2 * H * Wd);
     }
 
     prof_lap(&pc.unet_down_sec);
     // ============ mid_block: Resnet -> T2D[L=10] -> Resnet (1280, 32x32) ============
     {
         const int H = 32, Wd = 32, Ln = 10;
-        Scratch sc;
-        __half* d_r0 = sc.alloc((size_t)C2 * H * Wd);
-        resnet_block(w, "mid_block.resnets.0.", d_cur, C2, C2, H, Wd, d_temb_silu, d_r0, sc);
-        dbg_stat("mid_block_resnet0_out", d_r0, (size_t)C2 * H * Wd);
-        transformer2d(w, "mid_block.attentions.0.", d_r0, C2, H, Wd, Ln,
+        Scratch sc(attn_fast, epilogue);
+        __half* d_r0 = sc.alloc((size_t)B * C2 * H * Wd);
+        resnet_block(w, "mid_block.resnets.0.", d_cur, B, C2, C2, H, Wd, d_temb_silu, d_r0, sc);
+        dbg_stat("mid_block_resnet0_out", d_r0, (size_t)B * C2 * H * Wd);
+        transformer2d(w, "mid_block.attentions.0.", d_r0, B, C2, H, Wd, Ln,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
-        dbg_stat("mid_block_attn0_out", d_r0, (size_t)C2 * H * Wd);
-        resnet_block(w, "mid_block.resnets.1.", d_r0, C2, C2, H, Wd, d_temb_silu, d_cur, sc);
-        dbg_stat("mid_block_out", d_cur, (size_t)C2 * H * Wd);
+        dbg_stat("mid_block_attn0_out", d_r0, (size_t)B * C2 * H * Wd);
+        resnet_block(w, "mid_block.resnets.1.", d_r0, B, C2, C2, H, Wd, d_temb_silu, d_cur, sc);
+        dbg_stat("mid_block_out", d_cur, (size_t)B * C2 * H * Wd);
     }
 
     prof_lap(&pc.unet_mid_sec);
@@ -835,32 +1114,37 @@ static void launch_unet_impl(DeviceWeights&     w,
         const int H = 32, Wd = 32, Ln = 10, HW = H * Wd;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 1280,1280,640
-            __half* d_cat = sc.alloc((size_t)(C2 + sk.C) * HW);
-            launch_concat_chw(d_cur, sk.ptr, d_cat, C2, sk.C, HW);
+            __half* d_cat = sc.alloc((size_t)B * (C2 + sk.C) * HW);
+            // concat は per-b (レイアウト [B,Ca+Cb,HW])。B=1 は offset 0 の 1 周。
+            for (int b = 0; b < B; ++b)
+            {
+                launch_concat_chw(d_cur + (size_t)b * C2 * HW, sk.ptr + (size_t)b * sk.C * HW,
+                                  d_cat + (size_t)b * (C2 + sk.C) * HW, C2, sk.C, HW);
+            }
             CUDA_CHECK(cudaFree(sk.ptr));
-            __half* d_out = sc.alloc((size_t)C2 * HW);
+            __half* d_out = sc.alloc((size_t)B * C2 * HW);
             resnet_block(w, "up_blocks.0.resnets." + std::to_string(r) + ".",
-                         d_cat, C2 + sk.C, C2, H, Wd, d_temb_silu, d_out, sc);
-            if (r == 0) { dbg_stat("up_block_0_resnet0_out", d_out, (size_t)C2 * HW); }
+                         d_cat, B, C2 + sk.C, C2, H, Wd, d_temb_silu, d_out, sc);
+            if (r == 0) { dbg_stat("up_block_0_resnet0_out", d_out, (size_t)B * C2 * HW); }
             transformer2d(w, "up_blocks.0.attentions." + std::to_string(r) + ".",
-                          d_out, C2, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
-            if (r == 0) { dbg_stat("up_block_0_attn0_out", d_out, (size_t)C2 * HW); }
+                          d_out, B, C2, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
+            if (r == 0) { dbg_stat("up_block_0_attn0_out", d_out, (size_t)B * C2 * HW); }
             CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C2 * HW * sizeof(__half)));
-            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)C2 * HW * sizeof(__half),
+            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * HW * sizeof(__half)));
+            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C2 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
         }
         // upsample 32->64
         Scratch sc;
-        __half* d_up = sc.alloc((size_t)C2 * 64 * 64);
-        upsample(w, "up_blocks.0.upsamplers.0.", d_cur, C2, H, Wd, d_up, sc);
+        __half* d_up = sc.alloc((size_t)B * C2 * 64 * 64);
+        upsample(w, "up_blocks.0.upsamplers.0.", d_cur, B, C2, H, Wd, d_up, sc);
         CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C2 * 64 * 64 * sizeof(__half)));
-        CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)C2 * 64 * 64 * sizeof(__half),
+        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * 64 * 64 * sizeof(__half)));
+        CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)B * C2 * 64 * 64 * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
-        dbg_stat("up_block_0_out", d_cur, (size_t)C2 * 64 * 64);
+        dbg_stat("up_block_0_out", d_cur, (size_t)B * C2 * 64 * 64);
     }
 
     // ============ up_blocks[1]: CrossAttnUpBlock (resnet+T2D[L=2] x3, upsample) 64->128 ============
@@ -869,33 +1153,37 @@ static void launch_unet_impl(DeviceWeights&     w,
         int curC = C2;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 640,640,320
-            __half* d_cat = sc.alloc((size_t)(curC + sk.C) * HW);
-            launch_concat_chw(d_cur, sk.ptr, d_cat, curC, sk.C, HW);
+            __half* d_cat = sc.alloc((size_t)B * (curC + sk.C) * HW);
+            for (int b = 0; b < B; ++b)
+            {
+                launch_concat_chw(d_cur + (size_t)b * curC * HW, sk.ptr + (size_t)b * sk.C * HW,
+                                  d_cat + (size_t)b * (curC + sk.C) * HW, curC, sk.C, HW);
+            }
             CUDA_CHECK(cudaFree(sk.ptr));
-            __half* d_out = sc.alloc((size_t)C1 * HW);
+            __half* d_out = sc.alloc((size_t)B * C1 * HW);
             resnet_block(w, "up_blocks.1.resnets." + std::to_string(r) + ".",
-                         d_cat, curC + sk.C, C1, H, Wd, d_temb_silu, d_out, sc);
-            if (r == 0) { dbg_stat("up_block_1_resnet0_out", d_out, (size_t)C1 * HW); }
+                         d_cat, B, curC + sk.C, C1, H, Wd, d_temb_silu, d_out, sc);
+            if (r == 0) { dbg_stat("up_block_1_resnet0_out", d_out, (size_t)B * C1 * HW); }
             transformer2d(w, "up_blocks.1.attentions." + std::to_string(r) + ".",
-                          d_out, C1, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
-            if (r == 0) { dbg_stat("up_block_1_attn0_out", d_out, (size_t)C1 * HW); }
+                          d_out, B, C1, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
+            if (r == 0) { dbg_stat("up_block_1_attn0_out", d_out, (size_t)B * C1 * HW); }
             CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C1 * HW * sizeof(__half)));
-            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)C1 * HW * sizeof(__half),
+            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * HW * sizeof(__half)));
+            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C1 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
             curC = C1;
         }
         // upsample 64->128
         Scratch sc;
-        __half* d_up = sc.alloc((size_t)C1 * 128 * 128);
-        upsample(w, "up_blocks.1.upsamplers.0.", d_cur, C1, H, Wd, d_up, sc);
+        __half* d_up = sc.alloc((size_t)B * C1 * 128 * 128);
+        upsample(w, "up_blocks.1.upsamplers.0.", d_cur, B, C1, H, Wd, d_up, sc);
         CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C1 * 128 * 128 * sizeof(__half)));
-        CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)C1 * 128 * 128 * sizeof(__half),
+        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * 128 * 128 * sizeof(__half)));
+        CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)B * C1 * 128 * 128 * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
-        dbg_stat("up_block_1_out", d_cur, (size_t)C1 * 128 * 128);
+        dbg_stat("up_block_1_out", d_cur, (size_t)B * C1 * 128 * 128);
     }
 
     // ============ up_blocks[2]: UpBlock2D (resnet x3, upsample なし) 128x128 ============
@@ -904,22 +1192,26 @@ static void launch_unet_impl(DeviceWeights&     w,
         int curC = C1;
         for (int r = 0; r < 3; ++r)
         {
-            Scratch sc;
+            Scratch sc(attn_fast, epilogue);
             SkipEntry sk = pop_skip();  // 320,320,320
-            __half* d_cat = sc.alloc((size_t)(curC + sk.C) * HW);
-            launch_concat_chw(d_cur, sk.ptr, d_cat, curC, sk.C, HW);
+            __half* d_cat = sc.alloc((size_t)B * (curC + sk.C) * HW);
+            for (int b = 0; b < B; ++b)
+            {
+                launch_concat_chw(d_cur + (size_t)b * curC * HW, sk.ptr + (size_t)b * sk.C * HW,
+                                  d_cat + (size_t)b * (curC + sk.C) * HW, curC, sk.C, HW);
+            }
             CUDA_CHECK(cudaFree(sk.ptr));
-            __half* d_out = sc.alloc((size_t)C0 * HW);
+            __half* d_out = sc.alloc((size_t)B * C0 * HW);
             resnet_block(w, "up_blocks.2.resnets." + std::to_string(r) + ".",
-                         d_cat, curC + sk.C, C0, H, Wd, d_temb_silu, d_out, sc);
+                         d_cat, B, curC + sk.C, C0, H, Wd, d_temb_silu, d_out, sc);
             CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)C0 * HW * sizeof(__half)));
-            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)C0 * HW * sizeof(__half),
+            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * HW * sizeof(__half)));
+            CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C0 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
             curC = C0;
-            if (r == 0) { dbg_stat("up_block_2_resnet0_out", d_cur, (size_t)C0 * HW); }
+            if (r == 0) { dbg_stat("up_block_2_resnet0_out", d_cur, (size_t)B * C0 * HW); }
         }
-        dbg_stat("up_block_2_out", d_cur, (size_t)C0 * HW);
+        dbg_stat("up_block_2_out", d_cur, (size_t)B * C0 * HW);
     }
 
     prof_lap(&pc.unet_up_sec);
@@ -927,15 +1219,24 @@ static void launch_unet_impl(DeviceWeights&     w,
     {
         const int H = 128, Wd = 128;
         Scratch sc;
-        __half* d_n = sc.alloc((size_t)C0 * H * Wd);
-        launch_group_norm(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
-                          d_n, 1, C0, H, Wd, 32, 1e-5f);
+        __half* d_n = sc.alloc((size_t)B * C0 * H * Wd);
+        // G-4k S1a: epilogue=on のみ multi-block GN。default は従来経路を無改変で通す。
+        if (epilogue)
+        {
+            launch_group_norm_mb(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
+                                 d_n, B, C0, H, Wd, 32, 1e-5f);
+        }
+        else
+        {
+            launch_group_norm(d_cur, w.get("conv_norm_out.weight"), w.get("conv_norm_out.bias"),
+                              d_n, B, C0, H, Wd, 32, 1e-5f);
+        }
         // golden conv_norm_out_out は SiLU 前 (GroupNorm 出力) を捕捉している。
-        dbg_stat("conv_norm_out_out", d_n, (size_t)C0 * H * Wd);
-        launch_silu(d_n, d_n, C0 * H * Wd);
+        dbg_stat("conv_norm_out_out", d_n, (size_t)B * C0 * H * Wd);
+        launch_silu(d_n, d_n, B * C0 * H * Wd);
         launch_conv2d(d_n, w.get("conv_out.weight"), w.get("conv_out.bias"),
-                      d_noise_pred_out, 1, C0, H, Wd, 4, 3, 3, 1, 1, 1, 1, 1, 1);
-        dbg_stat("noise_pred", d_noise_pred_out, (size_t)4 * H * Wd);
+                      d_noise_pred_out, B, C0, H, Wd, 4, 3, 3, 1, 1, 1, 1, 1, 1);
+        dbg_stat("noise_pred", d_noise_pred_out, (size_t)B * 4 * H * Wd);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -965,11 +1266,13 @@ void launch_unet(const SafeTensors& weights,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out)
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast,
+                 bool               epilogue)
 {
     DeviceWeights w(weights);
-    launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out);
+    launch_unet_impl(w, 1, d_latent, timestep, d_encoder_hidden_states,
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
 }
 
 // ----------------------------------------------------------------
@@ -995,17 +1298,78 @@ void unet_weights_destroy(UnetWeightsHandle handle)
     delete static_cast<DeviceWeights*>(handle);
 }
 
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2) C-API。DeviceWeights (private) へのハンドル越し操作。
+// ----------------------------------------------------------------
+void unet_apply_loras(UnetWeightsHandle handle, const LoraModule* mods, int n)
+{
+    if (handle == nullptr || mods == nullptr || n <= 0)
+    {
+        return;
+    }
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    for (int i = 0; i < n; ++i)
+    {
+        w.apply_lora(mods[i]);
+    }
+}
+
+void unet_clear_loras(UnetWeightsHandle handle)
+{
+    if (handle == nullptr)
+    {
+        return;
+    }
+    static_cast<DeviceWeights*>(handle)->revert_all();
+}
+
+const __half* unet_weight_device_ptr(UnetWeightsHandle handle, const std::string& name)
+{
+    if (handle == nullptr)
+    {
+        return nullptr;
+    }
+    return static_cast<DeviceWeights*>(handle)->get(name);
+}
+
 void launch_unet(UnetWeightsHandle  handle,
                  const __half*      d_latent,
                  float              timestep,
                  const __half*      d_encoder_hidden_states,
                  const __half*      d_text_embeds,
                  const __half*      d_time_ids,
-                 __half*            d_noise_pred_out)
+                 __half*            d_noise_pred_out,
+                 bool               attn_fast,
+                 bool               epilogue)
 {
     DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
-    launch_unet_impl(w, d_latent, timestep, d_encoder_hidden_states,
-                     d_text_embeds, d_time_ids, d_noise_pred_out);
+    launch_unet_impl(w, 1, d_latent, timestep, d_encoder_hidden_states,
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
+}
+
+// ----------------------------------------------------------------
+// バッチ (B>1) 版 public API (G-2k S2)。CFG cond/uncond の B=2 束ねを 1 forward で回す。
+//   d_latent               : [B,4,128,128] (b ごとに cond/uncond)
+//   d_encoder_hidden_states: [B,77,2048]
+//   d_text_embeds          : [B,1280]
+//   d_time_ids             : [6] (全 b 共有)
+//   d_noise_pred_out       : [B,4,128,128] (事前確保)
+//   B=1 で呼べば launch_unet(handle,...) と各カーネル起動列・数値が完全同一。
+// ----------------------------------------------------------------
+void launch_unet_batched(UnetWeightsHandle  handle,
+                         int                B,
+                         const __half*      d_latent,
+                         float              timestep,
+                         const __half*      d_encoder_hidden_states,
+                         const __half*      d_text_embeds,
+                         const __half*      d_time_ids,
+                         __half*            d_noise_pred_out,
+                         bool               attn_fast,
+                         bool               epilogue)
+{
+    DeviceWeights& w = *static_cast<DeviceWeights*>(handle);
+    launch_unet_impl(w, B, d_latent, timestep, d_encoder_hidden_states,
+                     d_text_embeds, d_time_ids, d_noise_pred_out, attn_fast, epilogue);
 }
 
 } // namespace dollama

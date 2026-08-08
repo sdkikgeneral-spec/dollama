@@ -10,12 +10,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <random>
 #include <vector>
 
 #ifdef HAVE_CUDA
 #include <cuda_fp16.h>
+#include "kernels/activation.cuh"
 #include "kernels/groupnorm.cuh"
 #include "kernels/utils.cuh"
 #endif
@@ -142,14 +144,15 @@ static std::vector<float> cpu_group_norm(const std::vector<float>& in,
     return out;
 }
 
-// device 経由で GroupNorm を実行し FP16 結果をデコードして返す。
+// device 経由で GroupNorm を実行し FP16 結果をそのまま (raw ビット) 返す。
 // inplace=true のときは d_in == d_out で起動する。
-// gamma_h / beta_h は FP16。
-static std::vector<float> run_gpu_gn(const std::vector<__half>& in,
-                                     const std::vector<__half>& gamma_h,
-                                     const std::vector<__half>& beta_h,
-                                     int N, int C, int H, int W,
-                                     int num_groups, float eps, bool inplace)
+// gamma_h / beta_h は FP16。mb=true で multi-block 版 (G-4k S1a) を起動する。
+static std::vector<__half> run_gpu_gn_raw(const std::vector<__half>& in,
+                                          const std::vector<__half>& gamma_h,
+                                          const std::vector<__half>& beta_h,
+                                          int N, int C, int H, int W,
+                                          int num_groups, float eps, bool inplace,
+                                          bool mb = false)
 {
     const size_t n = in.size();
 
@@ -175,7 +178,14 @@ static std::vector<float> run_gpu_gn(const std::vector<__half>& in,
         CUDA_CHECK(cudaMalloc(&d_out, n * sizeof(__half)));
     }
 
-    launch_group_norm(d_in, d_gamma, d_beta, d_out, N, C, H, W, num_groups, eps);
+    if (mb)
+    {
+        launch_group_norm_mb(d_in, d_gamma, d_beta, d_out, N, C, H, W, num_groups, eps);
+    }
+    else
+    {
+        launch_group_norm(d_in, d_gamma, d_beta, d_out, N, C, H, W, num_groups, eps);
+    }
 
     std::vector<__half> h_out(n);
     CUDA_CHECK(cudaMemcpy(h_out.data(), d_out, n * sizeof(__half), cudaMemcpyDeviceToHost));
@@ -188,8 +198,21 @@ static std::vector<float> run_gpu_gn(const std::vector<__half>& in,
     CUDA_CHECK(cudaFree(d_gamma));
     CUDA_CHECK(cudaFree(d_beta));
 
-    std::vector<float> out(n);
-    for (size_t i = 0; i < n; ++i)
+    return h_out;
+}
+
+// run_gpu_gn_raw の FP32 デコード版 (既存テストの物差し)。
+static std::vector<float> run_gpu_gn(const std::vector<__half>& in,
+                                     const std::vector<__half>& gamma_h,
+                                     const std::vector<__half>& beta_h,
+                                     int N, int C, int H, int W,
+                                     int num_groups, float eps, bool inplace,
+                                     bool mb = false)
+{
+    std::vector<__half> h_out = run_gpu_gn_raw(in, gamma_h, beta_h,
+                                               N, C, H, W, num_groups, eps, inplace, mb);
+    std::vector<float> out(h_out.size());
+    for (size_t i = 0; i < h_out.size(); ++i)
     {
         out[i] = __half2float(h_out[i]);
     }
@@ -388,13 +411,242 @@ static bool test_groupnorm_edges()
 }
 
 // ----------------------------------------------------------------
+// 6. test_groupnorm_mb_parity (G-4k S1a ゲート1):
+//    multi-block 版 vs 1-block 版のパリティ。蓄積順が異なるため FP16 で微差が乗る。
+//    ゲート: MAE < 1e-3 / max abs < 4e-3 (FP16 tol)。SDXL 実形状 + B=2。
+//    加えて CPU FP32 参照とも compare (mb 単体の正しさ)。
+// ----------------------------------------------------------------
+static bool test_groupnorm_mb_parity_one(int N, int C, int H, int W, int G, unsigned seed)
+{
+    const float eps = 1e-5f;
+    const int total = N * C * H * W;
+    HalfBuffer b  = make_half(total, seed);
+    HalfBuffer gb = make_half(C, seed + 1, 0.2f, 2.0f);
+    HalfBuffer bb = make_half(C, seed + 2, -1.5f, 1.5f);
+
+    std::vector<float> ref1b = run_gpu_gn(b.h, gb.h, bb.h, N, C, H, W, G, eps, false, false);
+    std::vector<float> gotmb = run_gpu_gn(b.h, gb.h, bb.h, N, C, H, W, G, eps, false, true);
+
+    double sum_abs = 0.0, max_abs = 0.0;
+    for (size_t i = 0; i < gotmb.size(); ++i)
+    {
+        const double d = std::fabs((double)gotmb[i] - (double)ref1b[i]);
+        sum_abs += d;
+        if (d > max_abs)
+        {
+            max_abs = d;
+        }
+    }
+    const double mae = sum_abs / static_cast<double>(gotmb.size());
+    std::cout << "[test_groupnorm_mb_parity] N=" << N << " C=" << C << " H=" << H
+              << " W=" << W << " G=" << G << " MAE=" << mae << " max_abs=" << max_abs << "\n";
+    if (mae >= 1e-3 || max_abs >= 4e-3)
+    {
+        std::cerr << "[test_groupnorm_mb_parity] FAIL: MAE " << mae
+                  << " (gate <1e-3) / max_abs " << max_abs << " (gate <4e-3)\n";
+        return false;
+    }
+
+    // CPU FP32 参照との突合 (mb 単体の正しさ)。
+    std::vector<float> ref = cpu_group_norm(b.ref, gb.ref, bb.ref, N, C, H, W, G, eps);
+    const int K = (C / G) * H * W;
+    return compare(gotmb, ref, K, "test_groupnorm_mb_parity[cpu_ref]");
+}
+
+static bool test_groupnorm_mb_parity()
+{
+    bool ok = true;
+    // SDXL UNet 実形状 (resnet norm1/norm2 と conv_norm_out が使う形状)。
+    ok = test_groupnorm_mb_parity_one(1, 320,  128, 128, 32, 41001) && ok;
+    ok = test_groupnorm_mb_parity_one(1, 640,  64,  64,  32, 41002) && ok;
+    ok = test_groupnorm_mb_parity_one(1, 1280, 32,  32,  32, 41003) && ok;
+    // CFG batch2 (B=2)。
+    ok = test_groupnorm_mb_parity_one(2, 320,  128, 128, 32, 41004) && ok;
+    // skip concat 後の大チャネル (up_blocks resnet 入力: C=2560)。
+    ok = test_groupnorm_mb_parity_one(1, 2560, 32,  32,  32, 41005) && ok;
+    return ok;
+}
+
+// ----------------------------------------------------------------
+// 7. test_groupnorm_mb_bitexact (G-4k S1a ゲート2):
+//    multi-block 版を同一入力で複数回走らせ、出力 FP16 が完全ビット一致すること
+//    (atomic 不使用 = 決定的 2 段集約の証明)。memcmp で raw 比較する。
+// ----------------------------------------------------------------
+static bool test_groupnorm_mb_bitexact()
+{
+    const int N = 2, C = 320, H = 128, W = 128, G = 32;
+    const float eps = 1e-5f;
+    const int total = N * C * H * W;
+    HalfBuffer b  = make_half(total, 51501);
+    HalfBuffer gb = make_half(C, 51502, 0.2f, 2.0f);
+    HalfBuffer bb = make_half(C, 51503, -1.5f, 1.5f);
+
+    std::vector<__half> first =
+        run_gpu_gn_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, false, true);
+    const int runs = 3;
+    for (int r = 1; r < runs; ++r)
+    {
+        std::vector<__half> again =
+            run_gpu_gn_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, false, true);
+        if (std::memcmp(first.data(), again.data(), first.size() * sizeof(__half)) != 0)
+        {
+            std::cerr << "[test_groupnorm_mb_bitexact] FAIL: run " << r
+                      << " is not bit-identical to run 0\n";
+            return false;
+        }
+    }
+    std::cout << "[test_groupnorm_mb_bitexact] PASSED (" << runs
+              << " runs bit-identical, memcmp over " << total << " halfs)\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
+// 8. test_groupnorm_silu (G-4k S1b):
+//    GN+SiLU 融合版 launch_group_norm_silu のパリティ。
+//    参照 = launch_group_norm_mb → launch_silu の 2 パス (現行 epilogue 経路)。
+//    融合版は「GN 結果を half へ丸め → float へ戻して同式 SiLU」の丸め順を踏むため
+//    完全ビット一致 (memcmp) を要求する。加えて run-to-run 3 走ビット一致
+//    (SiLU は純 map なので mb の決定性を壊さないことの証明)。
+// ----------------------------------------------------------------
+
+// device 経由で「mb GN → launch_silu」(fused=false) または融合版 (fused=true) を
+// 実行し FP16 結果を raw で返す。
+static std::vector<__half> run_gpu_gn_silu_raw(const std::vector<__half>& in,
+                                               const std::vector<__half>& gamma_h,
+                                               const std::vector<__half>& beta_h,
+                                               int N, int C, int H, int W,
+                                               int num_groups, float eps, bool fused)
+{
+    const size_t n = in.size();
+
+    __half* d_in    = nullptr;
+    __half* d_out   = nullptr;
+    __half* d_gamma = nullptr;
+    __half* d_beta  = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_in, n * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_in, in.data(), n * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_gamma, gamma_h.size() * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_gamma, gamma_h.data(), gamma_h.size() * sizeof(__half),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_beta, beta_h.size() * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_beta, beta_h.data(), beta_h.size() * sizeof(__half),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMalloc(&d_out, n * sizeof(__half)));
+
+    if (fused)
+    {
+        launch_group_norm_silu(d_in, d_gamma, d_beta, d_out, N, C, H, W, num_groups, eps);
+    }
+    else
+    {
+        // 現行 epilogue 経路 (S1a): mb GN → 別 launch_silu (in-place)。
+        launch_group_norm_mb(d_in, d_gamma, d_beta, d_out, N, C, H, W, num_groups, eps);
+        launch_silu(d_out, d_out, static_cast<int>(n));
+    }
+
+    std::vector<__half> h_out(n);
+    CUDA_CHECK(cudaMemcpy(h_out.data(), d_out, n * sizeof(__half), cudaMemcpyDeviceToHost));
+
+    CUDA_CHECK(cudaFree(d_in));
+    CUDA_CHECK(cudaFree(d_out));
+    CUDA_CHECK(cudaFree(d_gamma));
+    CUDA_CHECK(cudaFree(d_beta));
+
+    return h_out;
+}
+
+static bool test_groupnorm_silu_parity_one(int N, int C, int H, int W, int G, unsigned seed)
+{
+    const float eps = 1e-5f;
+    const int total = N * C * H * W;
+    HalfBuffer b  = make_half(total, seed);
+    HalfBuffer gb = make_half(C, seed + 1, 0.2f, 2.0f);
+    HalfBuffer bb = make_half(C, seed + 2, -1.5f, 1.5f);
+
+    std::vector<__half> ref2p =
+        run_gpu_gn_silu_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, false);
+    std::vector<__half> fused =
+        run_gpu_gn_silu_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, true);
+
+    if (std::memcmp(ref2p.data(), fused.data(), ref2p.size() * sizeof(__half)) != 0)
+    {
+        // 不一致箇所を数えて先頭を表示 (デバッグ用)。
+        size_t bad = 0, first = ref2p.size();
+        for (size_t i = 0; i < ref2p.size(); ++i)
+        {
+            if (std::memcmp(&ref2p[i], &fused[i], sizeof(__half)) != 0)
+            {
+                if (bad == 0)
+                {
+                    first = i;
+                }
+                ++bad;
+            }
+        }
+        std::cerr << "[test_groupnorm_silu] FAIL (not bit-exact): N=" << N << " C=" << C
+                  << " H=" << H << " W=" << W << " bad=" << bad << "/" << ref2p.size()
+                  << " first_idx=" << first
+                  << " ref=" << __half2float(ref2p[first])
+                  << " fused=" << __half2float(fused[first]) << "\n";
+        return false;
+    }
+    std::cout << "[test_groupnorm_silu] N=" << N << " C=" << C << " H=" << H
+              << " W=" << W << " G=" << G
+              << " BIT-EXACT vs mb+silu (memcmp over " << total << " halfs)\n";
+    return true;
+}
+
+static bool test_groupnorm_silu_parity()
+{
+    bool ok = true;
+    // SDXL UNet 実形状 (resnet norm1/norm2 が使う形状)。mb parity と同じセット。
+    ok = test_groupnorm_silu_parity_one(1, 320,  128, 128, 32, 61001) && ok;
+    ok = test_groupnorm_silu_parity_one(1, 640,  64,  64,  32, 61002) && ok;
+    ok = test_groupnorm_silu_parity_one(1, 1280, 32,  32,  32, 61003) && ok;
+    // CFG batch2 (B=2)。
+    ok = test_groupnorm_silu_parity_one(2, 320,  128, 128, 32, 61004) && ok;
+    // skip concat 後の大チャネル (up_blocks resnet 入力: C=2560)。
+    ok = test_groupnorm_silu_parity_one(1, 2560, 32,  32,  32, 61005) && ok;
+    return ok;
+}
+
+// 融合版の run-to-run 決定性 (同一入力 3 走で完全ビット一致)。
+static bool test_groupnorm_silu_bitexact()
+{
+    const int N = 2, C = 320, H = 128, W = 128, G = 32;
+    const float eps = 1e-5f;
+    const int total = N * C * H * W;
+    HalfBuffer b  = make_half(total, 61501);
+    HalfBuffer gb = make_half(C, 61502, 0.2f, 2.0f);
+    HalfBuffer bb = make_half(C, 61503, -1.5f, 1.5f);
+
+    std::vector<__half> first =
+        run_gpu_gn_silu_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, true);
+    const int runs = 3;
+    for (int r = 1; r < runs; ++r)
+    {
+        std::vector<__half> again =
+            run_gpu_gn_silu_raw(b.h, gb.h, bb.h, N, C, H, W, G, eps, true);
+        if (std::memcmp(first.data(), again.data(), first.size() * sizeof(__half)) != 0)
+        {
+            std::cerr << "[test_groupnorm_silu_bitexact] FAIL: run " << r
+                      << " is not bit-identical to run 0\n";
+            return false;
+        }
+    }
+    std::cout << "[test_groupnorm_silu_bitexact] PASSED (" << runs
+              << " runs bit-identical, memcmp over " << total << " halfs)\n";
+    return true;
+}
+
+// ----------------------------------------------------------------
 // ベンチ: GroupNorm はメモリ律速 → 有効帯域 GB/s で報告。
 // 有効帯域 ≈ 2 * N*C*H*W * 2byte / ms (read 入力 + write 出力。gamma/beta は無視)。
 // ※カーネルは入力を 2 回読む (sum パス + 書き戻しパス) が、PL 指定の帯域定義に従い
 //   read 1 + write 1 として計上する。
 // warmup5 / iters50 / cudaEvent 中央値。
 // ----------------------------------------------------------------
-static void bench_one(int N, int C, int H, int W, int G, const char* label)
+static double bench_one(int N, int C, int H, int W, int G, const char* label, bool mb = false)
 {
     const int total = N * C * H * W;
     HalfBuffer b = make_half(total, 777);
@@ -424,7 +676,14 @@ static void bench_one(int N, int C, int H, int W, int G, const char* label)
     auto run_once = [&]() -> float
     {
         CUDA_CHECK(cudaEventRecord(start));
-        launch_group_norm(d_in, d_gamma, d_beta, d_out, N, C, H, W, G, eps);
+        if (mb)
+        {
+            launch_group_norm_mb(d_in, d_gamma, d_beta, d_out, N, C, H, W, G, eps);
+        }
+        else
+        {
+            launch_group_norm(d_in, d_gamma, d_beta, d_out, N, C, H, W, G, eps);
+        }
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
         float ms = 0.0f;
@@ -451,7 +710,7 @@ static void bench_one(int N, int C, int H, int W, int G, const char* label)
     const double bytes = 2.0 * static_cast<double>(total) * sizeof(__half);
     const double gbps  = bytes / (static_cast<double>(median_ms) * 1e-3) / 1e9;
 
-    std::cout << "[bench_groupnorm] " << label
+    std::cout << "[bench_groupnorm] " << label << (mb ? " [mb]" : " [1b]")
               << " N=" << N << " C=" << C << " H=" << H << " W=" << W << " G=" << G
               << " median=" << median_ms << " ms"
               << " (min=" << times.front() << " max=" << times.back() << ")"
@@ -463,6 +722,7 @@ static void bench_one(int N, int C, int H, int W, int G, const char* label)
     CUDA_CHECK(cudaFree(d_out));
     CUDA_CHECK(cudaFree(d_gamma));
     CUDA_CHECK(cudaFree(d_beta));
+    return gbps;
 }
 
 static void bench_groupnorm()
@@ -472,6 +732,32 @@ static void bench_groupnorm()
     // UNet 系。
     bench_one(1, 1280, 32, 32, 32, "unet_1280_32");
     bench_one(1, 640, 64, 64, 32, "unet_640_64");
+}
+
+// ----------------------------------------------------------------
+// 8. bench_groupnorm_mb (G-4k S1a ゲート3): multi-block 版の帯域。
+//    SDXL 実形状で 1-block 版 (before) と比較。ゲート = 最大形状 (C=320, 128x128) で
+//    multi-block ≥ 300 GB/s (現行 73 GB/s から ≥4x)。小形状は起動レイテンシ支配に
+//    なり得るため参考出力のみ。
+// ----------------------------------------------------------------
+static bool bench_groupnorm_mb()
+{
+    // 参考: 同形状での 1-block 版 (before)。
+    bench_one(1, 320,  128, 128, 32, "unet_320_128");
+    const double mb_big = bench_one(1, 320, 128, 128, 32, "unet_320_128", true);
+    bench_one(1, 640,  64,  64,  32, "unet_640_64",  true);
+    bench_one(1, 1280, 32,  32,  32, "unet_1280_32", true);
+    bench_one(2, 320,  128, 128, 32, "unet_320_128_B2", true);
+
+    if (mb_big < 300.0)
+    {
+        std::cerr << "[bench_groupnorm_mb] FAIL: multi-block BW " << mb_big
+                  << " GB/s < 300 GB/s (gate)\n";
+        return false;
+    }
+    std::cout << "[bench_groupnorm_mb] PASSED (unet_320_128 mb BW=" << mb_big
+              << " GB/s >= 300)\n";
+    return true;
 }
 
 #endif // HAVE_CUDA
@@ -490,6 +776,12 @@ int main()
     ok = dollama::test_groupnorm_affine()  && ok;
     ok = dollama::test_groupnorm_inplace() && ok;
     ok = dollama::test_groupnorm_edges()   && ok;
+    // G-4k S1a: multi-block 版 (epilogue 経路)。
+    ok = dollama::test_groupnorm_mb_parity()   && ok;
+    ok = dollama::test_groupnorm_mb_bitexact() && ok;
+    // G-4k S1b: GN+SiLU 融合版 (epilogue 経路)。
+    ok = dollama::test_groupnorm_silu_parity()   && ok;
+    ok = dollama::test_groupnorm_silu_bitexact() && ok;
 
     if (!ok)
     {
@@ -498,6 +790,11 @@ int main()
     }
 
     dollama::bench_groupnorm();
+    if (!dollama::bench_groupnorm_mb())
+    {
+        std::cerr << "[test_groupnorm] FAILED (mb bench gate)\n";
+        return 1;
+    }
 
     std::cout << "[test_groupnorm] ALL PASSED\n";
     return 0;

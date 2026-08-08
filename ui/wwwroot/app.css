@@ -1,16 +1,54 @@
 /* dollama UI — LM Studio 風ダーク 3 ペイン (左=タグ/プリセット, 中央=生成コントロール, 右=画像プレビュー) */
 
+/* 配色トークン (docs/ui-brushup-plan.md §4.1)。
+   色は必ずここを経由する — :root の外に直書きの色値を置かない
+   (ui.Tests/AppCssTokenTests.cs が機械的に検査する)。 */
 :root
 {
+    /* 面 (据え置き) */
     --bg: #14161a;
     --panel: #1c1f26;
     --panel-2: #23272f;
-    --border: #2c313b;
+
+    /* 境界は 2 段。装飾線と「触れる要素の外周」を分ける */
+    --border: #343b47;
+    --border-strong: #4a5261;
+
+    /* 文字 */
     --text: #e6e9ef;
-    --muted: #8b92a0;
+    --muted: #9aa2b1;
+
+    /* アクセント系 (accent 塗りの上の文字・弱塗り・弱枠・フォーカス輪) */
     --accent: #6ea8fe;
+    --on-accent: #0b1220;
+    --accent-weak: rgba(110, 168, 254, 0.15);
+    --accent-border: rgba(110, 168, 254, 0.4);
+    --focus-ring: rgba(110, 168, 254, 0.45);
+
+    /* 状態色 (ok / ng・ng は枠とドット用, ng-soft は本文用, ng-weak は地) */
     --ok: #3fb950;
     --ng: #f85149;
+    --ng-soft: #ffb4ae;
+    --ng-weak: rgba(248, 81, 73, 0.12);
+
+    /* 生成中オーバーレイの暗幕 (P2-2)。減光した前回画像の上でも文字が読めるようにする */
+    --overlay: rgba(0, 0, 0, 0.45);
+
+    /* 追加先 (パレットのタグが入る先) を示す左縁 (P2-6 / 課題 #9)。
+       border-left ではなく inset の box-shadow で描く — border 幅を変えると
+       レイアウトが 3px ずれるため。
+       フォーカスリング (P1-2) と box-shadow を奪い合わないよう、値は --edge に載せて
+       リング側の宣言に合成する (リングの宣言を 1 ブロックに保つ機械検査があるため)。
+       既定は no-op (--edge-off) で、追加先のフィールドだけ --edge を差し替える。 */
+    --edge: var(--edge-off);
+    --edge-off: 0 0 0 0 transparent;
+    --edge-target: inset 3px 0 0 var(--accent);
+
+    /* テレメトリのデバイス色 (§4.4-1)。4 色が並んで動く = 4 HW 協調の可視化 */
+    --dev-cpu: #6ea8fe;
+    --dev-npu: #a78bfa;
+    --dev-igpu: #5fd4c8;
+    --dev-gpu: #f0a860;
 }
 
 *
@@ -67,7 +105,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
@@ -99,7 +137,7 @@ html, body
 .lang-toggle button.on
 {
     background: var(--accent);
-    color: #0d1117;
+    color: var(--on-accent);
     font-weight: 600;
 }
 
@@ -129,6 +167,36 @@ html, body
 .conn.ok
 {
     color: var(--ok);
+}
+
+/* 未接続のときだけ出る再接続ボタン (P2-9)。押すと GET /health を 1 回だけ叩き直す。
+   従来はページリロードしか回復手段がなかった。 */
+.conn-retry
+{
+    appearance: none;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    margin-left: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.12s, color 0.12s;
+}
+
+.conn-retry:hover:not(:disabled)
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.conn-retry:disabled
+{
+    opacity: 0.6;
+    cursor: default;
 }
 
 /* ── HW テレメトリ・ミニメーター (上部バー・横並び) ── */
@@ -177,7 +245,7 @@ html, body
 {
     display: block;
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), #9d7bff);
+    background: linear-gradient(90deg, var(--accent), var(--dev-npu));
     transition: width 0.4s ease;
 }
 
@@ -187,6 +255,89 @@ html, body
     color: var(--accent);
     width: 30px;
     text-align: right;
+}
+
+/* デバイス別の色 (P1-5 / §4.4-1)。tm-item のクラスは Services/DeviceStyle.cs が決める。
+   4 色が別々に動くことで「4 つの HW が協調して働いている」が一瞥で伝わる。
+   未知のデバイスはクラスが付かず上の既定グラデへフォールバックする。 */
+.tm-cpu .tm-fill
+{
+    background: var(--dev-cpu);
+}
+
+.tm-cpu .tm-pct
+{
+    color: var(--dev-cpu);
+}
+
+.tm-npu .tm-fill
+{
+    background: var(--dev-npu);
+}
+
+.tm-npu .tm-pct
+{
+    color: var(--dev-npu);
+}
+
+.tm-igpu .tm-fill
+{
+    background: var(--dev-igpu);
+}
+
+.tm-igpu .tm-pct
+{
+    color: var(--dev-igpu);
+}
+
+.tm-gpu .tm-fill
+{
+    background: var(--dev-gpu);
+}
+
+.tm-gpu .tm-pct
+{
+    color: var(--dev-gpu);
+}
+
+/* 生成中の強調 (P2-10 / §4.4-2 / 課題 #11)。
+   Generating を title 属性 (ホバー) にしか出していなかったのをやめ、面で見せる。
+   グローは .tm-bar 側に出す — .tm-fill (子) に付けると .tm-bar の overflow: hidden で
+   クリップされて見えない。色は P1-5 のデバイス色をそのまま使い (color-mix は使わない)、
+   6px ぼかしで淡く光らせる。新トークンは足さない。 */
+.telemetry-mini.generating .tm-cpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-cpu);
+}
+
+.telemetry-mini.generating .tm-npu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-npu);
+}
+
+.telemetry-mini.generating .tm-igpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-igpu);
+}
+
+.telemetry-mini.generating .tm-gpu .tm-bar
+{
+    box-shadow: 0 0 6px var(--dev-gpu);
+}
+
+/* ブランド横の「生成中」pill (P2-10)。accent 塗り + 暗文字で、テレメトリのグローと対。
+   真実源はテレメトリ側の Generating フラグ (_busy ではない)。 */
+.gen-pill
+{
+    background: var(--accent);
+    color: var(--on-accent);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 /* ── メイン 3 ペイン (左ペイン + 中央コントロール + 右プレビュー) ── */
@@ -269,17 +420,40 @@ textarea, select, input[type="range"]
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 8px;
     font: inherit;
     resize: vertical;
 }
 
-textarea:focus, select:focus
+/* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
+/* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
+   リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。
+   .preview-save は button ではなく a[download] (P2-3) なので個別に足す — ここを
+   別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。
+   先頭の var(--edge) は追加先の左縁 (P2-6) との合成。既定は no-op なので
+   フォーカスだけのときは従来どおりリング 1 本、追加先かつフォーカス中は
+   「左縁 + リング」が同時に出る (どちらかが消えない)。 */
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .preview-save:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
+    box-shadow: var(--edge), 0 0 0 2px var(--focus-ring);
+}
+
+/* チップ入力の中身は透明な素の input なので、親 .chips のリングと二重にしない */
+.chip-entry:focus, .chip-entry:focus-visible
+{
+    outline: none;
+    box-shadow: none;
+}
+
+/* placeholder は UA 既定 (半透明) だとダーク地で読めないので明示する (P1-3) */
+::placeholder
+{
+    color: var(--muted);
+    opacity: 1;
 }
 
 /* ── 生成ボタン行 (本番 + 下書き高速プレビューの 2 ボタン横並び) ── */
@@ -294,7 +468,7 @@ textarea:focus, select:focus
     /* 2 ボタンを等幅で横並びにする */
     flex: 1;
     background: var(--accent);
-    color: #0b1220;
+    color: var(--on-accent);
     border: none;
     border-radius: 8px;
     padding: 12px;
@@ -308,7 +482,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     font-weight: 600;
     font-size: 14px;
 }
@@ -325,11 +499,22 @@ textarea:focus, select:focus
     cursor: default;
 }
 
+/* 生成ボタンが押せない理由 (P2-1 / P2-9)。押せるときは要素ごと出ないのでノイズにならない。
+   ボタン行の直下に muted で 1 行。エラー (.error) と違い「まだ操作が足りない」だけなので
+   赤系は使わない。 */
+.gen-reason
+{
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin-top: -4px;
+}
+
 .error
 {
-    background: rgba(248, 81, 73, 0.12);
+    background: var(--ng-weak);
     border: 1px solid var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 13px;
@@ -353,9 +538,39 @@ textarea:focus, select:focus
     white-space: nowrap;
 }
 
+/* ── 生成画像の保存導線 (右ペイン右上・P2-3 / 課題 #8) ──
+   `<a download href="data:image/png;base64,…">` だけで保存できるので JS interop は要らない。
+   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。 */
+.preview-save
+{
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.preview-save:hover
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 /* プレビュー枠は右ペイン (.canvas) を埋める */
 .preview
 {
+    /* position は生成中オーバーレイ (.preview-overlay) の絶対配置の基準 (P2-2) */
+    position: relative;
     flex: 1;
     width: 100%;
     height: 100%;
@@ -374,6 +589,36 @@ textarea:focus, select:focus
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+}
+
+/* 生成中は前回画像を破棄せず減光して残す (P2-2 / 課題 #6)。
+   下書き → 本番の見比べができ、毎回プレースホルダへフラッシュしない。 */
+.preview img.preview-dim
+{
+    opacity: 0.35;
+}
+
+/* 生成中オーバーレイ: スピナー + 経過秒 (P2-2 / 課題 #7)。
+   減光した前回画像の上にかぶせるので、文字が読めるよう薄い暗幕を敷く。 */
+.preview-overlay
+{
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: var(--overlay);
+}
+
+/* 経過秒 (mm:ss)。桁が揺れないよう等幅数字にする。整形は Services/ElapsedFormat.cs */
+.preview-elapsed
+{
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
 .placeholder
@@ -429,6 +674,16 @@ textarea:focus, select:focus
     gap: 8px;
 }
 
+/* 追加先がお気に入りのときは、パレット全体を面で示す (P2-6 / 課題 #9)。
+   中央フィールドは左縁で示せるが、お気に入りが追加先のときは中央のどちらでもない —
+   従来はトグル label の小さなハイライトだけだったので「今クリックするとお気に入りに入る」を
+   面 (地色 + 縁) で伝える。色は既存トークンのみ。 */
+.palette.fav-target
+{
+    background: var(--accent-weak);
+    border-color: var(--accent-border);
+}
+
 .palette-head
 {
     font-size: 13px;
@@ -456,7 +711,7 @@ textarea:focus, select:focus
     font-size: 12px;
     color: var(--muted);
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 4px;
     white-space: nowrap;
@@ -529,7 +784,7 @@ textarea:focus, select:focus
 {
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 8px;
     font-size: 12px;
@@ -547,8 +802,8 @@ textarea:focus, select:focus
 {
     display: inline-flex;
     align-items: center;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     border-radius: 999px;
     overflow: hidden;
 }
@@ -598,24 +853,18 @@ textarea:focus, select:focus
     min-width: 0;
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 8px;
     font: inherit;
     font-size: 12px;
 }
 
-.fav-entry:focus
-{
-    outline: none;
-    border-color: var(--accent);
-}
-
 .fav-plus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 0 10px;
     font: inherit;
@@ -649,7 +898,7 @@ textarea:focus, select:focus
     align-items: center;
     gap: 8px;
     background: var(--bg);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 6px;
     cursor: pointer;
@@ -705,7 +954,7 @@ textarea:focus, select:focus
     text-align: center;
     background: transparent;
     color: var(--muted);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
@@ -716,7 +965,7 @@ textarea:focus, select:focus
 .ps-del:hover
 {
     border-color: var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
 }
 
 /* ── プリセット・保存バー (中央 TagPresetField) ── */
@@ -732,7 +981,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 8px;
     font: inherit;
@@ -744,7 +993,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 10px;
     font: inherit;
@@ -776,10 +1025,21 @@ textarea:focus, select:focus
     gap: 6px;
     align-items: center;
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px;
     min-height: 38px;
+    /* 追加先の左縁 (P2-6)。既定は no-op で、下の .field.is-target が値を差し替える */
+    box-shadow: var(--edge);
+}
+
+/* 追加先 (パレットのタグが入る先) のフィールドだけ左縁を出す (P2-6 / 課題 #9)。
+   is-target は TagPresetField が親から降ろされた IsTarget で付ける —
+   追加先の真実源は Generate.razor のままで、子は判定を持たない。
+   ここで差し替えるのは変数だけなので、フォーカスリングと詳細度を争わない。 */
+.field.is-target .taginput .chips
+{
+    --edge: var(--edge-target);
 }
 
 .tag-chip
@@ -787,8 +1047,8 @@ textarea:focus, select:focus
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     color: var(--text);
     border-radius: 999px;
     padding: 2px 4px 2px 10px;
@@ -806,6 +1066,9 @@ textarea:focus, select:focus
     line-height: 1;
     padding: 0 4px;
     border-radius: 50%;
+    /* --edge は継承するので、追加先フィールド内の × ボタンのフォーカスリングに
+       左縁が載らないよう打ち消す (P2-6) */
+    --edge: var(--edge-off);
 }
 
 .chip-x:hover
@@ -829,25 +1092,84 @@ textarea:focus, select:focus
     outline: none;
 }
 
-/* Blazor 既定のエラー UI */
-#blazor-error-ui
+/* Blazor 既定のエラー UI (#blazor-error-ui) の見た目は
+   Components/Layout/MainLayout.razor.css に一本化した。
+   scoped CSS は #blazor-error-ui[b-xxxx] へ書き換わり裸のセレクタより詳細度で必ず勝つため、
+   ここに書いても死にコードになる (P1-7)。CSS 変数は DOM 継承するので scoped 側でも var() は解決する。 */
+
+/* ── LoRA 選択チップ (L-2) ─────────────────────────────
+   既存のチップ系トークンに揃える。選択中は強度スライダを添える。 */
+.lora-chips
 {
-    background: #1c1f26;
-    border-top: 1px solid var(--ng);
-    bottom: 0;
-    display: none;
-    left: 0;
-    padding: 0.6rem 1.25rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-    color: var(--text);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
 }
 
-#blazor-error-ui .dismiss
+.lora-head
 {
+    color: var(--muted);
+    font-size: 12px;
+    margin-right: 4px;
+}
+
+.lora-empty
+{
+    color: var(--muted);
+    font-size: 11px;
+}
+
+/* チップ + 強度スライダを 1 まとまりに */
+.lora-item
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* トグルチップ (palette-tag と同じ見た目・on でアクセント塗り) */
+.lora-chip
+{
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
     cursor: pointer;
-    position: absolute;
-    right: 0.75rem;
-    top: 0.5rem;
+}
+
+.lora-chip:hover
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.lora-chip.on
+{
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+}
+
+/* 選択中の強度スライダ */
+.lora-strength
+{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.lora-strength input[type="range"]
+{
+    width: 80px;
+}
+
+.lora-val
+{
+    color: var(--muted);
+    font-size: 11px;
+    min-width: 2.5em;
 }

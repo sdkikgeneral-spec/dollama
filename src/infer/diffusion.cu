@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -172,10 +173,24 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 // ----------------------------------------------------------------
 DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
                                      const std::string& vae_weights_path,
-                                     const std::string& embeds_path)
+                                     const std::string& embeds_path,
+                                     const FastConfig&  fast_cfg)
     : unet_weights_(unet_weights_path)
     , vae_weights_(vae_weights_path)
+    , fast_cfg_(fast_cfg) // FAST フラグを保持 (G-3k で attention の分岐に使用)
 {
+    // G-3k フラグ結線: fast の下で attention 高速化 (attn_fast) を有効化する単一箇所。
+    // fp8 は resolve_fast_config で fast を含意済み。fast=false (default) では何も立たない。
+    if (fast_cfg_.fast)
+    {
+        fast_cfg_.attn_fast = true;
+        // G-2k フラグ結線: fast の下で CFG batch=2 (batch2) も有効化する。
+        // default (fast=false) 経路ではこの if に入らないため batch2 は false のまま。
+        fast_cfg_.batch2 = true;
+        // G-4k フラグ結線: fast の下で epilogue 融合 (epilogue) も有効化する。
+        // default (fast=false) 経路ではこの if に入らないため epilogue は false のまま。
+        fast_cfg_.epilogue = true;
+    }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
     SafeTensors embeds(embeds_path);
     std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
@@ -210,6 +225,37 @@ DiffusionPipeline::~DiffusionPipeline()
     if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
     if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
     if (vae_weights_handle_ != nullptr)      { vae_weights_destroy(vae_weights_handle_); }
+}
+
+// ----------------------------------------------------------------
+// ランタイム LoRA (L-2)。常駐 UNet 重みへの適用時マージ / bit-exact 復元。
+// ----------------------------------------------------------------
+void DiffusionPipeline::apply_lora_file(const std::string& path, float strength)
+{
+    // LoRA safetensors をロードし、base (= unet_weights_) へ写像する (lora.hpp)。
+    SafeTensors    lora_st(path);
+    LoraLoadReport rep;
+    std::vector<LoraModule> mods = load_lora_modules(unet_weights_, lora_st, strength, &rep);
+    if (rep.te_skipped > 0)
+    {
+        // te1/te2 (テキストエンコーダ) LoRA はスコープ外 skip
+        std::cout << "[lora] skipped " << rep.te_skipped
+                  << " te1/te2 keys (UNet merge only)\n";
+    }
+    if (rep.incomplete > 0 || rep.other_keys > 0)
+    {
+        // down/up 片欠けの不完全 module / 解釈不能 key の skip 件数
+        std::cout << "[lora] skipped incomplete modules=" << rep.incomplete
+                  << " / unknown keys=" << rep.other_keys << "\n";
+    }
+    unet_apply_loras(unet_weights_handle_, mods.data(), static_cast<int>(mods.size()));
+    std::cout << "[lora] applied: " << path << " (strength=" << strength
+              << ", modules=" << rep.modules << ")\n";
+}
+
+void DiffusionPipeline::clear_loras()
+{
+    unet_clear_loras(unet_weights_handle_);
 }
 
 // ----------------------------------------------------------------
@@ -316,7 +362,9 @@ void DiffusionPipeline::generate(int                   steps,
                     d_encoder_hidden_states_,
                     d_text_embeds_,
                     d_time_ids_,
-                    d_noise_pred);
+                    d_noise_pred,
+                    fast_cfg_.attn_fast,
+                    fast_cfg_.epilogue);
 
         std::chrono::high_resolution_clock::time_point prof_h2;
         if (prof) { prof_h2 = std::chrono::high_resolution_clock::now(); }
@@ -443,6 +491,9 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
         throw std::runtime_error("DiffusionPipeline::generate_txt2img: null embedding pointer");
     }
 
+    // G-2k S3b: batch2 経路スイッチ。fast/DOLLAMA_BATCH2 で立つ (default=false)。
+    const bool use_batch2 = fast_cfg_.batch2;
+
     // --- 外部 cond / uncond 埋め込みを FP16 へ変換してデバイス常駐させる ---
     //     コンストラクタ常駐の golden 埋め込みは使わない (本 txt2img 経路)。
     __half* d_cond_ehs    = nullptr;  // [77*2048]
@@ -508,6 +559,26 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
     CUDA_CHECK(cudaMalloc(&d_noise_unc,  kLatentN * sizeof(__half)));
     CUDA_CHECK(cudaMalloc(&d_image,      kImgN    * sizeof(__half)));
 
+    // --- G-2k S3b: batch2 用の連続バッファ ([2,...]) を確保し埋め込みを束ねる ---
+    //     slice0=cond / slice1=uncond の順 (S2 テストと厳密一致)。既存の cond/uncond
+    //     デバイスバッファから DtoD で写すため、上の H2D コードは無改変で共用できる。
+    __half* d_ehs2    = nullptr;  // [2,77,2048]
+    __half* d_txt2    = nullptr;  // [2,1280]
+    __half* d_latent2 = nullptr;  // [2,4,128,128]
+    __half* d_noise2  = nullptr;  // [2,4,128,128] UNet 出力
+    if (use_batch2)
+    {
+        CUDA_CHECK(cudaMalloc(&d_ehs2,    2 * kEhsN    * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_txt2,    2 * kTxtN    * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_latent2, 2 * kLatentN * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_noise2,  2 * kLatentN * sizeof(__half)));
+        // b=0=cond / b=1=uncond の順で束ねる。
+        CUDA_CHECK(cudaMemcpy(d_ehs2,         d_cond_ehs,   kEhsN * sizeof(__half), cudaMemcpyDeviceToDevice));
+        CUDA_CHECK(cudaMemcpy(d_ehs2 + kEhsN, d_uncond_ehs, kEhsN * sizeof(__half), cudaMemcpyDeviceToDevice));
+        CUDA_CHECK(cudaMemcpy(d_txt2,         d_cond_txt,   kTxtN * sizeof(__half), cudaMemcpyDeviceToDevice));
+        CUDA_CHECK(cudaMemcpy(d_txt2 + kTxtN, d_uncond_txt, kTxtN * sizeof(__half), cudaMemcpyDeviceToDevice));
+    }
+
     std::vector<float>  scaled_host(kLatentN);
     std::vector<__half> h_latent_f16(kLatentN);
     std::vector<float>  noise_cond(kLatentN);    // D2H cond (FP32)
@@ -530,23 +601,54 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
         CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
                               kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
 
-        // UNet を cond 埋め込みで 1 回。
-        launch_unet(unet_weights_handle_,
-                    d_latent,
-                    timesteps[i],
-                    d_cond_ehs,
-                    d_cond_txt,
-                    d_time_ids,
-                    d_noise_cond);
+        if (use_batch2)
+        {
+            // G-2k S3b: cond/uncond を B=2 に束ね 1 forward で回す。
+            // 共通の d_latent を [2,...] の slice0/slice1 に複製する。
+            CUDA_CHECK(cudaMemcpy(d_latent2,            d_latent,
+                                  kLatentN * sizeof(__half), cudaMemcpyDeviceToDevice));
+            CUDA_CHECK(cudaMemcpy(d_latent2 + kLatentN, d_latent,
+                                  kLatentN * sizeof(__half), cudaMemcpyDeviceToDevice));
+            launch_unet_batched(unet_weights_handle_,
+                                2,
+                                d_latent2,
+                                timesteps[i],
+                                d_ehs2,
+                                d_txt2,
+                                d_time_ids,
+                                d_noise2,
+                                fast_cfg_.attn_fast,
+                                fast_cfg_.epilogue);
+            // 出力スライスを既存 cond/uncond バッファへ写し以降のロジックを共用。
+            CUDA_CHECK(cudaMemcpy(d_noise_cond, d_noise2,
+                                  kLatentN * sizeof(__half), cudaMemcpyDeviceToDevice));
+            CUDA_CHECK(cudaMemcpy(d_noise_unc,  d_noise2 + kLatentN,
+                                  kLatentN * sizeof(__half), cudaMemcpyDeviceToDevice));
+        }
+        else
+        {
+            // UNet を cond 埋め込みで 1 回。
+            launch_unet(unet_weights_handle_,
+                        d_latent,
+                        timesteps[i],
+                        d_cond_ehs,
+                        d_cond_txt,
+                        d_time_ids,
+                        d_noise_cond,
+                        fast_cfg_.attn_fast,
+                        fast_cfg_.epilogue);
 
-        // UNet を uncond 埋め込みで 1 回 (同じ d_latent)。
-        launch_unet(unet_weights_handle_,
-                    d_latent,
-                    timesteps[i],
-                    d_uncond_ehs,
-                    d_uncond_txt,
-                    d_time_ids,
-                    d_noise_unc);
+            // UNet を uncond 埋め込みで 1 回 (同じ d_latent)。
+            launch_unet(unet_weights_handle_,
+                        d_latent,
+                        timesteps[i],
+                        d_uncond_ehs,
+                        d_uncond_txt,
+                        d_time_ids,
+                        d_noise_unc,
+                        fast_cfg_.attn_fast,
+                        fast_cfg_.epilogue);
+        }
 
         // D2H: cond / uncond noise_pred を FP32 へ。
         CUDA_CHECK(cudaMemcpy(h_nc_f16.data(), d_noise_cond,
@@ -601,6 +703,15 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
     CUDA_CHECK(cudaFree(d_uncond_ehs));
     CUDA_CHECK(cudaFree(d_uncond_txt));
     CUDA_CHECK(cudaFree(d_time_ids));
+
+    // G-2k S3b: batch2 で確保した連続バッファのみ解放 (スライスは二重 free しない)。
+    if (use_batch2)
+    {
+        CUDA_CHECK(cudaFree(d_ehs2));
+        CUDA_CHECK(cudaFree(d_txt2));
+        CUDA_CHECK(cudaFree(d_latent2));
+        CUDA_CHECK(cudaFree(d_noise2));
+    }
 }
 
 } // namespace dollama

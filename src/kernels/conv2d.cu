@@ -18,9 +18,12 @@
 //     A=weight[Cout,K] row-major, B=col/in[K,N] row-major, C=out[Cout,N] row-major。
 //   - GEMM は bias を扱えない (alpha/beta のみ) ので、conv の bias は GEMM 後に
 //     行 (= co) ごとブロードキャスト加算する専用カーネルで足す。
-//   - N>1 (バッチ) は batch ループで 1 枚ずつ GEMM (im2col も 1 枚ずつ)。SDXL は
-//     UNet/VAE とも N=1 なのでループは 1 回。テストの N=2 ケースは direct に落とす
-//     (バッチ + 多チャネル + dilation など direct を確実に通す形状のため)。
+//   - N>1 (バッチ) は per-n オフセットの batch ループで 1 枚ずつ GEMM 経路を回す
+//     (G-2k S1: CFG cond/uncond の B=2 束ね対応)。in を +n*Cin*H*W、out を
+//     +n*Cout*Hout*Wout でずらし、N==1 GEMM ヘルパ (im2col→GEMM→bias) を N 回呼ぶ。
+//     各サンプルは独立ゆえ K-loop 順・蓄積順は N==1 と不変 → ビット一致が狙える。
+//     SDXL 既定は UNet/VAE とも N=1 なのでループは 1 回で従来経路そのまま。GEMM の
+//     下限 (Cout/HW/K>=16) を満たさない N>1 は従来どおり direct に落とす。
 //   - im2col 中間バッファ VRAM: Cin*KH*KW * Hout*Wout * 2byte。VAE C128 512²(3x3) で
 //     約 600MB。重み 5.1GB 常駐 + 中間群があるため、上限 (IM2COL_TILE_BYTES) を超える
 //     場合は Hout を行帯 (タイル) に分割し、帯ごとに im2col→GEMM して OOM を避ける。
@@ -36,6 +39,7 @@
 //     チャネル行ごとに散布コピーする。帯が 1 つ (= 分割なし) のときは帯幅が
 //     Hout*Wout に一致するので、d_out へ直接 GEMM してコピーを省く。
 #include "kernels/conv2d.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/gemm.cuh"
 #include "kernels/utils.cuh"
 
@@ -361,10 +365,17 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
     // 帯分割が発生するか (= tile_rows が Hout 未満)。
     const bool banded = (tile_rows < Hout);
 
+    // G-8k S1b: 中間バッファ (d_col / d_out_band) の cudaMalloc/cudaFree を
+    // デバイスアリーナの bump 確保へ置換する (配管のみ・数値は完全不変)。
+    //   - RAII: 関数スコープ脱出 (早期 return / 例外) で必ず rewind される。
+    //   - DOLLAMA_POOL=0 なら素の cudaMalloc/cudaFree に完全フォールバック (旧経路)。
+    // 数値的な正当性: d_col は帯ごとに im2col が K*Ncol 要素を全書き、d_out_band は
+    // GEMM が beta=0 で Cout*Ncol 要素を全書きするため、再利用領域の残留値は読まれない。
+    DeviceArenaScope arena(DeviceArenaId::UNet);
+
     // 帯 col バッファ確保 (最大帯サイズ分)。
     const long col_elems = static_cast<long>(K) * tile_rows * Wout;
-    __half* d_col = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_col, static_cast<size_t>(col_elems) * sizeof(__half)));
+    __half* d_col = arena.alloc<__half>(static_cast<size_t>(col_elems));
 
     // 帯分割時のみ、GEMM 出力先の連続バッファ (帯幅を leading dim とする) を確保。
     // 分割なしのときは d_out へ直接書ける (帯幅 = 全体行 stride のため)。
@@ -372,7 +383,7 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
     if (banded)
     {
         const long band_out_elems = static_cast<long>(Cout) * tile_rows * Wout;
-        CUDA_CHECK(cudaMalloc(&d_out_band, static_cast<size_t>(band_out_elems) * sizeof(__half)));
+        d_out_band = arena.alloc<__half>(static_cast<size_t>(band_out_elems));
     }
 
     for (int ho_base = 0; ho_base < Hout; ho_base += tile_rows)
@@ -414,11 +425,7 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
         CUDA_CHECK_KERNEL();
     }
 
-    CUDA_CHECK(cudaFree(d_col));
-    if (d_out_band != nullptr)
-    {
-        CUDA_CHECK(cudaFree(d_out_band));
-    }
+    // d_col / d_out_band の解放は arena のデストラクタ (rewind) が行う。
 }
 
 // ----------------------------------------------------------------
@@ -469,10 +476,73 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
         return;
     }
 
-    // フォールバック: 自作 direct conv (小行列 / N>1 / 小チャネルなど)。
+    // ----------------------------------------------------------------
+    // N>1 (CFG batch 等) で GEMM 経路が使える形状なら、per-n オフセットの
+    // バッチループで N==1 GEMM ヘルパを N 回呼ぶ (G-2k S1)。
+    //   入力 d_in + n*Cin*H*W / 出力 d_out + n*Cout*Hout*Wout を n ごとにずらす。
+    //   各サンプルは独立で K-loop 順・蓄積順は N==1 と完全同一 → ビット一致が狙える。
+    //   use_gemm_path(1,...) を渡すことで N==1 の形状下限判定をそのまま再利用する
+    //   (上の N==1 既存分岐は 1 バイトも変更していない。ここは N>1 の追加枝のみ)。
+    // ----------------------------------------------------------------
+    if (N > 1 && use_gemm_path(1, Cin, Cout, KH, KW, Hout, Wout))
+    {
+        const long in_stride  = static_cast<long>(Cin) * H * W;
+        const long out_stride = static_cast<long>(Cout) * Hout * Wout;
+        for (int n = 0; n < N; ++n)
+        {
+            const __half* in_n  = d_in + static_cast<long>(n) * in_stride;
+            __half*       out_n = d_out + static_cast<long>(n) * out_stride;
+            if (is_1x1)
+            {
+                launch_conv2d_1x1_gemm(in_n, d_weight, d_bias, out_n, Cin, H, W, Cout);
+            }
+            else
+            {
+                launch_conv2d_im2col_gemm(in_n, d_weight, d_bias, out_n, Cin, H, W, Cout,
+                                          KH, KW, Hout, Wout, stride_h, stride_w,
+                                          pad_h, pad_w, dilation_h, dilation_w);
+            }
+        }
+        return;
+    }
+
+    // フォールバック: 自作 direct conv (小行列 / N>1 で GEMM 下限割れ / 小チャネルなど)。
     launch_conv2d_direct(d_in, d_weight, d_bias, d_out, N, Cin, H, W, Cout, KH, KW,
                          Hout, Wout, stride_h, stride_w, pad_h, pad_w,
                          dilation_h, dilation_w);
+}
+
+// ----------------------------------------------------------------
+// G-4k S2: GEMM 経路 (bias 2 段丸め) 保証判定 (宣言コメントは conv2d.cuh 参照)。
+//   launch_conv2d の経路選択ロジックを 1:1 でなぞる (本体は一切変更しない純追加)。
+//   ここが false の shape に bias 後段融合を当てると direct 経路の単一丸めと食い違い、
+//   静かに bit が崩れる — 呼び側 (resnet_block epilogue) の必須ガード。
+// ----------------------------------------------------------------
+bool conv2d_uses_gemm_bias_path(int N, int Cin, int H, int W, int Cout, int KH, int KW,
+                                int stride_h, int stride_w, int pad_h, int pad_w,
+                                int dilation_h, int dilation_w)
+{
+    // launch_conv2d の early return と同じ不正入力は「GEMM 経路ではない」扱い。
+    if (N <= 0 || Cin <= 0 || H <= 0 || W <= 0 || Cout <= 0 || KH <= 0 || KW <= 0)
+    {
+        return false;
+    }
+    if (stride_h <= 0 || stride_w <= 0 || dilation_h <= 0 || dilation_w <= 0)
+    {
+        return false;
+    }
+    if (pad_h < 0 || pad_w < 0)
+    {
+        return false;
+    }
+    const int Hout = conv_out_dim(H, pad_h, dilation_h, KH, stride_h);
+    const int Wout = conv_out_dim(W, pad_w, dilation_w, KW, stride_w);
+    if (Hout <= 0 || Wout <= 0)
+    {
+        return false;
+    }
+    // N==1 も N>1 per-n ループも判定は use_gemm_path(1, ...) に帰着する。
+    return use_gemm_path(1, Cin, Cout, KH, KW, Hout, Wout);
 }
 
 

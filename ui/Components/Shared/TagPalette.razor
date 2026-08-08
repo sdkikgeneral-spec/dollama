@@ -10,7 +10,9 @@
 @inject FavoriteTagStore Favorites
 @inject TagLabels Labels
 
-<div class="palette">
+@* 追加先がお気に入りのときはパレット全体に面 (地色 + 縁) を出す (P2-6 / 課題 #9)。
+   Target は親が真実源なので、ここは受け取った値を見てクラスを付けるだけ。 *@
+<div class="palette @(Target == "favorites" ? "fav-target" : null)">
     <div class="palette-head">タグパレット</div>
 
     <!-- 追加先トグル (◉プロンプト ○ネガティブ ○お気に入り)。Target を参照してハイライト。
@@ -124,6 +126,13 @@
     // 入力欄のタグをお気に入りに追加する (Enter / + ボタン)。手打ち経路は従来どおり。
     private async Task OnFavKeyDown(KeyboardEventArgs e)
     {
+        // IME ガード (P2-5)。変換中/変換確定の Enter は key="Process" として来るので捨てる。
+        // これを見ないと未変換ローマ字がお気に入りに登録される。TagInput と同じ扱い。
+        if (e.Key == "Process")
+        {
+            return;
+        }
+
         if (e.Key == "Enter")
         {
             await AddFavorite();

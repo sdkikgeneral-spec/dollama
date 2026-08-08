@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・拡散経路へ運ぶだけ)
+
 namespace dollama
 {
 
@@ -41,10 +43,26 @@ struct BackendInfo
     bool        needs_t5          = false;
 };
 
+// ランタイム LoRA (L-2) のリクエスト DTO (純 cpp・CUDA/OV 型なし)。
+//   name     : LoRA 識別名。backend が DOLLAMA_LORA_DIR (既定 models/loras) 配下の
+//              <name>.safetensors へ解決する。
+//   strength : 適用強度 (scale = strength * alpha / rank)。
+struct LoraRequest
+{
+    std::string name;
+    float       strength = 1.0f;
+};
+
 // 拡散 backend の実行 interface。実体はアーキごとに (sdxl_backend.hpp 等で) 実装する。
 struct IDiffusionBackend
 {
     virtual ~IDiffusionBackend() = default;
+
+    // ランタイム LoRA (L-2): 生成前に常駐重みへマージ / 生成後に復元する。
+    //   default no-op (sd35 / stub は無改修で LoRA 無効)。SDXL が override する。
+    //   name が解決できない場合は std::invalid_argument を投げる (HTTP 層が 4xx に変換)。
+    virtual void apply_loras(const std::vector<LoraRequest>& reqs) { (void)reqs; }
+    virtual void clear_loras() {}
 
     // prompt / negative から 1 枚生成し RGB8 を返す。
     //   prompt   : ポジティブプロンプト。
@@ -73,6 +91,7 @@ struct IDiffusionBackend
 //   unet/vae/embeds : 拡散重み (SDXL が使う)。
 //   tok_l/g・enc_l/g・tok_dll : OV text encoder アセット (SDXL が使う)。
 //   device_l/g   : text encoder の実行デバイス ("NPU" / "CPU" 等)。
+//   fast_cfg     : FAST モードフラグ (G-0b)。全 default false = 現行挙動。拡散経路へ運ぶだけ。
 struct BackendConfig
 {
     std::string backend_name;
@@ -87,6 +106,7 @@ struct BackendConfig
     std::string tok_dll;
     std::string device_l;
     std::string device_g;
+    FastConfig  fast_cfg;
 };
 
 // backend_name に対応する IDiffusionBackend を構築する (registry factory)。

@@ -26,6 +26,24 @@ public sealed class GenerationRequest
     // C++ 側は b64_json のみ対応
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "b64_json";
+
+    // ランタイム LoRA 指定 (L-2)。空/未選択のときは null にして "loras" キー自体を
+    // 出さない (WhenWritingNull)。これにより従来経路 (LoRA なし生成) は bit-exact 維持。
+    [JsonPropertyName("loras")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<LoraSpec>? Loras { get; set; }
+}
+
+// LoRA 1 件の指定。src/server/api.cpp の loras:[{name,strength}] に厳密対応。
+// C# の PascalCase 既定に流されないよう JsonPropertyName を明示する (snake_case 契約)。
+public sealed class LoraSpec
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    // 強度。C++ 側既定は 1.0。UI では 0.0–1.5 に制約する (UI 側の安全弁)。
+    [JsonPropertyName("strength")]
+    public float Strength { get; set; } = 1.0f;
 }
 
 // レスポンス { "created": <unix秒>, "data": [ { "b64_json": "..." } ] }

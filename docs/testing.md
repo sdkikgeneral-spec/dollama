@@ -294,6 +294,51 @@ affine gamma/beta はチャネルごと [C] (PyTorch 仕様)。1 グループ=1 
 
 ---
 
+## UI テスト (Blazor Server・meson の外)
+
+`ui/` は C++ 研究コアとは別プロセス・別デプロイの「配管」なので、テストも meson ではなく
+.NET のテストランナーで回す。C++ 側 (`src/`) には一切依存しない。
+
+```bash
+# UI テスト全件実行 (リポジトリルートから)
+dotnet test ui.Tests/Dollama.Ui.Tests.csproj
+
+# ビルドのみ
+dotnet build ui/Dollama.Ui.csproj
+```
+
+### `ui.Tests` (C#/xUnit)
+
+方針: **依存追加は最小限** (bUnit は入れない)。razor のレンダリングを組むのではなく、
+**ロジックを純クラスへ切り出して**そこを検証する (`DraftPreview` が手本)。
+CSS/razor は「壊れると気づきにくい性質」だけをテキスト検査で機械的に固定する。
+
+| ファイル | 対象 | 内容 |
+|---|---|---|
+| `DraftPreviewTests.cs` | `Services/DraftPreview.cs` | 下書きモードの送信サイズ決定 (幅>768 は 768² へ・768 以下は据え置き・パース不能/空は 768²・例外を投げない) |
+| `TagCommitTests.cs` | `Services/TagCommit.cs` | チップ入力の未確定テキスト (draft) → タグ列の確定規則: `Normalize` (trim/小文字寄せ・null 安全・語中の空白は保持)・`Split` (カンマ展開・空除去・入力内重複を先勝ちで除去・順序保持)・`Merge` (**常に新インスタンス**を返し `current` を Mutate しない・重複判定は正規化後だが既存表記は温存) |
+| `GenerateGateTests.cs` | `Services/GenerateGate.cs` | 生成ボタンの活性条件と理由テキスト: **16 組合せ全数** (busy × connected × タグ 0/1 × draft 空)・理由の優先順位 (busy > 未接続 > プロンプト空)・**「draft のみでもタグ 0 で enabled」** (ここを塞ぐと生成前確定に永久に入れない)・タグ数の境界 (負値は 0 扱い) |
+| `ElapsedFormatTests.cs` | `Services/ElapsedFormat.cs` | 生成中オーバーレイの経過秒 `TimeSpan → mm:ss`: 端数切り捨て (12.9s → `00:12`)・60 分超も分として伸びる (`61:01`)・**100 分以上は `99:59` で頭打ち** (`TimeSpan.MaxValue` でも落ちない)・負値は `00:00`・常に 5 文字で秒欄は 0–59・カルチャ非依存・単調非減少。**タイマー本体 (PeriodicTimer) はテスト対象外** |
+| `DownloadNameTests.cs` | `Services/DownloadName.cs` | 「PNG 保存」のファイル名 `dollama_{yyyyMMdd_HHmmss}_{size}.png`: size の正規化 (`1024X1024`/空白入り)・読めない size は `unknown`・**パス区切りと `Path.GetInvalidFileNameChars()` が絶対に混入しない** (`../../etc/passwd` 等)・出力は常に `[A-Za-z0-9_.]+`・日時のカルチャ非依存 (仏暦/ヒジュラ暦でも不変)・例外を投げない |
+| `PresetSaveMessageTests.cs` | `Services/PresetSaveMessage.cs` (+ `TagPresetField.razor`) | プリセット保存後の一行メッセージ: **4 通り全数** (同名上書き × サムネ有無)・**上書きとそうでない文言が常に区別できる** (「黙って上書き」への退化検知)・名前の trim と「」囲み (語中の空白は保持・日本語/記号はそのまま)・空/null でも落ちない・形式の不変条件 (「」1 組・「保存しました」で終わる)・カルチャ非依存。加えて呼び出し側のテキスト検査 (保存バーの条件が `Tags.Count > 0` / 同名判定が `PresetStore.All(kind)` 読みだけ = store 不可侵) |
+| `PresetStoreTests.cs` | `Services/PresetStore.cs` | presets.json の保存/削除・サムネ (ImageSharp で 128px 上限) の生成と削除・`thumbnailPng == null` で既存温存・サムネ無しレガシー JSON の後方互換・危険な名前でも `thumbs/` 配下に収まる・日本語名の保持 |
+| `FavoriteTagStoreTests.cs` | `Services/FavoriteTagStore.cs` | favorites.json の追加/削除/重複排除・アトミック書込・壊れ JSON 耐性 |
+| `TagPaletteCatalogTests.cs` | `Services/TagPaletteCatalog.cs` | tag-palette.json の読込 (不在/壊れで空カタログ・起動を止めない) |
+| `TagLabelsTests.cs` | `Services/TagLabels.cs` | 英語タグ → 日本語ラベル写像 (未登録は英語フォールバック・表示専用で内部値は不変) |
+| `LoraCatalogTests.cs` | `Services/LoraCatalog.cs`, `Services/Dtos.cs` | loras.json の読込 (不在/壊れで空・strength 既定 1.0)・生成リクエスト JSON の snake_case 出力 (未選択なら `loras` キーを出さない) |
+| `DeviceStyleTests.cs` | `Services/DeviceStyle.cs` | テレメトリのデバイス名 → CSS クラス (`tm-cpu`/`tm-npu`/`tm-igpu`/`tm-gpu`)・大小文字非依存・未知/null/空は `""` で既定グラデへフォールバック |
+| `AppCssTokenTests.cs` | `wwwroot/app.css` + scoped CSS + `Generate.razor` / `TagPresetField.razor` / `TagPalette.razor` | 配色トークン層の回帰止め: `:root` のトークン定義・**WCAG 相対輝度で計算したコントラスト下限** (hex 完全一致では検査しない)・`:root` 外に直書き色ゼロ・`var()` 未定義ゼロ・フォーカス統一リングのセレクタ・`::placeholder`・デバイス色・エラー UI/再接続モーダルの P1-7 回帰止め (Blazor JS 契約の id/class が残っていること)。**P2 バッチ C 追加**: 追加先の左縁が inset の box-shadow で border 幅を動かさないこと・フォーカスリングとの合成形 (`var(--edge), 0 0 0 2px var(--focus-ring)`)・`.chip-x` での `--edge` 打ち消し・`IsTarget` が親から降りていること・パレットの favorites 面表示・生成中グローが `.tm-bar` 側 (`overflow: hidden` クリップの回帰止め)・「生成中」pill が accent 塗りでテレメトリ `Generating` 駆動であること |
+
+**最終件数: 241 件** (2026-08-08 / P2 バッチ C `feat/ui-p2-polish` 時点。P1 の 91 件 +
+バッチ A の `TagCommitTests` 20 + `GenerateGateTests` 24 = 135 件 +
+バッチ B の `ElapsedFormatTests` 31 + `DownloadNameTests` 38 = 204 件 +
+バッチ C の `PresetSaveMessageTests` 28 + `AppCssTokenTests` 追記 9)。
+
+設計の出典は `docs/ui-brushup-plan.md` (§4.1 トークン改訂表 / §5 実装バックログ / §7 検証)。
+ブラウザ操作と IME は自動テストの対象外 — §7「手動」チェックリストで担保する。
+
+---
+
 ## テストファイルの追加方法
 
 ### 1. テストファイルを作成

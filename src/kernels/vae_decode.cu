@@ -177,6 +177,27 @@ static void launch_add_bias_sc(__half* d_x, const __half* d_bias, int S, int C)
 }
 
 // ----------------------------------------------------------------
+// ODR 注意 (T1b / C0 修正): 以下は本 TU (translation unit) ローカルの実装型で、
+// 必ず匿名 namespace の中に置くこと。外に出すと ODR 違反で実行時に落ちる。
+//
+//   機序: unet.cu と vae_decode.cu は同名の DeviceWeights / Scratch を
+//   それぞれ独自レイアウトで定義している。namespace dollama 直下 (外部リンケージ)
+//   に置くと、暗黙 inline のデストラクタが COMDAT 弱シンボルとして出力され、
+//   リンカが同名 dtor のうち「片方だけ」を選んで両 TU の全 call site に適用する。
+//   どちらが勝つかはリンク単位ごとに変わるため、あるバイナリでは 0xC0000005
+//   (アクセス違反)、別のバイナリでは単なるメモリリークとして現れる。
+//
+//   発火点: L-2 ランタイム LoRA で unet 側 DeviceWeights にだけ 4 メンバ目
+//   std::set<std::string> patched_ を足したことでレイアウトが決定的にずれ、
+//   ~DiffusionPipeline (VAE ハンドルと UNet ハンドルが同居して破棄される経路) で
+//   AV が顕在化した。Scratch も ptrs_ が両方先頭なので現状は無症状なだけの同型の地雷。
+//
+//   よって「他 TU から参照されていないから外でもよい」ではなく、参照されていない
+//   からこそ匿名 namespace が正解。善意で外に出すと再発する。
+// ----------------------------------------------------------------
+namespace
+{
+// ----------------------------------------------------------------
 // 重み管理: SafeTensors から FP16 テンソルを GPU へアップロードし、
 // デバイスポインタを名前で引けるようにする小ヘルパ。
 // vae_weights は全テンソル FP16 なので raw bytes をそのまま転送する。
@@ -287,6 +308,7 @@ public:
 private:
     std::vector<float*> ptrs_;
 };
+} // namespace (匿名): TU ローカル型 DeviceWeights / Scratch / Scratch32 ここまで
 
 // ----------------------------------------------------------------
 // FP32 中間バリアント (up_block の高振幅段専用)

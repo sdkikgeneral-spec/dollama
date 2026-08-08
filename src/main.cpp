@@ -128,6 +128,8 @@ int main(int argc, char** argv)
     int width = 1024;
     int height = 1024;
     bool no_matting = false;       // M-6: --no-matting でマッティングを切る (既定 ON)
+    bool fast_flag = false;        // G-0b: --fast で FAST モード (既定 OFF・現行挙動)
+    bool fp8_flag = false;         // G-0b: --fp8 は fast を含意 (FP8 単独無効)
     std::string prompt;            // 指定かつ --http 無し → CLI 生成モード
     std::string negative;          // 既定 ""
     std::string out_path = "out.png";
@@ -194,14 +196,28 @@ int main(int argc, char** argv)
         {
             no_matting = true;
         }
+        else if (a == "--fast")
+        {
+            fast_flag = true;
+        }
+        else if (a == "--fp8")
+        {
+            fp8_flag = true;
+        }
     }
+
+    // G-0b: CLI 由来の FAST フラグ集合を組む (env との OR / fp8→fast 含意は
+    //   build_image_generator 内の resolve_fast_config が適用する)。
+    dollama::FastConfig fast_cli;
+    fast_cli.fast = fast_flag;
+    fast_cli.fp8  = fp8_flag;
 
     // モード分岐: --http 最優先 → 次に --prompt あれば CLI 生成 → どちらも無ければ device check。
     if (http_mode)
     {
         // 生成器を 3 段フォールバックで構築 (--http / CLI 共有のヘルパ)。
         std::unique_ptr<dollama::IImageGenerator> gen =
-            dollama::build_image_generator(std::cout);
+            dollama::build_image_generator(std::cout, fast_cli);
 
         std::cout << "  defaults: steps=" << steps
                   << " size=" << width << "x" << height << "\n";
@@ -215,7 +231,7 @@ int main(int argc, char** argv)
         std::cout << "  prompt='" << prompt << "' negative='" << negative << "'\n";
 
         std::unique_ptr<dollama::IImageGenerator> gen =
-            dollama::build_image_generator(std::cout);
+            dollama::build_image_generator(std::cout, fast_cli);
 
         dollama::GenRequest req{prompt, negative, 1, steps, width, height};
         // 集成初期化に matting を足すと並びがずれるため代入で設定する。

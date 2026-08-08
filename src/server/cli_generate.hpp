@@ -96,8 +96,13 @@ inline std::string resolve_path(const char* env_name, const std::string& fallbac
 // 画像生成器を 3 段フォールバックで構築する (HTTP / CLI 共有)。
 //   log: 各段の選択を出力するストリーム (HTTP は std::cout / CLI も std::cout)。
 //   ログ文言・段順・条件は従来 HTTP DI と bitwise 等価。
-inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
+inline std::unique_ptr<IImageGenerator> build_image_generator(
+    std::ostream& log, const FastConfig& cli_fast = FastConfig{})
 {
+    // G-0b: env (DOLLAMA_FAST/DOLLAMA_FP8) と CLI 由来フラグを OR 合成し fp8→fast を適用。
+    //   default (全 off) は現行挙動そのまま。fast 分岐はこの Pkg では一切足さない。
+    const FastConfig fast_cfg = resolve_fast_config(cli_fast);
+    (void)fast_cfg; // 段1 (OV&&CUDA) 以外では未使用。段2/3 は fast 非対象。
     // 重み/golden パスを解決 (env 変数で上書き可。既定は test data パス)。
     // 既定は src/tests/data。本番の重み配置先が決まったら DEFAULT を差し替える。
     const std::string unet_w =
@@ -165,6 +170,7 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(std::ostream& log)
                 cfg.tok_dll      = tok_dll;
                 cfg.device_l     = device;
                 cfg.device_g     = device;
+                cfg.fast_cfg     = fast_cfg; // G-0b: 拡散経路へ運ぶだけ
                 return cfg;
             };
 

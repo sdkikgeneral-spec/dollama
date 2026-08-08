@@ -4,6 +4,7 @@
 // 2 用途 (rowvec / channel) を CPU 参照と突合。加算のみなので固定 tol。
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <random>
 #include <vector>
@@ -11,6 +12,7 @@
 #ifdef HAVE_CUDA
 #include <cuda_fp16.h>
 #include "kernels/bias_add.cuh"
+#include "kernels/elementwise.cuh"   // launch_add (P2 参照 2 パスの段2)
 #include "kernels/utils.cuh"
 #endif
 
@@ -360,6 +362,162 @@ static void bench_bias_add()
     bench_rowvec(4096, 1280, "unet_4096x1280");
 }
 
+// ================================================================
+// G-4k S2: conv 後段融合カーネル (P1 conv_bias_biasch / P2 conv_bias_residual) の
+//   BIT-EXACT ゲート。参照は「GEMM 経路と同じ 2 段丸め列」の 2 パスを GPU で組む:
+//     段1 (共通): conv_bias_add_rows 相当 = launch_bias_add_channel(conv, convbias)
+//                 (どちらも f2h(h2f(a)+h2f(b)) の単発丸めで同一)
+//     段2 P1    : per-b launch_bias_add_channel(・, tproj+b*C)  (unet default 経路と同一)
+//     段2 P2    : launch_add(・, residual)
+//   融合出力と参照を生 half バイト列 memcmp で突合する (tol なし)。
+//   ※ direct 経路の単一丸め (f2h(acc+h2f(bias))) を参照にしてはいけない —
+//     融合は GEMM 経路専用 (unet 側は conv2d_uses_gemm_bias_path でガード)。
+// ================================================================
+
+// デバイスへ half ベクタを載せる小物。
+static __half* to_device(const std::vector<__half>& h)
+{
+    __half* d = nullptr;
+    CUDA_CHECK(cudaMalloc(&d, h.size() * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d, h.data(), h.size() * sizeof(__half), cudaMemcpyHostToDevice));
+    return d;
+}
+
+// デバイスから half ベクタを回収する小物。
+static std::vector<__half> to_host(const __half* d, size_t n)
+{
+    std::vector<__half> h(n);
+    CUDA_CHECK(cudaMemcpy(h.data(), d, n * sizeof(__half), cudaMemcpyDeviceToHost));
+    return h;
+}
+
+// half ベクタの生バイト一致 (BIT-EXACT) 判定。
+static bool bytes_equal(const std::vector<__half>& a, const std::vector<__half>& b)
+{
+    return a.size() == b.size()
+        && std::memcmp(a.data(), b.data(), a.size() * sizeof(__half)) == 0;
+}
+
+// 1 形状分の P1/P2 BIT-EXACT + 3-run 決定性を検証する。
+static bool test_fused_shape(int B, int C, int H, int W)
+{
+    const int    HW    = H * W;
+    const size_t total = static_cast<size_t>(B) * C * HW;
+
+    // 乱数入力 (conv 出力相当 / conv bias / time-bias / residual)。
+    HalfBuffer conv = make_half(static_cast<int>(total), 9100u + static_cast<unsigned>(C));
+    HalfBuffer cb   = make_half(C, 9200u + static_cast<unsigned>(C), -2.0f, 2.0f);
+    HalfBuffer tp   = make_half(B * C, 9300u + static_cast<unsigned>(C), -2.0f, 2.0f);
+    HalfBuffer res  = make_half(static_cast<int>(total), 9400u + static_cast<unsigned>(C));
+
+    __half* d_conv = to_device(conv.h);
+    __half* d_cb   = to_device(cb.h);
+    __half* d_tp   = to_device(tp.h);
+    __half* d_res  = to_device(res.h);
+    __half* d_ref  = nullptr;
+    __half* d_out  = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_ref, total * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_out, total * sizeof(__half)));
+
+    bool ok = true;
+
+    // ---- P1: conv bias + per-(n,c) time-bias ----
+    // 参照 2 パス (GEMM 経路の丸め列): 段1 = conv_bias_add_rows 相当、段2 = per-b channel add。
+    launch_bias_add_channel(d_conv, d_cb, d_ref, B, C, H, W);
+    for (int b = 0; b < B; ++b)
+    {
+        launch_bias_add_channel(d_ref + static_cast<size_t>(b) * C * HW,
+                                d_tp + static_cast<size_t>(b) * C,
+                                d_ref + static_cast<size_t>(b) * C * HW, 1, C, H, W);
+    }
+    std::vector<__half> ref1 = to_host(d_ref, total);
+
+    // 融合 1 発 + 3-run 決定性。
+    std::vector<__half> runs1[3];
+    for (int r = 0; r < 3; ++r)
+    {
+        launch_conv_bias_biasch(d_conv, d_cb, d_tp, d_out, B, C, H, W);
+        runs1[r] = to_host(d_out, total);
+    }
+    if (!bytes_equal(runs1[0], ref1))
+    {
+        std::cerr << "[test_fused] P1 BIT-EXACT FAIL B=" << B << " C=" << C
+                  << " HW=" << H << "x" << W << "\n";
+        ok = false;
+    }
+    if (!bytes_equal(runs1[0], runs1[1]) || !bytes_equal(runs1[0], runs1[2]))
+    {
+        std::cerr << "[test_fused] P1 3-run 決定性 FAIL B=" << B << " C=" << C << "\n";
+        ok = false;
+    }
+
+    // ---- P2: conv bias + residual ----
+    // 参照 2 パス: 段1 = conv_bias_add_rows 相当、段2 = add_fp16 (launch_add)。
+    launch_bias_add_channel(d_conv, d_cb, d_ref, B, C, H, W);
+    launch_add(d_ref, d_res, d_ref, static_cast<int>(total));
+    std::vector<__half> ref2 = to_host(d_ref, total);
+
+    std::vector<__half> runs2[3];
+    for (int r = 0; r < 3; ++r)
+    {
+        launch_conv_bias_residual(d_conv, d_cb, d_res, d_out, B, C, H, W);
+        runs2[r] = to_host(d_out, total);
+    }
+    if (!bytes_equal(runs2[0], ref2))
+    {
+        std::cerr << "[test_fused] P2 BIT-EXACT FAIL B=" << B << " C=" << C
+                  << " HW=" << H << "x" << W << "\n";
+        ok = false;
+    }
+    if (!bytes_equal(runs2[0], runs2[1]) || !bytes_equal(runs2[0], runs2[2]))
+    {
+        std::cerr << "[test_fused] P2 3-run 決定性 FAIL B=" << B << " C=" << C << "\n";
+        ok = false;
+    }
+
+    // in-place (d_conv==d_out) も P1 で 1 点確認 (規約: in-place 安全)。
+    launch_conv_bias_biasch(d_conv, d_cb, d_tp, d_conv, B, C, H, W);
+    std::vector<__half> ip = to_host(d_conv, total);
+    if (!bytes_equal(ip, ref1))
+    {
+        std::cerr << "[test_fused] P1 in-place FAIL B=" << B << " C=" << C << "\n";
+        ok = false;
+    }
+
+    if (ok)
+    {
+        std::cout << "[test_fused] B=" << B << " C=" << C << " HW=" << H << "x" << W
+                  << " P1/P2 BIT-EXACT + 3-run PASSED\n";
+    }
+
+    CUDA_CHECK(cudaFree(d_conv));
+    CUDA_CHECK(cudaFree(d_cb));
+    CUDA_CHECK(cudaFree(d_tp));
+    CUDA_CHECK(cudaFree(d_res));
+    CUDA_CHECK(cudaFree(d_ref));
+    CUDA_CHECK(cudaFree(d_out));
+    return ok;
+}
+
+// resnet 実形状 3 種 × B={1,2} = 計 6 形状。
+static bool test_fused_all()
+{
+    bool ok = true;
+    const int shapes[3][3] = {
+        {320, 128, 128},
+        {640, 64, 64},
+        {1280, 32, 32},
+    };
+    for (int b = 1; b <= 2; ++b)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            ok = test_fused_shape(b, shapes[i][0], shapes[i][1], shapes[i][2]) && ok;
+        }
+    }
+    return ok;
+}
+
 #endif // HAVE_CUDA
 
 } // namespace dollama
@@ -375,6 +533,7 @@ int main()
     ok = dollama::test_rowvec_random()  && ok;
     ok = dollama::test_channel_known()  && ok;
     ok = dollama::test_channel_random() && ok;
+    ok = dollama::test_fused_all()      && ok;
 
     if (!ok)
     {

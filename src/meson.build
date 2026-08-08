@@ -57,11 +57,13 @@ diffusion_cu_sources = [
   'infer/unet.cu',
   'kernels/vae_decode.cu',
   'kernels/conv2d.cu',
+  'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
   'kernels/groupnorm.cu',
   'kernels/layernorm.cu',
   'kernels/activation.cu',
   'kernels/geglu.cu',
   'kernels/attention.cu',
+  'kernels/attention_fast.cu',  # FAST モード G-3k: unet.cu が launch_attention_fast を参照
   'kernels/gemm.cu',
   'kernels/elementwise.cu',
   'kernels/bias_add.cu',
@@ -308,6 +310,17 @@ test_diffusion_backend_exe = executable('test_diffusion_backend',
   cpp_args            : cpp_args,
 )
 test('diffusion_backend', test_diffusion_backend_exe)
+
+# FastConfig (FAST モードのフラグ枠・G-0b) 単体テスト
+# 純 cpp (OV/CUDA 非依存) ゆえ開発機でも SKIP なし常時実走する。FastConfig 既定値と
+# resolve_fast_config の env(DOLLAMA_FAST/DOLLAMA_FP8)/CLI 合成・fp8->fast 含意を検証する。
+test_fast_config_exe = executable('test_fast_config',
+  sources             : files('tests/test_fast_config.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('fast_config', test_fast_config_exe)
 
 # スレッドアフィニティ単体テスト (STL のみ・常時実行)
 test_affinity_exe = executable('test_affinity',
@@ -590,8 +603,10 @@ if cuda_enabled
 
   # GroupNorm テスト + ベンチ (Phase 2 マイルストーン 2-2-3)
   # groupnorm.cu をテストと一緒にビルドして launch_group_norm をリンクする。
+  # G-4k S1b: GN+SiLU 融合の参照 (mb→launch_silu) 用に activation.cu もリンク。
   test_groupnorm_exe = executable('test_groupnorm',
-    sources             : files('tests/test_groupnorm.cu', 'kernels/groupnorm.cu'),
+    sources             : files('tests/test_groupnorm.cu', 'kernels/groupnorm.cu',
+                                'kernels/activation.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
@@ -601,7 +616,8 @@ if cuda_enabled
 
   # Conv2d テスト + ベンチ (Phase 2 マイルストーン 2-2-4)
   test_conv2d_exe = executable('test_conv2d',
-    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu'),
+    sources             : files('tests/test_conv2d.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu',
+                          'kernels/device_arena.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
@@ -618,6 +634,18 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('attention', test_attention_exe, timeout : 120)
+
+  # Attention 高速バリアント (launch_attention_fast) テスト + ベンチ (FAST モード G-3k)
+  # attention.cu (既存 golden 経路) と attention_fast.cu (fast) を両方リンクし、
+  # fast を既存出力と SSIM>=0.9999 で突合する。4096 self を回すため timeout を延長。
+  test_attention_fast_exe = executable('test_attention_fast',
+    sources             : files('tests/test_attention_fast.cu', 'kernels/attention.cu', 'kernels/attention_fast.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('attention_fast', test_attention_fast_exe, timeout : 300)
 
   # Elementwise (residual add / nearest upsample 2x) テスト + ベンチ (Phase 2 マイルストーン 2-4)
   test_elementwise_exe = executable('test_elementwise',
@@ -660,14 +688,29 @@ if cuda_enabled
   test('timeembed', test_timeembed_exe)
 
   # broadcast bias add テスト + ベンチ (Phase 2 マイルストーン 2-5 / UNet)
+  # G-4k S2: 融合カーネルの P2 参照 2 パスに launch_add を使うため elementwise.cu も同梱。
   test_bias_add_exe = executable('test_bias_add',
-    sources             : files('tests/test_bias_add.cu', 'kernels/bias_add.cu'),
+    sources             : files('tests/test_bias_add.cu', 'kernels/bias_add.cu',
+                                'kernels/elementwise.cu'),
     include_directories : src_inc,
     dependencies        : deps,
     cpp_args            : cpp_args,
     cuda_args           : cuda_test_args,
   )
   test('bias_add', test_bias_add_exe)
+
+  # device_arena (G-8k S1a) チャンク連結型 bump アリーナ テスト
+  # 既定 (プール有効) と キルスイッチ DOLLAMA_POOL=0 の 2 経路を、同一 exe の
+  # 別プロセス実行で検査する (pool 判定は getenv 初回キャッシュのため 1 プロセスで混ぜられない)。
+  test_device_arena_exe = executable('test_device_arena',
+    sources             : files('tests/test_device_arena.cu', 'kernels/device_arena.cu'),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+  test('device_arena', test_device_arena_exe)
+  test('device_arena_pool_off', test_device_arena_exe, env : ['DOLLAMA_POOL=0'])
 
   # VAE decoder ゴールデン突合テスト + レイテンシ計測 (Phase 2 マイルストーン 2-4 本体)
   # vae_decode.cu と全プリミティブ .cu を一緒にビルドしてリンクする。
@@ -679,6 +722,7 @@ if cuda_enabled
       'tests/test_vae_decode.cu',
       'kernels/vae_decode.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/activation.cu',
       'kernels/attention.cu',
@@ -707,11 +751,13 @@ if cuda_enabled
       'tests/test_unet.cu',
       'infer/unet.cu',
       'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
       'kernels/groupnorm.cu',
       'kernels/layernorm.cu',
       'kernels/activation.cu',
       'kernels/geglu.cu',
       'kernels/attention.cu',
+      'kernels/attention_fast.cu',
       'kernels/gemm.cu',
       'kernels/elementwise.cu',
       'kernels/bias_add.cu',
@@ -726,6 +772,96 @@ if cuda_enabled
     ],
   )
   test('unet', test_unet_exe, timeout : 600, is_parallel : false)
+
+  # UNet FAST モード (G-3k-wire) e2e ゲート。attn_fast の call site 結線を検証する。
+  # test_unet と同一ソース群 + attention_fast.cu (fast バリアント) を追加リンク。
+  test_unet_fast_exe = executable('test_unet_fast',
+    sources             : files(
+      'tests/test_unet_fast.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + unet_weights_path + '"',
+      '-DUNET_IO_PATH="' + unet_io_path2 + '"',
+    ],
+  )
+  test('unet_fast', test_unet_fast_exe, timeout : 600, is_parallel : false)
+
+  # ランタイム LoRA (L-2) 重みレベル検証テスト。合成 base + LoRA safetensors を
+  # ビルドディレクトリ (LORA_TMP_DIR) に書き出し、load_lora_modules (lora.hpp) →
+  # unet_apply_loras / unet_clear_loras の parity / revert bit-exact / stack /
+  # skip・throw をゲート化する。SDXL 実走・golden 不要 (合成データで自己完結)。
+  # unet.cu の常駐ハンドル API を使うため test_unet と同じソース群をリンクする。
+  # Windows の '\' は -D 文字列リテラル内で C エスケープに化けるため '/' へ正規化する。
+  lora_tmp_dir = meson.current_build_dir().replace('\\', '/')
+  test_lora_runtime_exe = executable('test_lora_runtime',
+    sources             : files(
+      'tests/test_lora_runtime.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DLORA_TMP_DIR="' + lora_tmp_dir + '"',
+    ],
+  )
+  test('lora_runtime', test_lora_runtime_exe, timeout : 120)
+
+  # FAST 診断用 warm ベンチ (計測専用・test 未登録)。常駐ハンドル API で重み再転送なしの
+  # warm per-step を fast on/off 比較する。既存テスト無改変。
+  prof_unet_fast_warm_exe = executable('prof_unet_fast_warm',
+    sources             : files(
+      'tests/prof_unet_fast_warm.cu',
+      'infer/unet.cu',
+      'kernels/conv2d.cu',
+      'kernels/device_arena.cu',  # G-8k S1b: conv2d im2col が bump アリーナを使う
+      'kernels/groupnorm.cu',
+      'kernels/layernorm.cu',
+      'kernels/activation.cu',
+      'kernels/geglu.cu',
+      'kernels/attention.cu',
+      'kernels/attention_fast.cu',
+      'kernels/gemm.cu',
+      'kernels/elementwise.cu',
+      'kernels/bias_add.cu',
+      'kernels/timeembed.cu',
+    ),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + unet_weights_path + '"',
+      '-DUNET_IO_PATH="' + unet_io_path2 + '"',
+    ],
+  )
 
   # 拡散ループ結線 (DiffusionPipeline) smoke + フルベンチ (Phase 2 マイルストーン 2-6a)
   # diffusion.cu + unet.cu + vae_decode.cu + 全プリミティブ .cu を一括ビルドしてリンクする。
@@ -746,6 +882,22 @@ if cuda_enabled
     ],
   )
   test('diffusion', test_diffusion_exe, timeout : 600, is_parallel : false)
+
+  # FAST モード G-2k S3c: CFG batch2 on/off パリティゲート (generate_txt2img 縦通し)。
+  # batch2=off / batch2=on を逐次実行し (VRAM 二重常駐回避) 最終 RGB の SSIM を突合する。
+  # 依存ソース・-D 埋め込みは test_diffusion と同型。CUDA 依存ゆえ with_cuda gate 内。
+  test_diffusion_batch2_exe = executable('test_diffusion_batch2',
+    sources             : files(['tests/test_diffusion_batch2.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + diff_unet_w + '"',
+      '-DVAE_WEIGHTS_PATH="' + diff_vae_w + '"',
+      '-DUNET_IO_PATH="' + diff_unet_io + '"',
+    ],
+  )
+  test('diffusion_batch2', test_diffusion_batch2_exe, timeout : 600, is_parallel : false)
 
   # PipelineGenerator (DiffusionPipeline -> IImageGenerator アダプタ) テスト (Phase 2 / 2-6a ST-3+ST-4)
   # pipeline_generator.hpp は HAVE_CUDA ガード越しに diffusion.cuh を include するため

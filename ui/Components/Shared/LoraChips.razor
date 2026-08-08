@@ -1,0 +1,123 @@
+@* LoRA 選択チップ (L-2)。カタログ (wwwroot/loras.json) の各 LoRA をトグルチップで表示し、
+   クリックで選択 on/off する。選択中は強度スライダを出す (0.0–1.5・UI 側の安全弁)。
+   選択状態は List<LoraSpec> として親 (Generate.razor) へ @bind-Selected で双方向共有する。
+   TagInput の流儀に合わせ、変更のたびに新リストを再代入して親へ通知する。
+   カタログが空 (loras.json 不在) のときは控えめに「LoRA なし」を表示する。 *@
+@using System.Globalization
+@inject LoraCatalog Catalog
+
+<div class="lora-chips">
+    <div class="lora-head">LoRA</div>
+
+    @if (Catalog.Entries.Count == 0)
+    {
+        <span class="lora-empty">LoRA カタログは空です</span>
+    }
+    else
+    {
+        @foreach (var entry in Catalog.Entries)
+        {
+            var sel = Find(entry.Name);
+            var on = sel is not null;
+            <div class="lora-item">
+                <button type="button" class="lora-chip @(on ? "on" : "")"
+                        @onclick="() => Toggle(entry)">@entry.Label</button>
+
+                @if (on)
+                {
+                    @* 数値表示をドラッグに追従させるため @onchange (離した時) ではなく
+                       @oninput (動かしている間) で拾う (P2-4 / 課題 #10)。
+                       値は float 1 個なので SignalR の往復が増えても軽い。
+                       ブラウザが送ってくる range の値は常に "0.85" 形式 (小数点はドット)
+                       なので、parse も表示も InvariantCulture で固定する
+                       — 現在カルチャ依存だと de-DE 等で TryParse が落ちて強度が動かない。 *@
+                    <span class="lora-strength" title="強度 (0.0–1.5)">
+                        <input type="range" min="0" max="1.5" step="0.05"
+                               value="@sel!.Strength.ToString("0.00", CultureInfo.InvariantCulture)"
+                               @oninput="(e) => SetStrength(entry.Name, e.Value)" />
+                        <span class="lora-val">@sel.Strength.ToString("0.00", CultureInfo.InvariantCulture)</span>
+                    </span>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    // 親 (Generate) が真実源。選択された LoRA のリストを双方向バインド (@bind-Selected)。
+    [Parameter] public List<LoraSpec> Selected { get; set; } = new();
+    [Parameter] public EventCallback<List<LoraSpec>> SelectedChanged { get; set; }
+
+    // UI 側の強度安全弁 (C++ には無制限に渡さない)。
+    private const float MinStrength = 0.0f;
+    private const float MaxStrength = 1.5f;
+
+    // 選択中なら該当 LoraSpec を返す (name は大小無視で照合)。
+    private LoraSpec? Find(string name)
+    {
+        return Selected.FirstOrDefault(
+            s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // チップのトグル。選択なら外し、未選択なら entry.DefaultStrength で追加する。
+    // 新リストを作って親へ通知する (参照を変えて再描画させる TagInput 流儀)。
+    private async Task Toggle(LoraCatalogEntry entry)
+    {
+        var next = new List<LoraSpec>(Selected);
+        var existing = next.FirstOrDefault(
+            s => string.Equals(s.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            next.Remove(existing);
+        }
+        else
+        {
+            next.Add(new LoraSpec
+            {
+                Name = entry.Name,
+                Strength = Clamp(entry.DefaultStrength),
+            });
+        }
+        Selected = next;
+        await SelectedChanged.InvokeAsync(next);
+    }
+
+    // スライダ変更で強度を更新。新リスト再代入で親へ通知する。
+    // parse は InvariantCulture 固定 (input[type=range] の値は常に "0.85" 形式で来るため。
+    // 現在カルチャ依存だと小数点がカンマのロケールで TryParse が失敗し強度が動かない)。
+    private async Task SetStrength(string name, object? raw)
+    {
+        if (!float.TryParse(raw?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+        {
+            return;
+        }
+        var next = new List<LoraSpec>();
+        foreach (var s in Selected)
+        {
+            if (string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                next.Add(new LoraSpec { Name = s.Name, Strength = Clamp(v) });
+            }
+            else
+            {
+                next.Add(new LoraSpec { Name = s.Name, Strength = s.Strength });
+            }
+        }
+        Selected = next;
+        await SelectedChanged.InvokeAsync(next);
+    }
+
+    // 0.0–1.5 に丸める (UI 側の安全弁)。
+    private static float Clamp(float v)
+    {
+        if (v < MinStrength)
+        {
+            return MinStrength;
+        }
+        if (v > MaxStrength)
+        {
+            return MaxStrength;
+        }
+        return v;
+    }
+}

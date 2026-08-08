@@ -56,4 +56,50 @@ void launch_bias_add_channel(const __half* d_in,
                              int           H,
                              int           W);
 
+// ----------------------------------------------------------------
+// (c) G-4k S2 P1: conv bias + per-(n,c) time-bias の後段融合
+// ----------------------------------------------------------------
+//   resnet_block conv1 の epilogue 用。conv を d_bias=nullptr で回した出力
+//   d_conv[N,Cout,H,W] に対し、GEMM 経路の 2 パス
+//     段1: conv_bias_add_rows 相当  t = f2h( h2f(conv) + h2f(convbias[c]) )
+//     段2: bias_add_channel 相当  out = f2h( h2f(t) + h2f(tproj[n*Cout+c]) )
+//   の丸め列を 1 カーネルで 1:1 再現する (中間 t を必ず half に落とす 2 段丸め)。
+//   ※ bit 一致するのは conv が GEMM 経路 (bias を後付け丸め) のときのみ。
+//     direct 経路 (bias を FP32 蓄積へ畳む単一丸め) の shape に当ててはならない
+//     (呼び側は conv2d_uses_gemm_bias_path でガードすること)。
+//
+//   d_conv    : conv 出力 (FP16, [B, Cout, H, W])。d_out と同一でも可 (in-place 安全)。
+//   d_convbias: conv バイアス (FP16, [Cout])
+//   d_tproj   : time embedding 射影 (FP16, [B, Cout]。per-(n,c) で異なる)
+//   d_out     : 出力 (FP16, [B, Cout, H, W])
+void launch_conv_bias_biasch(const __half* d_conv,
+                             const __half* d_convbias,
+                             const __half* d_tproj,
+                             __half*       d_out,
+                             int           B,
+                             int           Cout,
+                             int           H,
+                             int           W);
+
+// ----------------------------------------------------------------
+// (d) G-4k S2 P2: conv bias + residual add の後段融合
+// ----------------------------------------------------------------
+//   resnet_block conv2 の epilogue 用。丸め列は (c) と同型:
+//     段1: conv_bias_add_rows 相当  t = f2h( h2f(conv) + h2f(convbias[c]) )
+//     段2: add_fp16 相当          out = f2h( h2f(t) + h2f(residual[idx]) )
+//   GEMM 経路限定の注意も (c) と同じ (conv2d_uses_gemm_bias_path でガード)。
+//
+//   d_conv    : conv 出力 (FP16, [B, Cout, H, W])。d_out と同一でも可 (in-place 安全)。
+//   d_convbias: conv バイアス (FP16, [Cout])
+//   d_residual: 残差 (FP16, [B, Cout, H, W]。skip 接続の x または conv_shortcut(x))
+//   d_out     : 出力 (FP16, [B, Cout, H, W])
+void launch_conv_bias_residual(const __half* d_conv,
+                               const __half* d_convbias,
+                               const __half* d_residual,
+                               __half*       d_out,
+                               int           B,
+                               int           Cout,
+                               int           H,
+                               int           W);
+
 } // namespace dollama

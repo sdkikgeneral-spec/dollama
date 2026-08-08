@@ -83,12 +83,49 @@ public:
         // --- seed: GenRequest に seed フィールドが無いため内部で決める (時刻ベース) ---
         const uint64_t seed = static_cast<uint64_t>(std::time(nullptr));
 
+        // --- L-2: ランタイム LoRA (指定時のみ)。apply → generate → 必ず clear ---
+        //   未指定 (空) なら apply/clear とも呼ばず従来経路を 1 命令も変えない。
+        const bool has_loras = !req.loras.empty();
+        if (has_loras)
+        {
+            std::vector<LoraRequest> lr;
+            lr.reserve(req.loras.size());
+            for (const LoraSpec& s : req.loras)
+            {
+                lr.push_back(LoraRequest{s.name, s.strength});
+            }
+            backend_->apply_loras(lr);
+        }
+
         // --- 拡散 backend 実行 (CFG は backend 側の既定に委譲: cfg=0 を渡す) ---
         //   backend が cfg<=0 のとき自前の既定 (SDXL は 7.5) を使う契約。
         std::vector<uint8_t> rgb;
         int w = 0, h = 0;
-        backend_->generate(req.prompt, req.negative_prompt, steps, seed,
-                           /*cfg=*/0.0f, /*w=*/1024, /*h=*/1024, rgb, w, h);
+        try
+        {
+            backend_->generate(req.prompt, req.negative_prompt, steps, seed,
+                               /*cfg=*/0.0f, /*w=*/1024, /*h=*/1024, rgb, w, h);
+        }
+        catch (...)
+        {
+            // finally 相当: 生成が失敗しても LoRA patch を常駐重みに残さない。
+            if (has_loras)
+            {
+                try
+                {
+                    backend_->clear_loras();
+                }
+                catch (...)
+                {
+                    // 復元失敗は握る (元例外を優先して伝播する)
+                }
+            }
+            throw;
+        }
+        if (has_loras)
+        {
+            backend_->clear_loras();  // 生成完了 → base へ bit-exact 復元
+        }
 
         // --- B-5-3: スコアラ注入時のみ生キャラ rgb を採点 (matting 合成前)。失敗しても
         //     生成は止めない (score_image_safe が例外/nullptr を握る)。結果は現状ログのみ
