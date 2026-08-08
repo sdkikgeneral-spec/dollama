@@ -909,28 +909,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginp
     outline: none;
 }
 
-/* Blazor 既定のエラー UI */
-#blazor-error-ui
-{
-    background: #1c1f26;
-    border-top: 1px solid var(--ng);
-    bottom: 0;
-    display: none;
-    left: 0;
-    padding: 0.6rem 1.25rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-    color: var(--text);
-}
-
-#blazor-error-ui .dismiss
-{
-    cursor: pointer;
-    position: absolute;
-    right: 0.75rem;
-    top: 0.5rem;
-}
+/* Blazor 既定のエラー UI (#blazor-error-ui) の見た目は
+   Components/Layout/MainLayout.razor.css に一本化した。
+   scoped CSS は #blazor-error-ui[b-xxxx] へ書き換わり裸のセレクタより詳細度で必ず勝つため、
+   ここに書いても死にコードになる (P1-7)。CSS 変数は DOM 継承するので scoped 側でも var() は解決する。 */
 
 /* ── LoRA 選択チップ (L-2) ─────────────────────────────
    既存のチップ系トークンに揃える。選択中は強度スライダを添える。 */
