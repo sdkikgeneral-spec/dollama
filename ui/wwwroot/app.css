@@ -92,7 +92,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
@@ -294,17 +294,35 @@ textarea, select, input[type="range"]
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 8px;
     font: inherit;
     resize: vertical;
 }
 
-textarea:focus, select:focus
+/* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
+/* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
+   リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。 */
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* チップ入力の中身は透明な素の input なので、親 .chips のリングと二重にしない */
+.chip-entry:focus, .chip-entry:focus-visible
+{
+    outline: none;
+    box-shadow: none;
+}
+
+/* placeholder は UA 既定 (半透明) だとダーク地で読めないので明示する (P1-3) */
+::placeholder
+{
+    color: var(--muted);
+    opacity: 1;
 }
 
 /* ── 生成ボタン行 (本番 + 下書き高速プレビューの 2 ボタン横並び) ── */
@@ -333,7 +351,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     font-weight: 600;
     font-size: 14px;
 }
@@ -481,7 +499,7 @@ textarea:focus, select:focus
     font-size: 12px;
     color: var(--muted);
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 4px;
     white-space: nowrap;
@@ -554,7 +572,7 @@ textarea:focus, select:focus
 {
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 8px;
     font-size: 12px;
@@ -623,24 +641,18 @@ textarea:focus, select:focus
     min-width: 0;
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 8px;
     font: inherit;
     font-size: 12px;
 }
 
-.fav-entry:focus
-{
-    outline: none;
-    border-color: var(--accent);
-}
-
 .fav-plus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 0 10px;
     font: inherit;
@@ -674,7 +686,7 @@ textarea:focus, select:focus
     align-items: center;
     gap: 8px;
     background: var(--bg);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 6px;
     cursor: pointer;
@@ -730,7 +742,7 @@ textarea:focus, select:focus
     text-align: center;
     background: transparent;
     color: var(--muted);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
@@ -757,7 +769,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 8px;
     font: inherit;
@@ -769,7 +781,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 10px;
     font: inherit;
@@ -801,7 +813,7 @@ textarea:focus, select:focus
     gap: 6px;
     align-items: center;
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px;
     min-height: 38px;
@@ -914,7 +926,7 @@ textarea:focus, select:focus
 {
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 10px;
     font-size: 12px;
