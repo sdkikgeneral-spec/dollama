@@ -316,6 +316,8 @@ CSS/razor は「壊れると気づきにくい性質」だけをテキスト検�
 | ファイル | 対象 | 内容 |
 |---|---|---|
 | `DraftPreviewTests.cs` | `Services/DraftPreview.cs` | 下書きモードの送信サイズ決定 (幅>768 は 768² へ・768 以下は据え置き・パース不能/空は 768²・例外を投げない) |
+| `TagCommitTests.cs` | `Services/TagCommit.cs` | チップ入力の未確定テキスト (draft) → タグ列の確定規則: `Normalize` (trim/小文字寄せ・null 安全・語中の空白は保持)・`Split` (カンマ展開・空除去・入力内重複を先勝ちで除去・順序保持)・`Merge` (**常に新インスタンス**を返し `current` を Mutate しない・重複判定は正規化後だが既存表記は温存) |
+| `GenerateGateTests.cs` | `Services/GenerateGate.cs` | 生成ボタンの活性条件と理由テキスト: **16 組合せ全数** (busy × connected × タグ 0/1 × draft 空)・理由の優先順位 (busy > 未接続 > プロンプト空)・**「draft のみでもタグ 0 で enabled」** (ここを塞ぐと生成前確定に永久に入れない)・タグ数の境界 (負値は 0 扱い) |
 | `PresetStoreTests.cs` | `Services/PresetStore.cs` | presets.json の保存/削除・サムネ (ImageSharp で 128px 上限) の生成と削除・`thumbnailPng == null` で既存温存・サムネ無しレガシー JSON の後方互換・危険な名前でも `thumbs/` 配下に収まる・日本語名の保持 |
 | `FavoriteTagStoreTests.cs` | `Services/FavoriteTagStore.cs` | favorites.json の追加/削除/重複排除・アトミック書込・壊れ JSON 耐性 |
 | `TagPaletteCatalogTests.cs` | `Services/TagPaletteCatalog.cs` | tag-palette.json の読込 (不在/壊れで空カタログ・起動を止めない) |
@@ -324,7 +326,11 @@ CSS/razor は「壊れると気づきにくい性質」だけをテキスト検�
 | `DeviceStyleTests.cs` | `Services/DeviceStyle.cs` | テレメトリのデバイス名 → CSS クラス (`tm-cpu`/`tm-npu`/`tm-igpu`/`tm-gpu`)・大小文字非依存・未知/null/空は `""` で既定グラデへフォールバック |
 | `AppCssTokenTests.cs` | `wwwroot/app.css` + scoped CSS + `Generate.razor` | 配色トークン層の回帰止め: `:root` のトークン定義・**WCAG 相対輝度で計算したコントラスト下限** (hex 完全一致では検査しない)・`:root` 外に直書き色ゼロ・`var()` 未定義ゼロ・フォーカス統一リングのセレクタ・`::placeholder`・デバイス色・エラー UI/再接続モーダルの P1-7 回帰止め (Blazor JS 契約の id/class が残っていること) |
 
-設計の出典は `docs/ui-brushup-plan.md` (§4.1 トークン改訂表 / §7 検証)。
+**最終件数: 135 件** (2026-08-08 / P2 バッチ A `feat/ui-p2-gate` 時点。P1 の 91 件 +
+`TagCommitTests` 20 + `GenerateGateTests` 24)。
+
+設計の出典は `docs/ui-brushup-plan.md` (§4.1 トークン改訂表 / §5 実装バックログ / §7 検証)。
+ブラウザ操作と IME は自動テストの対象外 — §7「手動」チェックリストで担保する。
 
 ---
 

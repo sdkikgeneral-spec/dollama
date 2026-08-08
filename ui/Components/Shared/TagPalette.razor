@@ -124,6 +124,13 @@
     // 入力欄のタグをお気に入りに追加する (Enter / + ボタン)。手打ち経路は従来どおり。
     private async Task OnFavKeyDown(KeyboardEventArgs e)
     {
+        // IME ガード (P2-5)。変換中/変換確定の Enter は key="Process" として来るので捨てる。
+        // これを見ないと未変換ローマ字がお気に入りに登録される。TagInput と同じ扱い。
+        if (e.Key == "Process")
+        {
+            return;
+        }
+
         if (e.Key == "Enter")
         {
             await AddFavorite();

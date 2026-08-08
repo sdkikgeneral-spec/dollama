@@ -1,6 +1,7 @@
 # dollama UI ブラッシュアップ計画 (設計ドキュメント)
 
-> 対象: `ui/` (Blazor Server)。**P1-1〜P1-5 / P1-7 実装済 (2026-08-08 / `feat/ui-p1-tokens`)・P1-6 以降は計画**。
+> 対象: `ui/` (Blazor Server)。**P1-1〜P1-5 / P1-7 実装済 (2026-08-08 / `feat/ui-p1-tokens`)**、
+> **P2-1 / P2-5 / P2-8 / P2-9 実装済 (2026-08-08 / `feat/ui-p2-gate` = P2 バッチ A)**。P1-6 と残り P2 以降は計画。
 > 残りは本 doc の実装バックログ (P1-6 → P2 → P3) に沿って csharp-ui-implementer が着手する。
 > レビュー日: 2026-07-14 / レビュー対象コミット: `feat/fast-mode-g0b-g3k` ブランチ先端 (3f16d6c 時点の ui ツリー)。
 
@@ -74,11 +75,11 @@
 
 | # | 分類 | 課題 | 現状 | 深刻度 | 対象ファイル |
 |---|---|---|---|---|---|
-| 1 | UX | **未確定テキストのまま生成すると無視される**。「1girl」と打って Enter せず生成ボタンを押すと、`_draft` は `Tags` に入らずプロンプト空 → #2 と合わさり完全な無言失敗 | `TagInput` は Enter/カンマでのみ確定。blur・生成時の確定なし | **高** | `TagInput.razor`, `Generate.razor` |
-| 2 | UX | **プロンプト空だと生成ボタンが「効いているのに何も起きない」**。`GenerateAsync` 冒頭で `_promptTags.Count == 0` なら silent return。ボタンは有効に見える | disabled は `_busy` のみ。空時の理由表示なし | **高** | `Generate.razor` |
+| 1 | UX | **未確定テキストのまま生成すると無視される**。「1girl」と打って Enter せず生成ボタンを押すと、`_draft` は `Tags` に入らずプロンプト空 → #2 と合わさり完全な無言失敗 **→ P2-1 で解消 (2026-08-08・生成前に親が `CommitPendingAsync()` を await + blur 確定を併設)** | `TagInput` は Enter/カンマでのみ確定。blur・生成時の確定なし | **高** | `TagInput.razor`, `Generate.razor` |
+| 2 | UX | **プロンプト空だと生成ボタンが「効いているのに何も起きない」**。`GenerateAsync` 冒頭で `_promptTags.Count == 0` なら silent return。ボタンは有効に見える **→ P2-1 で解消 (2026-08-08・`GenerateGate` で disabled + 理由テキスト)** | disabled は `_busy` のみ。空時の理由表示なし | **高** | `Generate.razor` |
 | 3 | 配色 | **チップ入力にフォーカス表示がゼロ**。`.chip-entry:focus { outline: none; }` のみで、外枠 `.chips` も光らない。キーボード利用時に現在地が分からない **→ P1-2 で解消 (2026-08-08)** | `textarea/select` は border 色替えのみ、`.chip-entry` は完全無表示 | **高** | `app.css` |
 | 4 | 配色 | **入力・カード境界がほぼ見えない**。`--border #2c313b` vs `--panel-2 #23272f` ≈ **1.15:1**、vs `--panel` ≈ **1.26:1** (UI 非テキストの目安 3:1 に遠い)。入力欄とパネルの区別が輝度でつかない **→ P1-1/P1-4 で部分解消 (2026-08-08・境界 2 段化で vs panel 1.26→1.46 / 操作要素 vs panel 2.10。3:1 まで上げると縞模様化するため意図的に手前で止めている)** | 全境界が単一の `--border` | **高** | `app.css` |
-| 5 | UX | **IME 変換確定の Enter でタグが誤確定しうる**。日本語 UI なのに `OnKeyDown` が composing を見ない (変換確定 Enter で未変換ローマ字や変換途中文字列がタグ化する恐れ) | `e.Key == "Enter"` のみ判定 | 中 | `TagInput.razor`, `TagPalette.razor` |
+| 5 | UX | **IME 変換確定の Enter でタグが誤確定しうる**。日本語 UI なのに `OnKeyDown` が composing を見ない (変換確定 Enter で未変換ローマ字や変換途中文字列がタグ化する恐れ) **→ P2-5 で対処 (2026-08-08・`key=="Process"` を無視・JS interop は不採用)** | `e.Key == "Enter"` のみ判定 | 中 | `TagInput.razor`, `TagPalette.razor` |
 | 6 | UX | **生成開始で前回画像を即破棄** (`_imageData = null`)。下書き→本番の比較ができず、画面が毎回プレースホルダへフラッシュする | busy 中はスピナーのみ | 中 | `Generate.razor`, `app.css` |
 | 7 | UX | **生成中フィードバックがスピナーのみ**。1024² 本番は 20 秒前後かかるのに経過時間も目安もない (進捗 API は C++ に無いので進捗バーは対象外) | `.spinner` 単体 | 中 | `Generate.razor`, `app.css` |
 | 8 | UX | **生成画像の保存導線がない**。右クリック→名前を付けて保存頼み。data URI なのでファイル名も不定 | ダウンロード/コピー UI なし | 中 | `Generate.razor` |
@@ -94,7 +95,7 @@
 | 18 | 配色 | **`--muted` の小サイズ使用が余裕薄**。#8b92a0 on `--panel` ≈ **5.3:1**、on `--panel-2` ≈ **4.8:1** で AA は満たすが、11px 箇所 (`tm-item`, `palette-empty`, `lora-val`) はぎりぎり感 **→ P1-1 で解消 (2026-08-08・#9aa2b1 で on panel 6.42:1 / on panel-2 5.83:1)** | 単一 muted | 低 | `app.css` |
 | 19 | UX | **プリセット同名保存が確認なし上書き**。`PresetStore.Save` は同 kind 同名を黙って置換する仕様 (store 側は正しい)。UI で一言も出ない | 保存メッセージは成功文言のみ | 低 | `TagPresetField.razor` |
 | 20 | UX | **保存バーが常時表示でノイズ**。タグ 0 個でもプリセット名入力+保存ボタンが両フィールドに出続ける | 常時表示 | 低 | `TagPresetField.razor`, `app.css` |
-| 21 | UX | **キーボードで生成できない**。タグ確定後に毎回マウスでボタンへ移動する。Ctrl+Enter 等のショートカットなし | なし | 低 | `Generate.razor`, `TagInput.razor` |
+| 21 | UX | **キーボードで生成できない**。タグ確定後に毎回マウスでボタンへ移動する。Ctrl+Enter 等のショートカットなし **→ P2-8 で解消 (2026-08-08・`section.gen` で keydown を拾い Ctrl/Cmd+Enter)** | なし | 低 | `Generate.razor`, `TagInput.razor` |
 | 22 | 一貫性 | **再接続モーダル/エラーバーが英語+ライト配色**。`ReconnectModal` は "Rejoining the server..."、`MainLayout.razor.css` の `#blazor-error-ui` は `lightyellow` でダークテーマ内で異物 **→ P1-7 で解消 (2026-08-08)** | テンプレート既定のまま | 低 | `ReconnectModal.razor(.css)`, `MainLayout.razor(.css)` |
 | 23 | 一貫性 | **角丸・チップの微差**。radius 4/6/8/10/999px が混在 (それ自体は可) だが体系がなく、`fav-chip` と `tag-chip` は同じ「タグチップ」なのに padding/font-size が別定義 | 個別指定 | 低 | `app.css` |
 | 24 | レイアウト | **中央列の上限 400px が窮屈**。長いタグ列 (15 個超) でチップが縦に積み上がる一方、右ペイン 1fr は正方形画像の左右に大きな余白が残る | `minmax(340px,400px)` 固定 | 低 | `app.css` |
@@ -266,16 +267,50 @@
 
 | ID | 課題# | 変更内容 | 対象 | 工数 | リスク・可逆性 | 依存 |
 |---|---|---|---|---|---|---|
-| P2-1 | 1, 2 | **無言失敗の根絶**: ① `TagInput` に「未確定 draft を確定して返す」公開メソッド or blur 確定を追加 ② `Generate` は生成前に確定を要求 ③ プロンプト空なら生成ボタン disabled + 理由テキスト。**テスト**: draft 確定ロジックを ui.Tests で (正規化・カンマ展開・重複) | `TagInput.razor`, `Generate.razor` | M | 中 (バインド伝播に注意・既存の新リスト再代入流儀を踏襲) | なし |
+| P2-1 ✅ 2026-08-08 (`feat/ui-p2-gate`) | 1, 2 | **無言失敗の根絶**: ① `TagInput` に「未確定 draft を確定して返す」公開メソッド or blur 確定を追加 ② `Generate` は生成前に確定を要求 ③ プロンプト空なら生成ボタン disabled + 理由テキスト。**テスト**: draft 確定ロジックを ui.Tests で (正規化・カンマ展開・重複) | `TagInput.razor`, `TagPresetField.razor`, `Generate.razor`, `Services/TagCommit.cs`, `Services/GenerateGate.cs` | M | 中 (バインド伝播に注意・既存の新リスト再代入流儀を踏襲) | なし |
 | P2-2 | 6, 7 | busy 中は前回画像を減光保持 + スピナー/経過秒オーバーレイ。経過秒は `System.Timers` or `PeriodicTimer` で 1s 刻み `StateHasChanged` | `Generate.razor`, `app.css` | M | 低 | なし |
 | P2-3 | 8 | プレビュー右上に「PNG 保存」(`<a download="dollama_….png" href="data:image/png;base64,…">`)。JS interop 不要 | `Generate.razor`, `app.css` | S | 低 | なし |
 | P2-4 | 10 | LoRA スライダを `@oninput` 即時反映へ (`@onchange` → `@oninput`)。SignalR 往復頻度が上がるが値は軽量 | `LoraChips.razor` | S | 低 | なし |
-| P2-5 | 5 | IME ガード: `e.Key == "Process"` を無視 + 可能なら `KeyboardEventArgs.IsComposing` 相当の判定 (Blazor 標準に無ければ `@onkeydown` の代わりに keypress 系 or 小さな JS interop を検討。**JS を足すなら最小 1 関数**) | `TagInput.razor`, `TagPalette.razor` | M | 中 (ブラウザ差・要手動確認) | P2-1 |
+| P2-5 ✅ 2026-08-08 (`feat/ui-p2-gate`) | 5 | IME ガード: `e.Key == "Process"` を無視 + 可能なら `KeyboardEventArgs.IsComposing` 相当の判定 (Blazor 標準に無ければ `@onkeydown` の代わりに keypress 系 or 小さな JS interop を検討。**JS を足すなら最小 1 関数**) | `TagInput.razor`, `TagPalette.razor` | M | 中 (ブラウザ差・要手動確認) | P2-1 |
 | P2-6 | 9 | 追加先の可視化: `_target` 一致フィールドの `.chips` に accent 左縁 + favorites ターゲット中のパレット縁色 | `Generate.razor`, `TagPresetField.razor`, `TagPalette.razor`, `app.css` | M | 低 | P1-1 |
 | P2-7 | 19, 20 | 保存バー整理: タグ 0 で非表示・同名時の文言を「上書き保存」へ (`PresetStore.All(kind)` で既存名照合)。**テスト**: 上書き判定ロジック | `TagPresetField.razor` | S | 低 | なし |
-| P2-8 | 21 | Ctrl+Enter で生成 (チップ入力フォーカス中でも発火)。`@onkeydown` を `.gen` セクションで拾う | `Generate.razor`, `TagInput.razor` | S | 低 | P2-1 |
-| P2-9 | — (§4.3) | 未接続時: 生成ボタン disabled + 接続インジケータに「再接続」ボタン (HealthAsync 再試行) | `Generate.razor` | S | 低 | なし |
+| P2-8 ✅ 2026-08-08 (`feat/ui-p2-gate`) | 21 | Ctrl+Enter で生成 (チップ入力フォーカス中でも発火)。`@onkeydown` を `.gen` セクションで拾う | `Generate.razor`, `TagInput.razor` | S | 低 | P2-1 |
+| P2-9 ✅ 2026-08-08 (`feat/ui-p2-gate`) | — (§4.3) | 未接続時: 生成ボタン disabled + 接続インジケータに「再接続」ボタン (HealthAsync 再試行) | `Generate.razor`, `app.css` | S | 低 | なし |
 | P2-10 | 11 (§4.4-2) | 生成中のテレメトリ強調 (`generating` クラス + グロー + 「生成中」pill) | `Generate.razor`, `app.css` | S | 低 | P1-5 |
+
+> **P2 バッチ A 実装メモ (2026-08-08 / `feat/ui-p2-gate` / P2-1・P2-9・P2-8・P2-5)**
+>
+> - **確定方式は「公開メソッドを親から呼ぶ」が主・blur が従**。`Generate.GenerateAsync` が
+>   `@ref` 経由で `TagPresetField.CommitPendingAsync()` → `TagInput.CommitPendingAsync()` を
+>   **両フィールド分 await** してからタグ列を読む。blur 単独に頼らないのは、Blazor Server では
+>   blur と click が**別の SignalR ラウンドトリップ**で飛び順序が保証されないため。
+>   blur (`@onblur`) は Tab 移動時の取りこぼし救済として併設する。
+> - **draft の文字列は親へ渡さない**。親が draft を持つと真実源の二重管理になるので、
+>   `TagInput` は「空かどうか」だけ `DraftEmptyChanged` (真偽) で通知し、親はそれを
+>   ボタンの活性判定にのみ使う。**これがないと「draft に文字があるのにタグ 0 なので disabled」→
+>   確定の機会が永久に来ない**という別の無言失敗になる (実装上いちばん踏みやすい罠)。
+> - **`Services/GenerateGate.cs` が P2-1 / P2-8 / P2-9 の唯一の合流点**。
+>   `Evaluate(busy, connected, promptTagCount, draftEmpty) → (CanGenerate, Reason?)` で
+>   2 ボタンの disabled・理由テキスト・Ctrl+Enter が同じ判定を通る。入力が真偽 4 つなので
+>   **16 組合せを xUnit で全数検査**でき、razor に条件式が散らない。
+> - **確定規則は `Services/TagCommit.cs`** (`Normalize` / `Split` / `Merge`) に集約。名前は
+>   生成モードの `DraftPreview` と紛らわしくないよう `TagDraft` ではなく `TagCommit`。
+>   ついでに `TagInput` の確定・削除・Backspace を**新リスト再代入**へ是正した
+>   (旧 `AddOne` は `Tags.Add` でその場 Mutate = 本プロジェクトの伝播流儀違反だった)。
+> - **P2-5 は JS interop を不採用**とした (PL 裁定)。Blazor の `KeyboardEventArgs` に
+>   `IsComposing` が無く完全解には JS が要るが、① このチップ入力に入るのは danbooru タグ =
+>   英数字で IME を使う場面が乏しい ② `wwwroot/*.js` + `IJSRuntime` + Dispose 管理 +
+>   テスト不能領域が増え「配管を増やさない」方針に反する ③ 実害である「未変換ローマ字のタグ化」は
+>   Windows の Chrome/Edge/Firefox が変換中/確定の Enter を `key="Process"` (keyCode 229) で
+>   送るため `Process` 無視だけで防げる。実装は `TagInput.OnKeyDown` と
+>   `TagPalette.OnFavKeyDown` の 2 箇所で即 return。
+>   **残存リスク**: composition 終了と同一 keydown で `Enter` が来るブラウザでは 1 回だけ
+>   確定が漏れうる。手動確認で再現したら実装で粘らず PL へ上げる (JS を勝手に足さない)。
+> - **P2-9 は定期ポーリングを足さない**。未接続判定は既存 `_connected` の再利用で、再判定経路は
+>   「初回描画」「生成の成否」「再接続ボタン押下時の `HealthAsync()` 1 回」の 3 つだけ
+>   (`_reconnecting` で二度押し防止)。
+> - テスト: `TagCommitTests` 20 件 + `GenerateGateTests` 24 件を追加し **91 → 135 件**。
+>   bUnit は入れない方針を維持 (依存追加ゼロ)。
 
 ### P3 — 構造に触れる・効果はあるが急がない
 
@@ -297,8 +332,11 @@
 3. ✅ **P1-5 (テレメトリのデバイス色)** (2026-08-08 完了) / 🔲 P2-10 (生成中強調) は P2 で — dollama らしさの即効改善。
    見た目の変化が最も分かりやすく、ユーザーの体感リターンが早い。
    ※ P1-7 (エラー UI ダーク化・再接続モーダル日本語化) も同時に完了させた (依存なし・独立)。
-4. **P2-1 (無言失敗の根絶)** — 挙動変更の第一弾。UX 深刻度は最高だが razor ロジックに触れるため
-   P1 の安定後に。ui.Tests を同時に追加。
+4. ✅ **P2-1 (無言失敗の根絶)** (2026-08-08 完了・`feat/ui-p2-gate`) — 挙動変更の第一弾。
+   UX 深刻度は最高だが razor ロジックに触れるため P1 の安定後に。ui.Tests を同時に追加。
+   ※ 同じ「生成ボタンの活性」に触れる P2-9 (未接続 disabled + 再接続) / P2-8 (Ctrl+Enter) と、
+   同じ keydown を触る P2-5 (IME ガード) を**同一バッチ (P2 バッチ A)** でまとめて実装した
+   — 判定を `GenerateGate` 1 箇所に集約するには同時に入れるのが安全なため。
 5. **P2-2/P2-3 (プレビュー保持・保存)** → 残りの P2 を小さく順次。
 6. **P1-6/P3-1 (タイポトークン→ボタン統合)** はリファクタ性格なので、機能系 P2 が落ち着いた
    タイミングで**まとめて後日**。P1 実装時も P1-6 は意図的に見送り、P3-1 と一緒に扱う方針を維持する
@@ -327,9 +365,15 @@
     scoped が `lightyellow`/`color-scheme: light only` でない・`ReconnectModal` の Blazor JS 契約 id/class が全部残っている)。
   - `ui.Tests/DeviceStyleTests.cs` (17 件): `DeviceStyle.CssClass` の 4 デバイス正常系・大小文字非依存・
     未知/null/空は `""` (既定グラデへフォールバック)。
-- **P2-1**: draft 確定の正規化 (trim/lowercase/カンマ展開/重複排除) をロジック単体で検証。
-  TagInput のロジックをテスト可能な static/サービスに切り出すか、bUnit 導入は**しない**
-  (依存追加は最小限の方針)。既存 PresetStore テストの流儀 (一時ディレクトリ) を踏襲。
+- **P2-1 / P2-8 / P2-9 (実装済 2026-08-08 / 依存追加ゼロ・bUnit 不使用)** — 2 ファイル追加。
+  razor から純クラスへ切り出した「確定規則」と「ゲート判定」を検証する。
+  - `ui.Tests/TagCommitTests.cs` (20 件): `Normalize` (trim/lowercase・null 安全・語中の空白は保持)、
+    `Split` (カンマ展開・空除去・入力内重複を先勝ちで除去・順序保持)、`Merge` (既存列への連結・
+    **常に新インスタンス**を返し `current` を Mutate しない・重複判定は正規化後だが既存表記は温存・
+    Count 差で「増えたか」が判る)。
+  - `ui.Tests/GenerateGateTests.cs` (24 件): `Evaluate` の **16 組合せ全数** (busy × connected ×
+    タグ 0/1 × draft 空) + 理由の優先順位 (busy > 未接続 > プロンプト空) + 「draft のみでも
+    enabled」の単独固定 + タグ数の境界 (負値は 0 扱い) + 理由文言が空でなく互いに異なること。
 - **P2-7**: 同名上書き判定を PresetStore 経由で検証 (既存テスト拡張)。
 - CSS/razor の見た目はテスト対象外 — ビルド緑 + 手動確認で担保。
 
@@ -339,8 +383,13 @@
    §3 の表の想定値 (muted ≥ 4.5:1、focus リング視認、accent ボタン ≥ 4.5:1) を数値で記録する。
 2. **フォーカス一巡**: Tab キーだけで トップバー → パレット → プロンプト → ネガティブ →
    サイズ/ステップ → LoRA → 生成ボタン を一巡し、全停留点でリングが見えること。
-3. **無言失敗シナリオ** (P2-1 後): ① 未確定テキストのみで生成 → 確定されて生成される
-   ② タグ 0 で生成ボタン → disabled + 理由表示 ③ IME で「少女」変換確定 → タグ化されない。
+3. **無言失敗シナリオ** (P2 バッチ A 後・ブラウザと IME はエージェントで検証不能なのでユーザーが実施):
+   ① 「1girl」と打って Enter せず生成ボタン → 確定されてチップ化され生成される
+   ② タグ 0 かつ draft 空 → ボタン disabled + 理由テキスト
+   ③ **draft に文字あり・タグ 0 → ボタン enabled** (ここが罠の核心・disabled だと確定不能)
+   ④ 未接続 → ボタン disabled +「C++ サーバーに接続していません」+ 再接続ボタン
+   ⑤ IME で「少女」を変換確定 → タグ化されない (`key=="Process"` ガード)
+   ⑥ Ctrl+Enter (チップ入力にフォーカスがある状態) → 生成が走る。
 4. **ブレークポイント・スクショ観点**: 1440px (3 ペイン) / 1100px 境界 / 900px (縦積み) /
    768px の 4 点で、(a) テレメトリの折返し・省略 (b) 追加先トグル 3 ラベルの非折返し
    (c) 縦積み時の生成→プレビュー導線 (P3-2 後) をスクショで残す。

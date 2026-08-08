@@ -69,6 +69,14 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
+        // IME ガード (P2-5)。変換中/変換確定のキーは Windows の Chrome/Edge/Firefox で
+        // key="Process" (keyCode 229) として来る。ここで捨てないと未変換ローマ字が
+        // Enter でタグ化される。JS interop は足さない (配管を増やさない方針・PL 裁定)。
+        if (e.Key == "Process")
+        {
+            return;
+        }
+
         if (e.Key == "Enter" || e.Key == ",")
         {
             await CommitPendingAsync();

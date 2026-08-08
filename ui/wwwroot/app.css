@@ -156,6 +156,36 @@ html, body
     color: var(--ok);
 }
 
+/* 未接続のときだけ出る再接続ボタン (P2-9)。押すと GET /health を 1 回だけ叩き直す。
+   従来はページリロードしか回復手段がなかった。 */
+.conn-retry
+{
+    appearance: none;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    margin-left: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.12s, color 0.12s;
+}
+
+.conn-retry:hover:not(:disabled)
+{
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.conn-retry:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
 /* ── HW テレメトリ・ミニメーター (上部バー・横並び) ── */
 .telemetry-mini
 {
@@ -409,6 +439,17 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginp
 {
     opacity: 0.6;
     cursor: default;
+}
+
+/* 生成ボタンが押せない理由 (P2-1 / P2-9)。押せるときは要素ごと出ないのでノイズにならない。
+   ボタン行の直下に muted で 1 行。エラー (.error) と違い「まだ操作が足りない」だけなので
+   赤系は使わない。 */
+.gen-reason
+{
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin-top: -4px;
 }
 
 .error

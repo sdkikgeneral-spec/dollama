@@ -40,8 +40,17 @@
                     @onclick="@(() => SetTagLang("en"))">EN</button>
         </div>
 
+        @* 接続インジケータ。未接続のときだけ「再接続」ボタンを添える (P2-9)。
+           定期ポーリングはしない — 再判定は「初回描画」「生成の成否」「このボタン」の 3 経路のみ。 *@
         <div class="conn @(_connected ? "ok" : "ng")">
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
+            @if (!_connected)
+            {
+                <button type="button" class="conn-retry" @onclick="ReconnectAsync"
+                        disabled="@_reconnecting" title="GET /health を 1 回だけ再試行します">
+                    @(_reconnecting ? "確認中…" : "再接続")
+                </button>
+            }
         </div>
     </header>
 
@@ -175,6 +184,9 @@
     private byte[]? _imageBytes;  // 生成画像の生バイト (プリセット保存サムネ用)
     private bool _connected;
 
+    // 「再接続」ボタンの二度押し防止 (P2-9)。押している間だけ true。
+    private bool _reconnecting;
+
     // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
     private string? _lastMode;
 
@@ -196,6 +208,25 @@
     private void OnPromptDraftEmptyChanged(bool empty)
     {
         _promptDraftEmpty = empty;
+    }
+
+    // 未接続時の「再接続」(P2-9)。GET /health を 1 回だけ叩き直す (定期ポーリングはしない)。
+    // HealthAsync は内部で例外を握りつぶすので、ここは二度押し防止だけを見る。
+    private async Task ReconnectAsync()
+    {
+        if (_reconnecting)
+        {
+            return;
+        }
+        _reconnecting = true;
+        try
+        {
+            _connected = await Client.HealthAsync();
+        }
+        finally
+        {
+            _reconnecting = false;
+        }
     }
 
     // Ctrl+Enter (Mac は Cmd+Enter) で生成する (P2-8)。
