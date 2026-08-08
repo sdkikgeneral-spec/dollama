@@ -1,7 +1,8 @@
 # dollama UI ブラッシュアップ計画 (設計ドキュメント)
 
 > 対象: `ui/` (Blazor Server)。**P1-1〜P1-5 / P1-7 実装済 (2026-08-08 / `feat/ui-p1-tokens`)**、
-> **P2-1 / P2-5 / P2-8 / P2-9 実装済 (2026-08-08 / `feat/ui-p2-gate` = P2 バッチ A)**。P1-6 と残り P2 以降は計画。
+> **P2-1 / P2-5 / P2-8 / P2-9 実装済 (2026-08-08 / `feat/ui-p2-gate` = P2 バッチ A)**、
+> **P2-2 / P2-3 / P2-4 実装済 (2026-08-08 / `feat/ui-p2-preview` = P2 バッチ B)**。P1-6 と残り P2 以降は計画。
 > 残りは本 doc の実装バックログ (P1-6 → P2 → P3) に沿って csharp-ui-implementer が着手する。
 > レビュー日: 2026-07-14 / レビュー対象コミット: `feat/fast-mode-g0b-g3k` ブランチ先端 (3f16d6c 時点の ui ツリー)。
 
@@ -80,11 +81,11 @@
 | 3 | 配色 | **チップ入力にフォーカス表示がゼロ**。`.chip-entry:focus { outline: none; }` のみで、外枠 `.chips` も光らない。キーボード利用時に現在地が分からない **→ P1-2 で解消 (2026-08-08)** | `textarea/select` は border 色替えのみ、`.chip-entry` は完全無表示 | **高** | `app.css` |
 | 4 | 配色 | **入力・カード境界がほぼ見えない**。`--border #2c313b` vs `--panel-2 #23272f` ≈ **1.15:1**、vs `--panel` ≈ **1.26:1** (UI 非テキストの目安 3:1 に遠い)。入力欄とパネルの区別が輝度でつかない **→ P1-1/P1-4 で部分解消 (2026-08-08・境界 2 段化で vs panel 1.26→1.46 / 操作要素 vs panel 2.10。3:1 まで上げると縞模様化するため意図的に手前で止めている)** | 全境界が単一の `--border` | **高** | `app.css` |
 | 5 | UX | **IME 変換確定の Enter でタグが誤確定しうる**。日本語 UI なのに `OnKeyDown` が composing を見ない (変換確定 Enter で未変換ローマ字や変換途中文字列がタグ化する恐れ) **→ P2-5 で対処 (2026-08-08・`key=="Process"` を無視・JS interop は不採用)** | `e.Key == "Enter"` のみ判定 | 中 | `TagInput.razor`, `TagPalette.razor` |
-| 6 | UX | **生成開始で前回画像を即破棄** (`_imageData = null`)。下書き→本番の比較ができず、画面が毎回プレースホルダへフラッシュする | busy 中はスピナーのみ | 中 | `Generate.razor`, `app.css` |
-| 7 | UX | **生成中フィードバックがスピナーのみ**。1024² 本番は 20 秒前後かかるのに経過時間も目安もない (進捗 API は C++ に無いので進捗バーは対象外) | `.spinner` 単体 | 中 | `Generate.razor`, `app.css` |
-| 8 | UX | **生成画像の保存導線がない**。右クリック→名前を付けて保存頼み。data URI なのでファイル名も不定 | ダウンロード/コピー UI なし | 中 | `Generate.razor` |
+| 6 | UX | **生成開始で前回画像を即破棄** (`_imageData = null`)。下書き→本番の比較ができず、画面が毎回プレースホルダへフラッシュする **→ P2 で解消 (2026-08-08・破棄をやめ `preview-dim` で減光保持)** | busy 中はスピナーのみ | 中 | `Generate.razor`, `app.css` |
+| 7 | UX | **生成中フィードバックがスピナーのみ**。1024² 本番は 20 秒前後かかるのに経過時間も目安もない (進捗 API は C++ に無いので進捗バーは対象外) **→ P2 で解消 (2026-08-08・`PeriodicTimer` 1s 刻みの経過秒オーバーレイ)** | `.spinner` 単体 | 中 | `Generate.razor`, `app.css` |
+| 8 | UX | **生成画像の保存導線がない**。右クリック→名前を付けて保存頼み。data URI なのでファイル名も不定 **→ P2 で解消 (2026-08-08・右上「PNG 保存」+ `dollama_{日時}_{size}.png`)** | ダウンロード/コピー UI なし | 中 | `Generate.razor` |
 | 9 | UX | **追加先フォーカス連動が暗黙的すぎる**。お気に入り入力欄に一度触れると以降のパレットクリックが全部 favorites 行きになるが、変化はパレット上部トグルの小さなハイライトだけ。追加先のフィールド側には何も出ない | トグル label の `.on` (accent 枠) のみ | 中 | `app.css` (+ 軽微に `TagPresetField.razor`) |
-| 10 | UX | **LoRA 強度スライダの数値表示がドラッグに追従しない**。`@onchange` (離した時) なので操作中は古い値が見え続ける | `@onchange` バインド | 中 | `LoraChips.razor` |
+| 10 | UX | **LoRA 強度スライダの数値表示がドラッグに追従しない**。`@onchange` (離した時) なので操作中は古い値が見え続ける **→ P2 で解消 (2026-08-08・`@oninput` 化 + parse/表示の InvariantCulture 固定)** | `@onchange` バインド | 中 | `LoraChips.razor` |
 | 11 | UX | **テレメトリの「生成中」が視覚に出ない**。`Generating` フラグは title 属性 (ホバー) のみ。全 HW 協調の見せ場が眠っている | バー幅の変化だけ | 中 | `Generate.razor`, `app.css` |
 | 12 | 配色 | **placeholder が未スタイル**。ブラウザ既定色 (UA 依存・半透明) でダーク背景ではコントラスト不定。例示文言 (「例: 1girl と入力して Enter」) が導線なのに読みにくい **→ P1-3 で解消 (2026-08-08)** | `::placeholder` 宣言なし | 中 | `app.css` |
 | 13 | 配色 | **accent 青一色に役割が集中**。主ボタン・選択チップ・hover・保存完了メッセージ・テレメトリ%・言語トグル on がすべて `--accent`。「操作できる」「選択中」「情報」の区別が色で付かない | 単一 `--accent` | 中 | `app.css` |
@@ -146,6 +147,7 @@
 | `--ng-soft` | — (新設) | `#ffb4ae` | エラー本文用の淡色。#ffb4ae 直書き 2 箇所を統合。on エラー地 ≈ 9:1 超 |
 | `--ng-weak` | — (新設) | `rgba(248, 81, 73, 0.12)` | **PL 裁定で追加** (`.error` 背景の直書き `rgba(248,81,73,0.12)` が本表から漏れていた。置換してトークン経由率 100% を例外なしで成立させるため) |
 | `--focus-ring` | — (新設) | `rgba(110,168,254,0.45)` | `box-shadow: 0 0 0 2px var(--focus-ring)` の全フォーカス統一リング。リング自体の視認 3:1 相当 |
+| `--overlay` | — (**P2-2 で追加**) | `rgba(0, 0, 0, 0.45)` | 生成中オーバーレイの暗幕 (`.preview-overlay`)。減光 (0.35) した前回画像の上でも経過秒が読めるようにする。明るい画像でも `--text` 比 ≈ 5.9:1 |
 | `--dev-cpu` | — (新設) | `#6ea8fe` | テレメトリ・デバイス色 (青=CPU)。on panel ≈ 6.8:1 |
 | `--dev-npu` | — (新設) | `#a78bfa` | 紫=NPU (現グラデ #9d7bff の系譜)。on panel ≈ 5.8:1 |
 | `--dev-igpu` | — (新設) | `#5fd4c8` | ティール=iGPU。on panel ≈ 9:1 |
@@ -268,9 +270,9 @@
 | ID | 課題# | 変更内容 | 対象 | 工数 | リスク・可逆性 | 依存 |
 |---|---|---|---|---|---|---|
 | P2-1 ✅ 2026-08-08 (`feat/ui-p2-gate`) | 1, 2 | **無言失敗の根絶**: ① `TagInput` に「未確定 draft を確定して返す」公開メソッド or blur 確定を追加 ② `Generate` は生成前に確定を要求 ③ プロンプト空なら生成ボタン disabled + 理由テキスト。**テスト**: draft 確定ロジックを ui.Tests で (正規化・カンマ展開・重複) | `TagInput.razor`, `TagPresetField.razor`, `Generate.razor`, `Services/TagCommit.cs`, `Services/GenerateGate.cs` | M | 中 (バインド伝播に注意・既存の新リスト再代入流儀を踏襲) | なし |
-| P2-2 | 6, 7 | busy 中は前回画像を減光保持 + スピナー/経過秒オーバーレイ。経過秒は `System.Timers` or `PeriodicTimer` で 1s 刻み `StateHasChanged` | `Generate.razor`, `app.css` | M | 低 | なし |
-| P2-3 | 8 | プレビュー右上に「PNG 保存」(`<a download="dollama_….png" href="data:image/png;base64,…">`)。JS interop 不要 | `Generate.razor`, `app.css` | S | 低 | なし |
-| P2-4 | 10 | LoRA スライダを `@oninput` 即時反映へ (`@onchange` → `@oninput`)。SignalR 往復頻度が上がるが値は軽量 | `LoraChips.razor` | S | 低 | なし |
+| P2-2 ✅ 2026-08-08 (`feat/ui-p2-preview`) | 6, 7 | busy 中は前回画像を減光保持 + スピナー/経過秒オーバーレイ。経過秒は **`PeriodicTimer`** で 1s 刻み `StateHasChanged` (表示整形は純クラス `ElapsedFormat`) | `Generate.razor`, `app.css`, `Services/ElapsedFormat.cs` | M | 低 | なし |
+| P2-3 ✅ 2026-08-08 (`feat/ui-p2-preview`) | 8 | プレビュー右上に「PNG 保存」(`<a download="dollama_….png" href="data:image/png;base64,…">`)。JS interop 不要 (ファイル名は純クラス `DownloadName`) | `Generate.razor`, `app.css`, `Services/DownloadName.cs` | S | 低 | なし |
+| P2-4 ✅ 2026-08-08 (`feat/ui-p2-preview`) | 10 | LoRA スライダを `@oninput` 即時反映へ (`@onchange` → `@oninput`)。SignalR 往復頻度が上がるが値は軽量。**併せて parse/表示を InvariantCulture 固定** (潜在バグの同時修正) | `LoraChips.razor` | S | 低 | なし |
 | P2-5 ✅ 2026-08-08 (`feat/ui-p2-gate`) | 5 | IME ガード: `e.Key == "Process"` を無視 + 可能なら `KeyboardEventArgs.IsComposing` 相当の判定 (Blazor 標準に無ければ `@onkeydown` の代わりに keypress 系 or 小さな JS interop を検討。**JS を足すなら最小 1 関数**) | `TagInput.razor`, `TagPalette.razor` | M | 中 (ブラウザ差・要手動確認) | P2-1 |
 | P2-6 | 9 | 追加先の可視化: `_target` 一致フィールドの `.chips` に accent 左縁 + favorites ターゲット中のパレット縁色 | `Generate.razor`, `TagPresetField.razor`, `TagPalette.razor`, `app.css` | M | 低 | P1-1 |
 | P2-7 | 19, 20 | 保存バー整理: タグ 0 で非表示・同名時の文言を「上書き保存」へ (`PresetStore.All(kind)` で既存名照合)。**テスト**: 上書き判定ロジック | `TagPresetField.razor` | S | 低 | なし |
@@ -312,6 +314,34 @@
 > - テスト: `TagCommitTests` 20 件 + `GenerateGateTests` 24 件を追加し **91 → 135 件**。
 >   bUnit は入れない方針を維持 (依存追加ゼロ)。
 
+> **P2 バッチ B 実装メモ (2026-08-08 / `feat/ui-p2-preview` / P2-2・P2-3・P2-4)**
+>
+> - **`_imageData = null` を消した影響は 4 点に閉じる**。① **サムネ**: `_imageBytes` は
+>   `TagPresetField.CurrentImage` に渡るプリセット保存のサムネ元なので、破棄をやめると
+>   「生成失敗後に保存 → 直近の成功画像がサムネになる」。**画面に見えている画像がサムネになる方が
+>   直感的**なので許容する (`docs/ui-preset-thumbnail-spec.md` に明記)。② **モードバッジ**:
+>   `_lastMode` は成功時のみ更新の現状維持 — バッジと表示画像が常に同じ生成を指す一貫性を壊さない。
+>   ③ **下書き/本番**: `_size` 非破壊・`sendSize` ローカル上書き・`_runningDraft` の文言出し分けは不変
+>   (`DraftPreview` も無改修)。④ **エラー**: `_error` の生成開始時クリアは現状維持。
+> - **タイマーは fire-and-forget にしない**。`GenerateAsync` 内で `CancellationTokenSource` を作り、
+>   `finally` で「参照を外す → `Cancel()` → `await tickTask` → `Dispose()`」の順に確実に畳む。
+>   `DisposeAsync` からも `Cancel()` するが、この順序なので破棄済み cts が見えることはない。
+>   停止経路は **完了 / エラー / 離脱の 3 つ**。刻みは加算ではなく開始時刻との差分
+>   (`DateTimeOffset.UtcNow - startedAt`) で取り、刻みがずれても表示が遅れない。
+> - **`System.Timers.Timer` を使わない理由**: コールバックが別スレッドで来るので毎回
+>   `InvokeAsync` が要るうえ、Dispose と発火のレースを自前で塞ぐ必要がある。
+>   `PeriodicTimer` + `await` ならループが 1 本の Task に閉じ、キャンセルで必ず終わる。
+> - **`.preview-save` はフォーカスリングの統一ブロックへ追記**した。`<a download>` なので
+>   `button:focus-visible` に当たらないが、別ブロックを作ると「`var(--focus-ring)` を使う宣言は
+>   1 つ」という `AppCssTokenTests` の機械検査 (P1-2 の回帰止め) に引っかかるため。
+> - **P2-4 は `@oninput` 化とセットで `float.TryParse` / `ToString` を `InvariantCulture` へ固定**した。
+>   `input[type=range]` の値は常に `"0.85"` 形式で来るのに parse が現在カルチャ依存だったため、
+>   小数点がカンマのロケール (de-DE 等) では**強度がまったく動かない**潜在バグだった。
+>   発火頻度が上がる変更と同時に入れるのは範囲拡大ではなく回帰予防。
+> - テスト: `ElapsedFormatTests` 31 件 + `DownloadNameTests` 38 件を追加し **135 → 204 件**。
+>   タイマー本体は自動テスト対象外 (制御フローだけを使い捨てハーネスで確認)、
+>   検証するのは切り出した純ロジック 2 つだけ。
+
 ### P3 — 構造に触れる・効果はあるが急がない
 
 | ID | 課題# | 変更内容 | 対象 | 工数 | リスク・可逆性 | 依存 |
@@ -337,7 +367,9 @@
    ※ 同じ「生成ボタンの活性」に触れる P2-9 (未接続 disabled + 再接続) / P2-8 (Ctrl+Enter) と、
    同じ keydown を触る P2-5 (IME ガード) を**同一バッチ (P2 バッチ A)** でまとめて実装した
    — 判定を `GenerateGate` 1 箇所に集約するには同時に入れるのが安全なため。
-5. **P2-2/P2-3 (プレビュー保持・保存)** → 残りの P2 を小さく順次。
+5. ✅ **P2-2/P2-3 (プレビュー保持・保存)** (2026-08-08 完了・`feat/ui-p2-preview` = P2 バッチ B) →
+   残りの P2 を小さく順次。※ 同じプレビュー節に触る P2-3 と、独立だが 1 行で済む P2-4
+   (LoRA スライダ即時反映) を同一バッチでまとめた。残りは P2-6 / P2-7 / P2-10。
 6. **P1-6/P3-1 (タイポトークン→ボタン統合)** はリファクタ性格なので、機能系 P2 が落ち着いた
    タイミングで**まとめて後日**。P1 実装時も P1-6 は意図的に見送り、P3-1 と一緒に扱う方針を維持する
    (タイポ/スペーシングを先に畳んでもボタン 5 系統の重複が残ると二度手間になるため)。
@@ -374,6 +406,19 @@
   - `ui.Tests/GenerateGateTests.cs` (24 件): `Evaluate` の **16 組合せ全数** (busy × connected ×
     タグ 0/1 × draft 空) + 理由の優先順位 (busy > 未接続 > プロンプト空) + 「draft のみでも
     enabled」の単独固定 + タグ数の境界 (負値は 0 扱い) + 理由文言が空でなく互いに異なること。
+- **P2-2 / P2-3 (実装済 2026-08-08 / 依存追加ゼロ・bUnit 不使用)** — 2 ファイル追加。
+  razor に残るのはタイマーと markup だけで、テストするのは切り出した純ロジック 2 つ。
+  - `ui.Tests/ElapsedFormatTests.cs` (31 件): `Mmss` の通常系 (0/1/59/60/3599 秒)・60 分超も
+    分として伸びる (3661 → `61:01`)・**100 分以上は `99:59` で頭打ち** (`TimeSpan.MaxValue` でも
+    落ちない)・負値は `00:00` (`TimeSpan.MinValue` 含む)・端数切り捨て (12.9 秒 → `00:12`)・
+    形式の不変条件 (常に 5 文字・数字とコロンのみ・秒欄は 0–59)・カルチャ非依存・単調非減少。
+  - `ui.Tests/DownloadNameTests.cs` (38 件): `ForPng` が `dollama_{yyyyMMdd_HHmmss}_{size}.png` に
+    なること・size の正規化 (`1024X1024` / 空白入り)・読めない size は `unknown`・
+    **パス区切りと `Path.GetInvalidFileNameChars()` が絶対に混入しない** (`../../etc/passwd` 等 12 種)・
+    出力は常に `[A-Za-z0-9_.]+`・日時のゼロ埋めとカルチャ非依存 (仏暦/ヒジュラ暦ロケールでも不変)・
+    秒違いで名前が変わる・例外を投げない。
+- **P2-2 のタイマー**は自動テスト対象外 (razor + レンダラが要る)。停止 3 経路
+  (完了 / エラー / 離脱) は制御フローだけを抜き出した使い捨てハーネスで確認する。
 - **P2-7**: 同名上書き判定を PresetStore 経由で検証 (既存テスト拡張)。
 - CSS/razor の見た目はテスト対象外 — ビルド緑 + 手動確認で担保。
 
