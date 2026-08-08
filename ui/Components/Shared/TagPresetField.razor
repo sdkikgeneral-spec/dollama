@@ -15,15 +15,20 @@
     <TagInput @ref="_input" Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
               OnFocused="NotifyFocused" DraftEmptyChanged="DraftEmptyChanged" />
 
-    <!-- 保存バー -->
-    <div class="presetbar">
-        <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
-        <button type="button" class="preset-btn" @onclick="SaveCurrent"
-                disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
-    </div>
-    @if (_msg is not null)
+    @* 保存バー (P2-7 / 課題 #20)。タグ 0 個のときは「保存するものが無い」ので出さない。
+       常時表示だと両フィールドに空の入力欄 + ボタンが並び続けてノイズになる。
+       保存後メッセージも同じ条件に載せる (バーだけ消えて文言が浮くのを避ける)。 *@
+    @if (Tags.Count > 0)
     {
-        <div class="preset-msg">@_msg</div>
+        <div class="presetbar">
+            <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
+            <button type="button" class="preset-btn" @onclick="SaveCurrent"
+                    disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
+        </div>
+        @if (_msg is not null)
+        {
+            <div class="preset-msg">@_msg</div>
+        }
     }
 </div>
 
@@ -90,6 +95,12 @@
         {
             return;
         }
+        // 同名が既にあるか (P2-7 / 課題 #19)。PresetStore.Save は同一 kind の同名を
+        // 黙って上書きするので、保存**前**に一覧を読んで上書きかどうかを控えておく
+        // (store 側は不可侵・照合規則は PresetStore.SameKey と同じ OrdinalIgnoreCase)。
+        var overwrite = Presets.All(Kind)
+            .Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
         Presets.Save(new TagPreset
         {
             Name = name,
@@ -97,9 +108,7 @@
             Tags = new List<string>(Tags),
         }, CurrentImage);
         _newName = "";
-        _msg = CurrentImage is not null
-            ? $"「{name}」をサムネ付きで保存しました"
-            : $"「{name}」を保存しました";
+        _msg = PresetSaveMessage.Build(name, overwrite, CurrentImage is not null);
 
         // 左ペインのプリセット一覧を最新化させる。
         await OnSaved.InvokeAsync();
