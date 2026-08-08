@@ -36,6 +36,12 @@
                         <span class="tm-dev">@d.Device</span>
                         <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
                         <span class="tm-pct">@d.Percent.ToString("0")%</span>
+                        @* 役割ラベル (P3-3 / §4.4-3)。「NPU が CLIP を、RTX5080 が UNet を」という
+                           パイプライン理解を title 属性 (ホバー) 頼みにしない。
+                           出す/出さないは CSS だけで決まる (既定 display:none・幅に余裕がある時だけ表示) —
+                           razor に状態は増やさない (テレメトリの真実源は _sample のまま)。
+                           バーの開始位置が役割名の長さでずれないよう、必ず行の末尾に置く。 *@
+                        <span class="tm-role">@d.Role</span>
                     </div>
                 }
             }
@@ -43,9 +49,9 @@
 
         <!-- タグ表示言語トグル ([日本語|EN])。タグ値・生成 prompt は英語のまま不変で表示のみ切替。 -->
         <div class="lang-toggle" title="タグの表示言語 (内部値・生成は英語のまま)">
-            <button type="button" class="@(_tagLang == "ja" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "ja" ? "on" : "")"
                     @onclick="@(() => SetTagLang("ja"))">日本語</button>
-            <button type="button" class="@(_tagLang == "en" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "en" ? "on" : "")"
                     @onclick="@(() => SetTagLang("en"))">EN</button>
         </div>
 
@@ -55,7 +61,7 @@
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
             @if (!_connected)
             {
-                <button type="button" class="conn-retry" @onclick="ReconnectAsync"
+                <button type="button" class="btn btn-ghost" @onclick="ReconnectAsync"
                         disabled="@_reconnecting" title="GET /health を 1 回だけ再試行します">
                     @(_reconnecting ? "確認中…" : "再接続")
                 </button>
@@ -123,10 +129,10 @@
 
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
-                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-primary" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
                     @((_busy && !_runningDraft) ? "生成中…" : "生成")
                 </button>
-                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-ghost" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
                     @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
                 </button>
             </div>
@@ -155,7 +161,7 @@
                生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
             @if (_imageData is not null && !_busy)
             {
-                <a class="preview-save" download="@_downloadName"
+                <a class="btn btn-ghost canvas-save" download="@_downloadName"
                    href="data:image/png;base64,@_imageData"
                    title="@_downloadName として保存します">PNG 保存</a>
             }

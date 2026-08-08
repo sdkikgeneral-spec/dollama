@@ -13,7 +13,11 @@ namespace Dollama.Ui.Tests;
 //
 // ★ 色の値そのものは hex 完全一致では検査しない。それは単なる変更検知器になり、
 //   デザイン調整のたびにテストを書き換えることになる。守るのは可読性 = コントラスト比。
-public sealed class AppCssTokenTests
+// ※ P3 バッチ D で partial 化した。P1-6 / P3-1 のリファクタ前ベースライン
+//    (AppCssScaleBaselineTests.cs) が、ここの CSS パーサ (Blocks / RootTokens /
+//    StripComments / Normalize / RepoRoot) をそのまま再利用するため。
+//    既存のテストは 1 件も変更していない。
+public sealed partial class AppCssTokenTests
 {
     // ── 検査対象のファイル ──────────────────────────────
     private static string AppCssPath => Path.Combine(RepoRoot(), "ui", "wwwroot", "app.css");

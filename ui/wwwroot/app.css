@@ -49,6 +49,30 @@
     --dev-npu: #a78bfa;
     --dev-igpu: #5fd4c8;
     --dev-gpu: #f0a860;
+
+    /* ── 寸法トークン (P1-6 / §4.2) ──────────────────────────
+       アドホックな px 直書きを最小限のスケールへ畳む。**px 実値は原則不変**で、
+       トークン名を通すのが主目的 (ui.Tests/AppCssScaleBaselineTests.cs が実効 px を凍結する)。
+       段を増やしたくなったら、まず既存段へ寄せられないかを疑うこと。 */
+
+    /* タイポ 4 段。11=補足 / 12=ラベル・チップ / 14=本文 (html 既定) / 16=ブランド・主 CTA */
+    --fs-xs: 11px;
+    --fs-sm: 12px;
+    --fs-md: 14px;
+    --fs-lg: 16px;
+
+    /* スペーシング (4px グリッド)。グリッドに乗っている余白だけをこれで置換する */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-6: 24px;
+
+    /* 角丸 3 段 + pill。sm=入力・小ボタン / md=ペイン・カード・主 CTA / pill=チップ・バッジ。
+       円 (border-radius: 50%) は「段」ではなく形なのでトークン化しない */
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-pill: 999px;
 }
 
 *
@@ -63,7 +87,7 @@ html, body
     background: var(--bg);
     color: var(--text);
     font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
-    font-size: 14px;
+    font-size: var(--fs-md);
 }
 
 .app
@@ -71,6 +95,106 @@ html, body
     display: flex;
     flex-direction: column;
     height: 100vh;
+}
+
+/* ── ボタン共通 (P3-1 / 課題 #15) ──────────────────────────────
+   ボタンが 5 系統 (+P2 で 2 つ) に分かれて同じ見た目を別々に宣言していたのを、
+   .btn + 3 バリアントへ畳む。
+
+     .btn         押せるものの土台。無効時の作法もここが持つ
+     .btn-primary 主 CTA (accent 塗り)。塗りの上なので hover で文字色を動かさない
+     .btn-ghost   既定 (面 + 枠)。hover は枠を accent へ
+     .btn-icon    透明地のグリフ 1 文字 (×)。20px 角の寸法まで含めてここが持つ
+
+   ★ 分担: 「ボタンらしさ」= ここ / 「置かれた場所で決まるもの」(padding・位置・
+     並び・font) = 器の側 (.gen-actions .btn / .presetbar .btn / .lang-toggle .btn …)。
+     器の規則は 2 クラス = 常にここより詳細度が高いので、順序に依存せず上書きできる。
+
+   ★ ここをファイル先頭側に置くのは意図的。同詳細度 (0,3,0) で衝突しうる器側の規則
+     (例 .lang-toggle .btn + .btn の区切り線 vs .btn-ghost:hover の border-color) を
+     器側に勝たせるため。後ろへ動かすと区切り線が hover で accent に化ける。
+
+   ★ 見た目は据え置き。畳めなかった不揃い (font: inherit 派 / disabled 0.45 の 2 箇所) は
+     コメントを添えて残してある — 揃えると実際に見た目が変わるため、別途デザイン判断。 */
+.btn
+{
+    cursor: pointer;
+}
+
+/* 押せないときは沈める。:disabled は button にしか効かないので、
+   a[download] の保存ボタン (.canvas-save) には元から無関係。 */
+.btn:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* 入力欄に添う小ボタン (プリセット保存 / お気に入り +) だけは従来どおり深く沈める。
+   0.6 に揃えると見た目が変わるので 2 段のまま残す (統一するならデザイン判断が要る)。 */
+.presetbar .btn:disabled, .fav-bar .btn:disabled
+{
+    opacity: 0.45;
+}
+
+/* 主 CTA。角丸と寸法は器 (.gen-actions .btn) 側が持つ */
+.btn-primary
+{
+    background: var(--accent);
+    color: var(--on-accent);
+    border: none;
+    font-weight: 700;
+    /* §4.2 の寄せ: 15px → --fs-lg (16px)。14px に寄せると下書きボタン (--fs-md) と
+       同寸になり主 CTA の階層が消えるため、大きい側へ寄せる */
+    font-size: var(--fs-lg);
+}
+
+.btn-ghost
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+}
+
+/* hover の作法は「枠を accent へ」に一本化する (従来は枠のみ/枠+文字/文字のみが混在) */
+.btn-ghost:hover:not(:disabled)
+{
+    border-color: var(--accent);
+}
+
+/* 文字色も動かすのは単独で置かれた大きめのボタンだけ。入力欄に添う小ボタン
+   (.presetbar / .fav-bar) は枠だけ動かす従来の見た目を維持する。 */
+.gen-actions .btn-ghost:hover:not(:disabled),
+.conn .btn:hover:not(:disabled),
+.canvas-save:hover:not(:disabled)
+{
+    color: var(--accent);
+}
+
+/* アイコンボタン。20px 角・グリフ 1 文字の箱なので寸法もバリアントの一部 */
+.btn-icon
+{
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border-strong);
+    /* 20px 角の小箱。4px → --r-sm (6px) は §4.2 の許可外なので据え置き (P1-6) */
+    border-radius: 4px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x / .fav-x と統一する
+       (20px 角・line-height 18px の枠に 14px グリフは収まる) */
+    font-size: var(--fs-md);
+    padding: 0;
+    flex-shrink: 0;
+}
+
+/* アイコンボタンは今のところ削除 (破壊操作) 専用なので hover は ng 系のまま */
+.btn-icon:hover:not(:disabled)
+{
+    border-color: var(--ng);
+    color: var(--ng-soft);
 }
 
 /* ── トップバー ── */
@@ -87,7 +211,7 @@ html, body
 .brand
 {
     font-weight: 700;
-    font-size: 16px;
+    font-size: var(--fs-lg);
     letter-spacing: 0.02em;
     white-space: nowrap;
 }
@@ -96,7 +220,7 @@ html, body
 {
     color: var(--muted);
     font-weight: 400;
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
 /* ── タグ表示言語トグル ([日本語|EN]・上部バー) ── */
@@ -106,35 +230,38 @@ html, body
     align-items: center;
     gap: 0;
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     overflow: hidden;
     white-space: nowrap;
 }
 
-.lang-toggle button
+/* セグメント (.btn .btn-ghost)。器の .lang-toggle 側が枠と角丸を持つので、
+   ghost の枠と角丸はここで打ち消す。 */
+.lang-toggle .btn
 {
     appearance: none;
     border: none;
-    background: var(--panel-2);
+    /* ghost の --r-sm を打ち消す。実効値は従来どおり 0 で見た目は不変 —
+       セグメントを丸めると .lang-toggle の角丸との間に隙間が見える */
+    border-radius: 0;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 4px 10px;
-    cursor: pointer;
     transition: background 0.12s, color 0.12s;
 }
 
-.lang-toggle button + button
+.lang-toggle .btn + .btn
 {
     border-left: 1px solid var(--border);
 }
 
-.lang-toggle button:hover
+.lang-toggle .btn:hover
 {
     color: var(--text);
 }
 
-/* 現在の表示言語をハイライト */
-.lang-toggle button.on
+/* 現在の表示言語をハイライト。:hover と同詳細度なので必ずこの順 (後勝ち) で置く */
+.lang-toggle .btn.on
 {
     background: var(--accent);
     color: var(--on-accent);
@@ -146,7 +273,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
     white-space: nowrap;
 }
@@ -170,33 +297,18 @@ html, body
 }
 
 /* 未接続のときだけ出る再接続ボタン (P2-9)。押すと GET /health を 1 回だけ叩き直す。
-   従来はページリロードしか回復手段がなかった。 */
-.conn-retry
+   従来はページリロードしか回復手段がなかった。
+   見た目は .btn .btn-ghost。ここは「接続表示の脇に置く」ための寸法だけを持つ
+   (hover は .btn-ghost + 文字色ブロック / disabled は .btn:disabled)。 */
+.conn .btn
 {
     appearance: none;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     padding: 2px 8px;
-    margin-left: 4px;
-    cursor: pointer;
+    margin-left: var(--sp-1);
     white-space: nowrap;
     transition: border-color 0.12s, color 0.12s;
-}
-
-.conn-retry:hover:not(:disabled)
-{
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.conn-retry:disabled
-{
-    opacity: 0.6;
-    cursor: default;
 }
 
 /* ── HW テレメトリ・ミニメーター (上部バー・横並び) ── */
@@ -213,7 +325,7 @@ html, body
 .tm-hint
 {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
 .tm-item
@@ -221,7 +333,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
 }
 
 .tm-dev
@@ -237,6 +349,8 @@ html, body
     width: 64px;
     height: 6px;
     background: var(--panel-2);
+    /* 高さ 6px のバーなので --r-sm (6px) に寄せると完全な pill になり形が変わる。
+       角丸トークンの対象外として 3px 直書きのまま残す (P1-6) */
     border-radius: 3px;
     overflow: hidden;
 }
@@ -255,6 +369,40 @@ html, body
     color: var(--accent);
     width: 30px;
     text-align: right;
+}
+
+/* 役割ラベル (P3-3 / §4.4-3)。Role ("CLIP enc" / "SDXL UNet" …) は title 属性 =
+   ホバーしないと見えなかった。画面に出すことで「NPU が CLIP を、RTX5080 が UNet を
+   やっている」というパイプライン理解が UI から得られる (dollama らしさの核)。
+
+   ★ 既定は display: none。通常フローに 1px も入らないので、バーの幅 (64px 固定) も
+     位置も、ラベルを足す前とまったく同じ。
+   ★ 寸法 (font-size / padding / margin / width) は 1 つも宣言しない。字は .tm-item の
+     --fs-xs を、間隔は .tm-item の gap をそのまま使う = 新トークンも不要で、
+     P1-6 の実効 px ベースライン (ui.Tests/AppCssScaleBaselineTests.cs) も動かない。
+   ★ 色は --muted。数値 (--dev-*) より一段落として「データ = 数値 / 説明 = ラベル」の
+     階層を保つ (デバイス色にすると % と同格になり、どちらを読むべきか迷う)。 */
+.tm-role
+{
+    display: none;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* 幅に余裕がある時だけ常時表示する (§4.4-3 の 2 案のうち後者)。
+   1500px は「4 デバイス分のラベル (計 ~250px) を足しても .telemetry-mini が
+   ブランド・言語トグル・接続表示を押し出さない」目安。これ未満では従来どおり
+   title 属性 (ホバー) が受け皿になる。
+
+   ★ ホバーで .tm-bar の下へ出す案は採らなかった: .telemetry-mini は overflow: hidden
+     (トップバーからの溢れ止め) なので、絶対配置でバーの外へ出したラベルはクリップされて
+     1px も見えない。overflow を外すと今度は狭い幅で溢れる。 */
+@media (min-width: 1500px)
+{
+    .tm-role
+    {
+        display: block;
+    }
 }
 
 /* デバイス別の色 (P1-5 / §4.4-1)。tm-item のクラスは Services/DeviceStyle.cs が決める。
@@ -331,9 +479,9 @@ html, body
 {
     background: var(--accent);
     color: var(--on-accent);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.04em;
     white-space: nowrap;
@@ -346,8 +494,8 @@ html, body
     display: grid;
     /* 左ペインを 320px に広げ、追加先トグル 3 ラベルが横一列で潰れず収まるようにする */
     grid-template-columns: 320px minmax(340px, 400px) 1fr;
-    gap: 16px;
-    padding: 16px;
+    gap: var(--sp-4);
+    padding: var(--sp-4);
     flex: 1;
     min-height: 0;
 }
@@ -357,10 +505,10 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--sp-3);
     overflow-y: auto;
     min-height: 0;
-    padding-right: 4px;
+    padding-right: var(--sp-1);
 }
 
 /* 中央: 生成コントロール列 */
@@ -368,11 +516,11 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--sp-3);
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    border-radius: var(--r-md);
+    padding: var(--sp-4);
     overflow-y: auto;
     min-height: 0;
 }
@@ -386,8 +534,8 @@ html, body
     justify-content: center;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    border-radius: var(--r-md);
+    padding: var(--sp-4);
     min-height: 0;
     overflow: hidden;
 }
@@ -396,19 +544,19 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--sp-1);
 }
 
 .field > span
 {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
 }
 
 .row
 {
     display: flex;
-    gap: 12px;
+    gap: var(--sp-3);
 }
 
 .grow
@@ -421,8 +569,8 @@ textarea, select, input[type="range"]
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 8px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-2);
     font: inherit;
     resize: vertical;
 }
@@ -430,12 +578,13 @@ textarea, select, input[type="range"]
 /* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
 /* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
    リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。
-   .preview-save は button ではなく a[download] (P2-3) なので個別に足す — ここを
+   画像保存ボタンは button ではなく a[download] (P2-3) なので .btn:focus-visible を
+   個別に足す (P3-1 で保存ボタン固有のセレクタから .btn へ張り替えた) — ここを
    別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。
    先頭の var(--edge) は追加先の左縁 (P2-6) との合成。既定は no-op なので
    フォーカスだけのときは従来どおりリング 1 本、追加先かつフォーカス中は
    「左縁 + リング」が同時に出る (どちらかが消えない)。 */
-textarea:focus, select:focus, input:focus-visible, button:focus-visible, .preview-save:focus-visible, .taginput .chips:focus-within
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
@@ -460,43 +609,26 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .gen-actions
 {
     display: flex;
-    gap: 12px;
+    gap: var(--sp-3);
 }
 
-.generate
+/* 行に置かれた 2 ボタンの寸法 (本番 = .btn-primary / 下書き = .btn-ghost)。
+   塗り・枠・無効時はバリアント側が持つ。 */
+.gen-actions .btn
 {
     /* 2 ボタンを等幅で横並びにする */
     flex: 1;
-    background: var(--accent);
-    color: var(--on-accent);
-    border: none;
-    border-radius: 8px;
-    padding: 12px;
-    font-weight: 700;
-    font-size: 15px;
-    cursor: pointer;
+    /* §4.2 の寄せ: 8px → --r-md (10px)。器 (.gen / .canvas) と半径をそろえる */
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
 }
 
-/* 下書きボタンは accent 塗りでなく outline 控えめ配色で本番と視覚区別する */
-.generate.secondary
+/* 下書きボタンは accent 塗りでなく outline 控えめ配色で本番と視覚区別する。
+   主 CTA (--fs-lg / 700) より 1 段細く小さくして階層を作る。 */
+.gen-actions .btn-ghost
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
     font-weight: 600;
-    font-size: 14px;
-}
-
-.generate.secondary:hover:not(:disabled)
-{
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.generate:disabled
-{
-    opacity: 0.6;
-    cursor: default;
+    font-size: var(--fs-md);
 }
 
 /* 生成ボタンが押せない理由 (P2-1 / P2-9)。押せるときは要素ごと出ないのでノイズにならない。
@@ -505,7 +637,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .gen-reason
 {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.5;
     margin-top: -4px;
 }
@@ -515,9 +647,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--ng-weak);
     border: 1px solid var(--ng);
     color: var(--ng-soft);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 8px 10px;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。エラーは読ませる文なので本文サイズへ */
+    font-size: var(--fs-md);
 }
 
 /* ── 直近プレビューのモードバッジ (右ペイン左上・本番/下書き + 解像度) ── */
@@ -530,9 +663,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--muted);
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 3px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -540,30 +673,22 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 
 /* ── 生成画像の保存導線 (右ペイン右上・P2-3 / 課題 #8) ──
    `<a download href="data:image/png;base64,…">` だけで保存できるので JS interop は要らない。
-   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。 */
-.preview-save
+   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。
+   見た目は .btn .btn-ghost で、ここは「キャンバス右上に浮かせる」ための宣言だけを持つ。
+   button ではないので text-decoration の打ち消しがここに要る (.btn には置かない —
+   置くと button 側 7 群に無意味な宣言が増える)。 */
+.canvas-save
 {
     position: absolute;
     top: 10px;
     right: 10px;
     z-index: 1;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
     padding: 3px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     line-height: 1.6;
     text-decoration: none;
     white-space: nowrap;
-    cursor: pointer;
-}
-
-.preview-save:hover
-{
-    border-color: var(--accent);
-    color: var(--accent);
 }
 
 /* プレビュー枠は右ペイン (.canvas) を埋める */
@@ -580,7 +705,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     justify-content: center;
     background: var(--panel-2);
     border: 1px dashed var(--border);
-    border-radius: 8px;
+    /* §4.2 の寄せ: 8px → --r-md (10px)。外側の器 .canvas (10px) と半径をそろえる */
+    border-radius: var(--r-md);
     overflow: hidden;
 }
 
@@ -608,7 +734,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: var(--sp-3);
     background: var(--overlay);
 }
 
@@ -616,7 +742,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .preview-elapsed
 {
     color: var(--text);
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。減光画像の上に載るので可読側へ寄せる */
+    font-size: var(--fs-md);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
@@ -624,7 +751,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .placeholder
 {
     color: var(--muted);
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。広い空プレビューの案内文なので本文サイズへ */
+    font-size: var(--fs-md);
 }
 
 .spinner
@@ -667,11 +795,11 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px;
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--sp-2);
 }
 
 /* 追加先がお気に入りのときは、パレット全体を面で示す (P2-6 / 課題 #9)。
@@ -684,11 +812,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border-color: var(--accent-border);
 }
 
+/* ペイン見出し (タグパレット / プリセット)。§4.2 のセクションヘッダ型 =
+   「小さく薄く広く」(--fs-sm + letter-spacing + --muted)。本文と 1px 差で並んでいた
+   従来より階層が立つ。§4.2 の寄せ: 13px → --fs-sm (12px)。 */
 .palette-head
 {
-    font-size: 13px;
+    font-size: var(--fs-sm);
     font-weight: 700;
-    color: var(--text);
+    letter-spacing: 0.06em;
+    color: var(--muted);
 }
 
 /* 追加先トグル (◉プロンプト ○ネガティブ ○お気に入り) */
@@ -706,14 +838,14 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: var(--sp-1);
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
     background: var(--panel-2);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px 4px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-1);
     white-space: nowrap;
     cursor: pointer;
 }
@@ -733,15 +865,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .palette-cat
 {
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--panel-2);
-    padding: 0 8px;
+    padding: 0 var(--sp-2);
 }
 
 .palette-cat > summary
 {
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--text);
     padding: 6px 2px;
@@ -768,15 +900,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    padding: 4px 0 8px;
+    gap: var(--sp-1);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 .palette-empty
 {
     color: var(--muted);
-    font-size: 11px;
-    padding: 4px 0 8px;
+    font-size: var(--fs-xs);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 /* クリックで追加するタグボタン */
@@ -785,9 +917,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
 }
 
@@ -804,7 +936,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     align-items: center;
     background: var(--accent-weak);
     border: 1px solid var(--accent-border);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     overflow: hidden;
 }
 
@@ -815,7 +947,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     color: var(--text);
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 2px 4px 2px 10px;
 }
 
@@ -830,7 +962,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x と統一する */
+    font-size: var(--fs-md);
     line-height: 1;
     padding: 0 6px 0 2px;
 }
@@ -844,7 +977,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     gap: 6px;
-    padding-bottom: 8px;
+    padding-bottom: var(--sp-2);
 }
 
 .fav-entry
@@ -854,32 +987,19 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px 8px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-2);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
-.fav-plus
+/* お気に入り追加 (+)。見た目は .btn .btn-ghost で、ここは入力欄に添えるための寸法だけ。
+   font: inherit は「入力欄と同じ字」に見せるための据え置き
+   (font-size 直書き派と混在しているが、揃えると字が変わるので P3-1 では触らない)。 */
+.fav-bar .btn
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
     padding: 0 10px;
     font: inherit;
-    cursor: pointer;
-}
-
-.fav-plus:hover:not(:disabled)
-{
-    border-color: var(--accent);
-}
-
-.fav-plus:disabled
-{
-    opacity: 0.45;
-    cursor: default;
 }
 
 /* ── 左ペイン: プリセット・コンパクトカード一覧 ── */
@@ -887,8 +1007,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 4px 0 8px;
+    gap: var(--sp-1);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 .ps-card
@@ -896,10 +1016,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     position: relative;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--sp-2);
     background: var(--bg);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 4px 6px;
     cursor: pointer;
     transition: border-color 0.12s;
@@ -910,6 +1030,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border-color: var(--accent);
 }
 
+/* 36px 角のサムネ / no-image 枠。border-radius: 4px は角丸トークンの対象外 —
+   §4.2 が認めている寄せは「8 or 10 → 10」だけで 4 → 6 は含まれない。
+   36px の小さな箱で半径を 1.5 倍にすると見た目が変わるので直書きのまま残す (P1-6)。 */
 .ps-card img
 {
     width: 36px;
@@ -931,6 +1054,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: 1px dashed var(--border);
     border-radius: 4px;
     color: var(--muted);
+    /* スケール外の最小値。--fs-xs (11px) へ寄せると 2px 動き、36px 角に "no image" が
+       収まらなくなる。§4.2 も 9px の寄せは認めていないので直書きのまま残す (P1-6)。
+       ラベルを短くするかアイコン化するなら、そのとき棚卸しする */
     font-size: 9px;
     flex-shrink: 0;
 }
@@ -939,34 +1065,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.ps-del
-{
-    width: 20px;
-    height: 20px;
-    line-height: 18px;
-    text-align: center;
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    padding: 0;
-    flex-shrink: 0;
-}
-
-.ps-del:hover
-{
-    border-color: var(--ng);
-    color: var(--ng-soft);
-}
+/* カードの削除ボタンは .btn .btn-icon そのもの (寸法も hover もバリアント側が持つ)。
+   ここに個別の規則は要らない。 */
 
 /* ── プリセット・保存バー (中央 TagPresetField) ── */
 .presetbar
@@ -982,38 +1089,24 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 6px 8px;
     font: inherit;
     flex: 1;
     min-width: 120px;
 }
 
-.preset-btn
+/* 保存ボタン。見た目は .btn .btn-ghost で、ここは入力欄 (.preset-name) に添えるための
+   寸法だけを持つ (font: inherit の意図は .fav-bar .btn と同じ)。 */
+.presetbar .btn
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
     padding: 6px 10px;
     font: inherit;
-    cursor: pointer;
-}
-
-.preset-btn:hover:not(:disabled)
-{
-    border-color: var(--accent);
-}
-
-.preset-btn:disabled
-{
-    opacity: 0.45;
-    cursor: default;
 }
 
 .preset-msg
 {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--accent);
 }
 
@@ -1026,7 +1119,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     align-items: center;
     background: var(--panel-2);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 6px;
     min-height: 38px;
     /* 追加先の左縁 (P2-6)。既定は no-op で、下の .field.is-target が値を差し替える */
@@ -1046,13 +1139,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--sp-1);
     background: var(--accent-weak);
     border: 1px solid var(--accent-border);
     color: var(--text);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 4px 2px 10px;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-sm (12px)。パレットのタグ (12px) をクリックして
+       チップになったときに字の大きさが変わらないようにする */
+    font-size: var(--fs-sm);
     line-height: 1.4;
 }
 
@@ -1062,9 +1157,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--fs-md);
     line-height: 1;
-    padding: 0 4px;
+    padding: 0 var(--sp-1);
     border-radius: 50%;
     /* --edge は継承するので、追加先フィールド内の × ボタンのフォーカスリングに
        左縁が載らないよう打ち消す (P2-6) */
@@ -1084,7 +1179,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--text);
     font: inherit;
-    padding: 4px;
+    padding: var(--sp-1);
 }
 
 .chip-entry:focus
@@ -1105,20 +1200,20 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin-top: 4px;
+    margin-top: var(--sp-1);
 }
 
 .lora-head
 {
     color: var(--muted);
-    font-size: 12px;
-    margin-right: 4px;
+    font-size: var(--fs-sm);
+    margin-right: var(--sp-1);
 }
 
 .lora-empty
 {
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
 }
 
 /* チップ + 強度スライダを 1 まとまりに */
@@ -1135,9 +1230,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
 }
 
@@ -1159,7 +1254,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--sp-1);
 }
 
 .lora-strength input[type="range"]
@@ -1170,6 +1265,6 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .lora-val
 {
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     min-width: 2.5em;
 }
