@@ -9,6 +9,7 @@ UI で作成したタグプリセットに**サムネイル画像**を持たせ�
 |---|---|
 | サムネ取得元 | **直近の生成画像を自動** (追加操作ゼロ)。`Generate.razor` が生バイトを保持し `TagPresetField` の `CurrentImage` に渡す |
 | 失敗時の扱い | **生成に失敗しても直近の成功画像がサムネ元として残る** (P2-2 以降)。生成開始時に `_imageBytes` を破棄しなくなったため。画面に見えている画像がそのままサムネになる方が直感的なので、この挙動を正とする |
+| ミニ履歴からの再表示 | **履歴 (P3-5) から再表示した画像もサムネ元になる**。上段の原則「**画面に見えている画像 = サムネ**」からの帰結であって、本 spec の例外・逸脱ではない (サムネ取得元は変わらず「今表示中の生成画像」1 本)。実装上も、履歴クリックは表示中の 4 値 (画像 / 生バイト / モードバッジ / 保存ファイル名) を `Generate.razor` の `ShowResult` で**まとめて**差し替えるだけなので、`CurrentImage` に渡る生バイトは常に画面の絵と一致する。`PresetStore` は無改修 |
 | 保存形式 | **別ファイル PNG**。`ui/data/thumbs/` 配下。`presets.json` は `thumbnail` ファイル名のみ持つ |
 | 縮小 | **SixLabors.ImageSharp** (クロスプラットフォーム) で **128px 上限・アスペクト比維持** (`ResizeMode.Max`) |
 | 保存先 | `ui/data/thumbs/{kind}_{name}.png` (gitignore 済み・`ui/data/` 配下)。起動時 `Directory.CreateDirectory` |

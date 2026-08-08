@@ -293,6 +293,13 @@ public sealed partial class AppCssTokenTests
     // ══════════════════════════════════════════════════
 
     // 出荷している形を最小構成で写したもの (これを 1 箇所ずつ壊したのが下の変異ケース)。
+    //
+    // ※ `calc(100vh - 176px)` の **176 という数値はこの判定器の検査対象ではない**
+    //    (見るのは「頭打ちが min-width クエリ 1 つにあり、境界が縦積みと接し、寸法を持たない」こと)。
+    //    ここを 176 にしてあるのは出荷 app.css の写しとしての忠実さのためだけで、
+    //    P3-5 でサムネ列 1 行 (72px) を足したぶん **104 → 176** に更新した。
+    //    数値そのものは ui.Tests/PreviewHistoryRazorTests が
+    //    「N = 104 (E の基準) + .thumb の height」として別途固定する。
     private const string LayoutCssShipped = """
         .main { display: grid; grid-template-columns: 320px minmax(340px, 460px) 1fr; }
         .sidebar { overflow-y: auto; }
@@ -300,7 +307,7 @@ public sealed partial class AppCssTokenTests
         .canvas { position: relative; }
         .preview { flex: 1; width: 100%; height: 100%; }
         .gen-actions { display: flex; gap: var(--sp-3); }
-        @media (min-width: 1101px) { .preview { max-width: calc(100vh - 104px); } }
+        @media (min-width: 1101px) { .preview { max-width: calc(100vh - 176px); } }
         @media (max-width: 1100px)
         {
             .main { grid-template-columns: 1fr; }
@@ -417,7 +424,7 @@ public sealed partial class AppCssTokenTests
         new object[]
         {
             "枠の頭打ちが消えた",
-            LayoutCssShipped.Replace("@media (min-width: 1101px) { .preview { max-width: calc(100vh - 104px); } }", ""),
+            LayoutCssShipped.Replace("@media (min-width: 1101px) { .preview { max-width: calc(100vh - 176px); } }", ""),
             "[canvas]",
         },
         new object[]
