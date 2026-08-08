@@ -1,16 +1,41 @@
 /* dollama UI — LM Studio 風ダーク 3 ペイン (左=タグ/プリセット, 中央=生成コントロール, 右=画像プレビュー) */
 
+/* 配色トークン (docs/ui-brushup-plan.md §4.1)。
+   色は必ずここを経由する — :root の外に直書きの色値を置かない
+   (ui.Tests/AppCssTokenTests.cs が機械的に検査する)。 */
 :root
 {
+    /* 面 (据え置き) */
     --bg: #14161a;
     --panel: #1c1f26;
     --panel-2: #23272f;
-    --border: #2c313b;
+
+    /* 境界は 2 段。装飾線と「触れる要素の外周」を分ける */
+    --border: #343b47;
+    --border-strong: #4a5261;
+
+    /* 文字 */
     --text: #e6e9ef;
-    --muted: #8b92a0;
+    --muted: #9aa2b1;
+
+    /* アクセント系 (accent 塗りの上の文字・弱塗り・弱枠・フォーカス輪) */
     --accent: #6ea8fe;
+    --on-accent: #0b1220;
+    --accent-weak: rgba(110, 168, 254, 0.15);
+    --accent-border: rgba(110, 168, 254, 0.4);
+    --focus-ring: rgba(110, 168, 254, 0.45);
+
+    /* 状態色 (ok / ng・ng は枠とドット用, ng-soft は本文用, ng-weak は地) */
     --ok: #3fb950;
     --ng: #f85149;
+    --ng-soft: #ffb4ae;
+    --ng-weak: rgba(248, 81, 73, 0.12);
+
+    /* テレメトリのデバイス色 (§4.4-1)。4 色が並んで動く = 4 HW 協調の可視化 */
+    --dev-cpu: #6ea8fe;
+    --dev-npu: #a78bfa;
+    --dev-igpu: #5fd4c8;
+    --dev-gpu: #f0a860;
 }
 
 *
@@ -99,7 +124,7 @@ html, body
 .lang-toggle button.on
 {
     background: var(--accent);
-    color: #0d1117;
+    color: var(--on-accent);
     font-weight: 600;
 }
 
@@ -177,7 +202,7 @@ html, body
 {
     display: block;
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), #9d7bff);
+    background: linear-gradient(90deg, var(--accent), var(--dev-npu));
     transition: width 0.4s ease;
 }
 
@@ -294,7 +319,7 @@ textarea:focus, select:focus
     /* 2 ボタンを等幅で横並びにする */
     flex: 1;
     background: var(--accent);
-    color: #0b1220;
+    color: var(--on-accent);
     border: none;
     border-radius: 8px;
     padding: 12px;
@@ -327,9 +352,9 @@ textarea:focus, select:focus
 
 .error
 {
-    background: rgba(248, 81, 73, 0.12);
+    background: var(--ng-weak);
     border: 1px solid var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 13px;
@@ -547,8 +572,8 @@ textarea:focus, select:focus
 {
     display: inline-flex;
     align-items: center;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     border-radius: 999px;
     overflow: hidden;
 }
@@ -716,7 +741,7 @@ textarea:focus, select:focus
 .ps-del:hover
 {
     border-color: var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
 }
 
 /* ── プリセット・保存バー (中央 TagPresetField) ── */
@@ -787,8 +812,8 @@ textarea:focus, select:focus
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     color: var(--text);
     border-radius: 999px;
     padding: 2px 4px 2px 10px;
@@ -906,7 +931,7 @@ textarea:focus, select:focus
 {
     background: var(--accent);
     border-color: var(--accent);
-    color: #0b0f17;
+    color: var(--on-accent);
 }
 
 /* 選択中の強度スライダ */
