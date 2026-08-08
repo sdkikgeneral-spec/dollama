@@ -534,6 +534,12 @@ html, body
 {
     position: relative;
     display: flex;
+    /* P3-5: プレビュー枠 (.preview) の**下**にミニ履歴のサムネ列 (.thumbs) を敷くため縦並びにする。
+       従来 (行方向) は子が .preview 1 つだけだったので、align-items / justify-content の
+       担当が入れ替わっても見た目は不変: .preview は width: 100% + flex: 1 なので、
+       横は align-items: center が (max-width で頭打ちにした枠を) 中央に置き、
+       縦は flex: 1 が余白を全部吸う。履歴が空ならサムネ列ごと出ないので完全に従来と同じ。 */
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     background: var(--panel);
@@ -720,11 +726,19 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
    (--panel) 側へ逃がす。枠は .canvas の justify-content: center で中央に留まる
    (端へ寄せない = 画像の位置は動かさない)。
 
-   ★ 104px = トップバー (~39) + .main の上下 padding (32) + .canvas の枠と上下 padding (34)。
+   ★ 176px = **104** (トップバー ~39 + .main の上下 padding 32 + .canvas の枠と上下 padding 34)
+     **+ 72** (P3-5 で .canvas の中・.preview の下に足したサムネ列 1 行の外寸 = .thumb の height)。
      つまり calc の値は .preview の実高さの概算で、**外れても壊れない** —
      少し小さければ枠が数 px 縦長に、大きければ空白が数 px 残るだけで、画像は
      object-fit: contain のまま中央に収まる。余白 (padding/margin/gap) は 1px も動かさない
      (P1-6 の実効 px ベースラインを守るため)。
+   ★ P3-5 の 72px 加算がないと**枠が縦にはみ出す** (サムネ列の分だけ .preview の実高さが
+     減るのに、幅の頭打ちは元の高さのままになるため)。E の検査意図「デスクトップで
+     プレビュー枠が縦にはみ出さない」はこの更新で保たれ、104 と 72 の内訳は
+     ui.Tests/PreviewHistoryRazorTests が「N = 104 + .thumb の height」として機械で固定する。
+   ★ 履歴が空のときはサムネ列が出ないので枠は 72px ぶん縦に余る。上のとおり
+     「外れても壊れない」側の誤差で、:has() で出し分けると .preview の頭打ち規則が
+     2 ブロックになり E の「頭打ちは 1 つだけ」の契約を壊すので採らない。
    ★ 縦積み (≤1100px) には**掛けない**。あちらは幅いっぱいの「結果ペイン」であってほしく、
      高さ基準の頭打ちは意味を持たないため。ブレークポイントは 1100 + 1 で隙間なく接する。
    ★ 不採用: aspect-ratio: 1 / 1 で枠を正方形にする案。厳密だが flex の基準寸法
@@ -734,7 +748,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
 {
     .preview
     {
-        max-width: calc(100vh - 104px);
+        max-width: calc(100vh - 176px);
     }
 }
 
@@ -796,6 +810,72 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
 @keyframes spin
 {
     to { transform: rotate(360deg); }
+}
+
+/* ── 直近生成のミニ履歴 (P3-5) ─────────────────────────────────
+   右ペインの下に直近 4 枚を新しい順で 1 行に並べ、クリックでその絵に戻る。
+   できるのは「並べる / 戻る / 選択中が分かる / 空なら出ない」の 4 つだけ
+   (削除・並べ替え・ピン留め・永続化・サムネごとの保存導線は**やらない**)。
+
+   ★ 置き場所は .canvas の中・.preview の**外**。枠の中に絶対配置で重ねる案は
+     生成物を隠すので不採用 (PL 裁定)。.canvas を縦並びにして枠の下に敷く。
+   ★ **寸法トークン (--fs-* / --sp-* / --r-*) を 1 つも使わない**。font-size /
+     border-radius / padding / margin / gap を 1 つも宣言しないので、P1-6 の実効 px
+     ベースライン表 (font-size 36 / border-radius 29 / 余白 65 行) が **1 行も動かない** —
+     P3-3 の .tm-role と同じ通し方で、これは「制約を先に決めた」結果 (後から詰めると必ず表が動く)。
+   ★ したがってサムネ間の間隔は **gap ではなく枠 (border) で作る**。4px の枠を
+     右ペインの地 (--panel) と同色で描くと、隣り合うサムネの間に 8px ぶんの地が見える。
+     選択中はこの枠の色だけを --accent へ差し替える (新トークンはゼロ)。 */
+.thumbs
+{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* サムネ 1 枚 = 64px 角の画像 + 4px の枠 (外寸 72px = 上の calc(100vh - 176px) の内訳)。
+   ★ all: unset は button の UA 既定 (padding: 1px 6px / border: 2px outset / appearance) を
+     1 行で落とすためのもの。`padding: 0` と書くと**それだけで余白表に 1 行増える**ので、
+     宣言を増やさずに UA 既定だけを外す。* の box-sizing も一緒に落ちるため明示で戻す。
+     (UA padding を残すとサムネの中身がブラウザごとに数 px ずれ、外寸 72px が崩れる) */
+.thumb
+{
+    all: unset;
+    box-sizing: border-box;
+    display: block;
+    width: 72px;
+    height: 72px;
+    background: var(--panel-2);
+    border: 4px solid var(--panel);
+    cursor: pointer;
+}
+
+.thumb:hover:not(:disabled)
+{
+    border-color: var(--accent-border);
+}
+
+/* 選択中 (= 今プレビューに出ている絵)。:hover 規則と同詳細度 (0,3,0) になるよう
+   .thumb.on:hover を併記し、**この規則を後に置く**ことで選択中は hover でも accent のまま。 */
+.thumb.on, .thumb.on:hover
+{
+    border-color: var(--accent);
+}
+
+/* 生成中はクリックを受け付けない (完了時に上書きされるだけの操作をさせない) */
+.thumb:disabled
+{
+    cursor: default;
+    opacity: 0.45;
+}
+
+.thumb img
+{
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 /* ── 狭い画面では 1 カラムへ縦積み (中央 → 右 → 左) ──────────────
