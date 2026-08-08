@@ -1,16 +1,41 @@
 /* dollama UI — LM Studio 風ダーク 3 ペイン (左=タグ/プリセット, 中央=生成コントロール, 右=画像プレビュー) */
 
+/* 配色トークン (docs/ui-brushup-plan.md §4.1)。
+   色は必ずここを経由する — :root の外に直書きの色値を置かない
+   (ui.Tests/AppCssTokenTests.cs が機械的に検査する)。 */
 :root
 {
+    /* 面 (据え置き) */
     --bg: #14161a;
     --panel: #1c1f26;
     --panel-2: #23272f;
-    --border: #2c313b;
+
+    /* 境界は 2 段。装飾線と「触れる要素の外周」を分ける */
+    --border: #343b47;
+    --border-strong: #4a5261;
+
+    /* 文字 */
     --text: #e6e9ef;
-    --muted: #8b92a0;
+    --muted: #9aa2b1;
+
+    /* アクセント系 (accent 塗りの上の文字・弱塗り・弱枠・フォーカス輪) */
     --accent: #6ea8fe;
+    --on-accent: #0b1220;
+    --accent-weak: rgba(110, 168, 254, 0.15);
+    --accent-border: rgba(110, 168, 254, 0.4);
+    --focus-ring: rgba(110, 168, 254, 0.45);
+
+    /* 状態色 (ok / ng・ng は枠とドット用, ng-soft は本文用, ng-weak は地) */
     --ok: #3fb950;
     --ng: #f85149;
+    --ng-soft: #ffb4ae;
+    --ng-weak: rgba(248, 81, 73, 0.12);
+
+    /* テレメトリのデバイス色 (§4.4-1)。4 色が並んで動く = 4 HW 協調の可視化 */
+    --dev-cpu: #6ea8fe;
+    --dev-npu: #a78bfa;
+    --dev-igpu: #5fd4c8;
+    --dev-gpu: #f0a860;
 }
 
 *
@@ -67,7 +92,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
@@ -99,7 +124,7 @@ html, body
 .lang-toggle button.on
 {
     background: var(--accent);
-    color: #0d1117;
+    color: var(--on-accent);
     font-weight: 600;
 }
 
@@ -177,7 +202,7 @@ html, body
 {
     display: block;
     height: 100%;
-    background: linear-gradient(90deg, var(--accent), #9d7bff);
+    background: linear-gradient(90deg, var(--accent), var(--dev-npu));
     transition: width 0.4s ease;
 }
 
@@ -187,6 +212,49 @@ html, body
     color: var(--accent);
     width: 30px;
     text-align: right;
+}
+
+/* デバイス別の色 (P1-5 / §4.4-1)。tm-item のクラスは Services/DeviceStyle.cs が決める。
+   4 色が別々に動くことで「4 つの HW が協調して働いている」が一瞥で伝わる。
+   未知のデバイスはクラスが付かず上の既定グラデへフォールバックする。 */
+.tm-cpu .tm-fill
+{
+    background: var(--dev-cpu);
+}
+
+.tm-cpu .tm-pct
+{
+    color: var(--dev-cpu);
+}
+
+.tm-npu .tm-fill
+{
+    background: var(--dev-npu);
+}
+
+.tm-npu .tm-pct
+{
+    color: var(--dev-npu);
+}
+
+.tm-igpu .tm-fill
+{
+    background: var(--dev-igpu);
+}
+
+.tm-igpu .tm-pct
+{
+    color: var(--dev-igpu);
+}
+
+.tm-gpu .tm-fill
+{
+    background: var(--dev-gpu);
+}
+
+.tm-gpu .tm-pct
+{
+    color: var(--dev-gpu);
 }
 
 /* ── メイン 3 ペイン (左ペイン + 中央コントロール + 右プレビュー) ── */
@@ -269,17 +337,35 @@ textarea, select, input[type="range"]
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 8px;
     font: inherit;
     resize: vertical;
 }
 
-textarea:focus, select:focus
+/* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
+/* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
+   リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。 */
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* チップ入力の中身は透明な素の input なので、親 .chips のリングと二重にしない */
+.chip-entry:focus, .chip-entry:focus-visible
+{
+    outline: none;
+    box-shadow: none;
+}
+
+/* placeholder は UA 既定 (半透明) だとダーク地で読めないので明示する (P1-3) */
+::placeholder
+{
+    color: var(--muted);
+    opacity: 1;
 }
 
 /* ── 生成ボタン行 (本番 + 下書き高速プレビューの 2 ボタン横並び) ── */
@@ -294,7 +380,7 @@ textarea:focus, select:focus
     /* 2 ボタンを等幅で横並びにする */
     flex: 1;
     background: var(--accent);
-    color: #0b1220;
+    color: var(--on-accent);
     border: none;
     border-radius: 8px;
     padding: 12px;
@@ -308,7 +394,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     font-weight: 600;
     font-size: 14px;
 }
@@ -327,9 +413,9 @@ textarea:focus, select:focus
 
 .error
 {
-    background: rgba(248, 81, 73, 0.12);
+    background: var(--ng-weak);
     border: 1px solid var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 13px;
@@ -456,7 +542,7 @@ textarea:focus, select:focus
     font-size: 12px;
     color: var(--muted);
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 4px;
     white-space: nowrap;
@@ -529,7 +615,7 @@ textarea:focus, select:focus
 {
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 8px;
     font-size: 12px;
@@ -547,8 +633,8 @@ textarea:focus, select:focus
 {
     display: inline-flex;
     align-items: center;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     border-radius: 999px;
     overflow: hidden;
 }
@@ -598,24 +684,18 @@ textarea:focus, select:focus
     min-width: 0;
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 8px;
     font: inherit;
     font-size: 12px;
 }
 
-.fav-entry:focus
-{
-    outline: none;
-    border-color: var(--accent);
-}
-
 .fav-plus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 0 10px;
     font: inherit;
@@ -649,7 +729,7 @@ textarea:focus, select:focus
     align-items: center;
     gap: 8px;
     background: var(--bg);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 4px 6px;
     cursor: pointer;
@@ -705,7 +785,7 @@ textarea:focus, select:focus
     text-align: center;
     background: transparent;
     color: var(--muted);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     cursor: pointer;
     font-size: 13px;
@@ -716,7 +796,7 @@ textarea:focus, select:focus
 .ps-del:hover
 {
     border-color: var(--ng);
-    color: #ffb4ae;
+    color: var(--ng-soft);
 }
 
 /* ── プリセット・保存バー (中央 TagPresetField) ── */
@@ -732,7 +812,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 8px;
     font: inherit;
@@ -744,7 +824,7 @@ textarea:focus, select:focus
 {
     background: var(--panel-2);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px 10px;
     font: inherit;
@@ -776,7 +856,7 @@ textarea:focus, select:focus
     gap: 6px;
     align-items: center;
     background: var(--panel-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
     padding: 6px;
     min-height: 38px;
@@ -787,8 +867,8 @@ textarea:focus, select:focus
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: rgba(110, 168, 254, 0.15);
-    border: 1px solid rgba(110, 168, 254, 0.4);
+    background: var(--accent-weak);
+    border: 1px solid var(--accent-border);
     color: var(--text);
     border-radius: 999px;
     padding: 2px 4px 2px 10px;
@@ -829,28 +909,10 @@ textarea:focus, select:focus
     outline: none;
 }
 
-/* Blazor 既定のエラー UI */
-#blazor-error-ui
-{
-    background: #1c1f26;
-    border-top: 1px solid var(--ng);
-    bottom: 0;
-    display: none;
-    left: 0;
-    padding: 0.6rem 1.25rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-    color: var(--text);
-}
-
-#blazor-error-ui .dismiss
-{
-    cursor: pointer;
-    position: absolute;
-    right: 0.75rem;
-    top: 0.5rem;
-}
+/* Blazor 既定のエラー UI (#blazor-error-ui) の見た目は
+   Components/Layout/MainLayout.razor.css に一本化した。
+   scoped CSS は #blazor-error-ui[b-xxxx] へ書き換わり裸のセレクタより詳細度で必ず勝つため、
+   ここに書いても死にコードになる (P1-7)。CSS 変数は DOM 継承するので scoped 側でも var() は解決する。 */
 
 /* ── LoRA 選択チップ (L-2) ─────────────────────────────
    既存のチップ系トークンに揃える。選択中は強度スライダを添える。 */
@@ -889,7 +951,7 @@ textarea:focus, select:focus
 {
     background: var(--bg);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     padding: 2px 10px;
     font-size: 12px;
@@ -906,7 +968,7 @@ textarea:focus, select:focus
 {
     background: var(--accent);
     border-color: var(--accent);
-    color: #0b0f17;
+    color: var(--on-accent);
 }
 
 /* 選択中の強度スライダ */

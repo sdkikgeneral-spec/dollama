@@ -195,6 +195,7 @@ ui/
 │  ├─ TagPreset.cs               プリセットのモデル (name / kind / tags / thumbnail)
 │  ├─ TagCategory.cs             タグパレットの 1 カテゴリ (category / tags)
 │  ├─ TagAdd.cs                  パレット → 親へのタグ追加通知 (tag / target)
+│  ├─ DeviceStyle.cs             テレメトリのデバイス名 → CSS クラス (未知/null は既定へフォールバック・純ロジック・テスト対象)
 │  ├─ PresetStore.cs             presets.json + thumbs の読み書き (スレッドセーフ singleton)
 │  ├─ TagPaletteCatalog.cs       tag-palette.json を起動時に 1 回読む singleton (不在/壊れで空)
 │  └─ FavoriteTagStore.cs        favorites.json の読み書き (スレッドセーフ・アトミック書込 singleton)

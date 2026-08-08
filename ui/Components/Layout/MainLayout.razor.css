@@ -1,6 +1,12 @@
+/* Blazor 既定のエラーバー。テンプレート既定の lightyellow はダークテーマ内で異物なので
+   ダーク配色へ寄せる (P1-7)。scoped CSS は #blazor-error-ui[b-xxxx] へ書き換わり
+   app.css の裸のセレクタより詳細度で必ず勝つので、見た目の定義はここに一本化する。
+   CSS 変数は DOM を継承するため scoped でも var(--panel) 等は解決する
+   (:root は app.css 側にだけ置く)。 */
 #blazor-error-ui {
-    color-scheme: light only;
-    background: lightyellow;
+    background: var(--panel);
+    color: var(--text);
+    border-top: 1px solid var(--ng);
     bottom: 0;
     box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
     box-sizing: border-box;
@@ -11,6 +17,11 @@
     width: 100%;
     z-index: 1000;
 }
+
+    /* 再読み込みリンクはブラウザ既定色 (濃い青) だとダーク地で読めないので accent へ */
+    #blazor-error-ui .reload {
+        color: var(--accent);
+    }
 
     #blazor-error-ui .dismiss {
         cursor: pointer;

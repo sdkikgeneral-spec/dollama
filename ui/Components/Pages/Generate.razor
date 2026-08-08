@@ -23,7 +23,7 @@
             {
                 @foreach (var d in _sample.Devices)
                 {
-                    <div class="tm-item" title="@d.Device @d.Role @d.Percent.ToString("0")%">
+                    <div class="tm-item @DeviceStyle.CssClass(d.Device)" title="@d.Device @d.Role @d.Percent.ToString("0")%">
                         <span class="tm-dev">@d.Device</span>
                         <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
                         <span class="tm-pct">@d.Percent.ToString("0")%</span>
