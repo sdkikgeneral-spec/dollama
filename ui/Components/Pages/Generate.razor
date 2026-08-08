@@ -137,6 +137,15 @@
             {
                 <div class="gen-mode">@_lastMode</div>
             }
+
+            @* 生成画像の保存導線 (P2-3 / 課題 #8)。data URI の a[download] なので JS interop は要らない。
+               生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
+            @if (_imageData is not null && !_busy)
+            {
+                <a class="preview-save" download="@_downloadName"
+                   href="data:image/png;base64,@_imageData"
+                   title="@_downloadName として保存します">PNG 保存</a>
+            }
             @* 生成中も前回画像を破棄せず減光して残す (P2-2 / 課題 #6)。
                下書き → 本番の見比べができ、生成のたびにプレースホルダへフラッシュしない。
                スピナーと経過秒 (課題 #7) はその上へ絶対配置でかぶせる。 *@
@@ -197,6 +206,10 @@
 
     // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
     private string? _lastMode;
+
+    // 「PNG 保存」の download 属性に出すファイル名 (P2-3)。表示中の画像が生成された
+    // 時刻と実送信サイズで決まるので、成功時に 1 回だけ組み立てて保持する。
+    private string? _downloadName;
 
     // 生成開始からの経過時間 (生成中オーバーレイの表示用・P2-2)。表示整形は ElapsedFormat。
     private TimeSpan _elapsed;
@@ -418,6 +431,8 @@
             _connected = true;
             // 成功後にモードバッジを記録 (例「下書き 768²」「本番 1024²」)。
             _lastMode = $"{(draft ? "下書き" : "本番")} {ModeBadge(sendSize)}";
+            // 保存ファイル名も同時に確定する (表示中の画像と必ず対になる)。
+            _downloadName = DownloadName.ForPng(DateTime.Now, sendSize);
         }
         catch (GenerationException ex)
         {
