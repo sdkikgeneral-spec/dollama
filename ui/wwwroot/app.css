@@ -492,8 +492,12 @@ html, body
 .main
 {
     display: grid;
-    /* 左ペインを 320px に広げ、追加先トグル 3 ラベルが横一列で潰れず収まるようにする */
-    grid-template-columns: 320px minmax(340px, 400px) 1fr;
+    /* 左ペインを 320px に広げ、追加先トグル 3 ラベルが横一列で潰れず収まるようにする。
+       中央トラックの上限は 400 → **460px** (P3-4 / 課題 #24)。15 個を超えるタグ列で
+       チップが縦に積み上がる一方、右ペイン (1fr) には正方形画像の左右に空白が余る、
+       という非対称の緩和。**3 トラック構成 (左固定 / 中央 minmax / 右 1fr) は変えない** —
+       伸ばすのは中央の上限だけで、下限 340px も据え置き (狭い 3 ペイン時の挙動は不変)。 */
+    grid-template-columns: 320px minmax(340px, 460px) 1fr;
     gap: var(--sp-4);
     padding: var(--sp-4);
     flex: 1;
@@ -710,6 +714,30 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
     overflow: hidden;
 }
 
+/* 右ペインの余白調整 (P3-4 / 課題 #24)。3 ペイン時の右ペインは 1fr = 画面が広いほど
+   横に伸びるが、生成画像は正方形 (512/768/1024²) で**高さ律速**なので、伸びるのは
+   破線枠の中の空白だけだった。枠の幅を「枠の高さ」で頭打ちにし、余った幅はペインの地
+   (--panel) 側へ逃がす。枠は .canvas の justify-content: center で中央に留まる
+   (端へ寄せない = 画像の位置は動かさない)。
+
+   ★ 104px = トップバー (~39) + .main の上下 padding (32) + .canvas の枠と上下 padding (34)。
+     つまり calc の値は .preview の実高さの概算で、**外れても壊れない** —
+     少し小さければ枠が数 px 縦長に、大きければ空白が数 px 残るだけで、画像は
+     object-fit: contain のまま中央に収まる。余白 (padding/margin/gap) は 1px も動かさない
+     (P1-6 の実効 px ベースラインを守るため)。
+   ★ 縦積み (≤1100px) には**掛けない**。あちらは幅いっぱいの「結果ペイン」であってほしく、
+     高さ基準の頭打ちは意味を持たないため。ブレークポイントは 1100 + 1 で隙間なく接する。
+   ★ 不採用: aspect-ratio: 1 / 1 で枠を正方形にする案。厳密だが flex の基準寸法
+     (flex-basis: auto + width: auto) の解決に依存し、外すと**デスクトップの主画面**で
+     枠が内容幅まで潰れる。目視できない状況で最優先 (デスクトップ非退行) を賭けられない。 */
+@media (min-width: 1101px)
+{
+    .preview
+    {
+        max-width: calc(100vh - 104px);
+    }
+}
+
 .preview img
 {
     max-width: 100%;
@@ -770,7 +798,18 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
     to { transform: rotate(360deg); }
 }
 
-/* ── 狭い画面では 1 カラムへ縦積み (左→中央→右) ── */
+/* ── 狭い画面では 1 カラムへ縦積み (中央 → 右 → 左) ──────────────
+   並びは DOM 順 (左 → 中央 → 右) ではなく **生成 → 結果 → パレット** (P3-2 / 課題 #17)。
+   従来は左ペイン (タグパレット + プリセット一覧) が先頭に来るため、生成ボタンを押した後
+   画面最下部までスクロールしないと結果が見えなかった。
+
+   ★ この中の規則は**すべて縦積み専用**。order / position: sticky を外へ出すと
+     3 ペイン時のレイアウトが変わる (機械検査 ui.Tests/AppCssLayoutTests.cs が
+     「メディアクエリの外に order / sticky が 1 つも無いこと」を縛っている)。
+   ★ order は**値ではなく大小関係**が意味を持つ (中央 < 右 < 左)。詰め直しても順序が
+     保たれていれば検査は緑。
+   ★ 代償: 視覚順と DOM 順 (= Tab 順) がずれる。DOM を組み替えれば揃うが、それは
+     3 ペイン時の Tab 順 (左 → 中央 → 右) を壊す取引になるので採らない。 */
 @media (max-width: 1100px)
 {
     .main
@@ -778,15 +817,46 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
         grid-template-columns: 1fr;
     }
 
-    /* 縦積み時はサイドバーの縦スクロールを解除して潰れないように */
-    .sidebar
+    /* ① 中央 (生成コントロール) */
+    .gen
     {
+        order: 1;
+        /* ★ sticky の急所: .gen が overflow-y: auto のままだと、生成ボタン行から見た
+           「いちばん近いスクロール容器」が .gen 自身になる。縦積みの .gen は高さが
+           内容ぴったり (自分ではスクロールしない) なので、sticky が**永久に発動しない**。
+           ページ (ビューポート) をスクロール容器に戻すため、.sidebar と同じく解除する。 */
         overflow-y: visible;
     }
 
+    /* ② 右 (結果プレビュー) — 生成ボタンのすぐ下に来る */
     .canvas
     {
+        order: 2;
         min-height: 320px;
+    }
+
+    /* ③ 左 (タグパレット + プリセット一覧)。縦スクロールを解除して潰れないように */
+    .sidebar
+    {
+        order: 3;
+        overflow-y: visible;
+    }
+
+    /* 生成ボタン行を画面下端に貼り付ける (P3-2 / 課題 #17)。縦積みの中央列は縦に長く、
+       スクロールするとボタンが画面外へ消えてしまう。
+       ★ 背景と上境界は**必須**。透明だと裏を流れるチップ列と重なって読めなくなる。
+         地は器 (.gen) と同じ --panel なので、貼り付いていても継ぎ目が出ない。
+       ★ 余白 (padding / margin / gap) は 1 つも足さない — 行の外周は .gen の padding が
+         そのまま担う。足すと P1-6 の実効 px ベースライン表の書き換えが要る (裁定事項)。
+       ★ z-index は同一 stacking context 内での前後を明示するだけ (sticky は positioned
+         なので静的な兄弟には元から勝つ)。 */
+    .gen-actions
+    {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
     }
 }
 
