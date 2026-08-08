@@ -66,12 +66,15 @@
              Ctrl+Enter はチップ入力にフォーカスがあっても効くよう、section で keydown を拾う
              (子の入力欄から素直にバブリングしてくる)。 -->
         <section class="gen" @onkeydown="OnSectionKeyDown">
+            @* IsTarget は「パレットのタグが今ここに入る」の可視化 (P2-6 / 課題 #9)。
+               判定は親のここで行い、子は結果を受け取るだけ (真実源は _target のまま)。 *@
             <TagPresetField @ref="_promptField"
                             Label="プロンプト" Kind="prompt"
                             @bind-Tags="_promptTags"
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
                             OnFocused="SetTarget"
+                            IsTarget="@(_target == "prompt")"
                             DraftEmptyChanged="OnPromptDraftEmptyChanged"
                             Placeholder="例: 1girl と入力して Enter" />
 
@@ -81,6 +84,7 @@
                             CurrentImage="_imageBytes"
                             OnSaved="RefreshPresets"
                             OnFocused="SetTarget"
+                            IsTarget="@(_target == "negative")"
                             Placeholder="例: lowres, bad anatomy" />
 
             <div class="row">

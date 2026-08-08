@@ -5,7 +5,11 @@
    保存後は OnSaved を呼び、親が PresetSidebar を Refresh して一覧へ反映する。 *@
 @inject PresetStore Presets
 
-<div class="field">
+@* is-target = パレットのタグが今ここに入る (P2-6 / 課題 #9)。
+   判定はしない — 親 (Generate) が真実源 _target と自分の Kind を比べて降ろしてくる。
+   見た目は app.css の .field.is-target が .chips に inset の左縁を出す
+   (border-left にするとレイアウトが 3px ずれるので box-shadow)。 *@
+<div class="field @(IsTarget ? "is-target" : null)">
     <span>@Label</span>
 
     <TagInput @ref="_input" Tags="Tags" TagsChanged="OnTagsChanged" Placeholder="@Placeholder"
@@ -35,6 +39,10 @@
     [Parameter] public EventCallback<List<string>> TagsChanged { get; set; }
 
     [Parameter] public string Placeholder { get; set; } = "タグを入力して Enter";
+
+    // パレットの追加先が今このフィールドか (P2-6)。親が _target と Kind を比べて降ろす。
+    // 子は自前で判定を持たない (追加先の真実源は Generate.razor のまま)。
+    [Parameter] public bool IsTarget { get; set; }
 
     // 直近生成画像の生バイト (PNG)。保存時にサムネとして使う。無ければサムネ無し保存。
     [Parameter] public byte[]? CurrentImage { get; set; }

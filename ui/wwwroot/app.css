@@ -34,6 +34,16 @@
     /* 生成中オーバーレイの暗幕 (P2-2)。減光した前回画像の上でも文字が読めるようにする */
     --overlay: rgba(0, 0, 0, 0.45);
 
+    /* 追加先 (パレットのタグが入る先) を示す左縁 (P2-6 / 課題 #9)。
+       border-left ではなく inset の box-shadow で描く — border 幅を変えると
+       レイアウトが 3px ずれるため。
+       フォーカスリング (P1-2) と box-shadow を奪い合わないよう、値は --edge に載せて
+       リング側の宣言に合成する (リングの宣言を 1 ブロックに保つ機械検査があるため)。
+       既定は no-op (--edge-off) で、追加先のフィールドだけ --edge を差し替える。 */
+    --edge: var(--edge-off);
+    --edge-off: 0 0 0 0 transparent;
+    --edge-target: inset 3px 0 0 var(--accent);
+
     /* テレメトリのデバイス色 (§4.4-1)。4 色が並んで動く = 4 HW 協調の可視化 */
     --dev-cpu: #6ea8fe;
     --dev-npu: #a78bfa;
@@ -381,12 +391,15 @@ textarea, select, input[type="range"]
 /* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
    リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。
    .preview-save は button ではなく a[download] (P2-3) なので個別に足す — ここを
-   別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。 */
+   別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。
+   先頭の var(--edge) は追加先の左縁 (P2-6) との合成。既定は no-op なので
+   フォーカスだけのときは従来どおりリング 1 本、追加先かつフォーカス中は
+   「左縁 + リング」が同時に出る (どちらかが消えない)。 */
 textarea:focus, select:focus, input:focus-visible, button:focus-visible, .preview-save:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--focus-ring);
+    box-shadow: var(--edge), 0 0 0 2px var(--focus-ring);
 }
 
 /* チップ入力の中身は透明な素の input なので、親 .chips のリングと二重にしない */
@@ -619,6 +632,16 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+/* 追加先がお気に入りのときは、パレット全体を面で示す (P2-6 / 課題 #9)。
+   中央フィールドは左縁で示せるが、お気に入りが追加先のときは中央のどちらでもない —
+   従来はトグル label の小さなハイライトだけだったので「今クリックするとお気に入りに入る」を
+   面 (地色 + 縁) で伝える。色は既存トークンのみ。 */
+.palette.fav-target
+{
+    background: var(--accent-weak);
+    border-color: var(--accent-border);
 }
 
 .palette-head
@@ -966,6 +989,17 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border-radius: 6px;
     padding: 6px;
     min-height: 38px;
+    /* 追加先の左縁 (P2-6)。既定は no-op で、下の .field.is-target が値を差し替える */
+    box-shadow: var(--edge);
+}
+
+/* 追加先 (パレットのタグが入る先) のフィールドだけ左縁を出す (P2-6 / 課題 #9)。
+   is-target は TagPresetField が親から降ろされた IsTarget で付ける —
+   追加先の真実源は Generate.razor のままで、子は判定を持たない。
+   ここで差し替えるのは変数だけなので、フォーカスリングと詳細度を争わない。 */
+.field.is-target .taginput .chips
+{
+    --edge: var(--edge-target);
 }
 
 .tag-chip
@@ -992,6 +1026,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     line-height: 1;
     padding: 0 4px;
     border-radius: 50%;
+    /* --edge は継承するので、追加先フィールド内の × ボタンのフォーカスリングに
+       左縁が載らないよう打ち消す (P2-6) */
+    --edge: var(--edge-off);
 }
 
 .chip-x:hover

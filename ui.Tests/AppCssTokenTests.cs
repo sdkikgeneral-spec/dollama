@@ -21,6 +21,8 @@ public sealed class AppCssTokenTests
     private static string ReconnectCssPath => Path.Combine(RepoRoot(), "ui", "Components", "Layout", "ReconnectModal.razor.css");
     private static string ReconnectRazorPath => Path.Combine(RepoRoot(), "ui", "Components", "Layout", "ReconnectModal.razor");
     private static string GenerateRazorPath => Path.Combine(RepoRoot(), "ui", "Components", "Pages", "Generate.razor");
+    private static string TagPresetFieldRazorPath => Path.Combine(RepoRoot(), "ui", "Components", "Shared", "TagPresetField.razor");
+    private static string TagPaletteRazorPath => Path.Combine(RepoRoot(), "ui", "Components", "Shared", "TagPalette.razor");
 
     // ────────────────────────────────────────────────
     // (1) トークン定義: 既存 7 + 新設 13 が :root に揃っていること
@@ -41,6 +43,8 @@ public sealed class AppCssTokenTests
             "--dev-cpu", "--dev-npu", "--dev-igpu", "--dev-gpu",
             // P2-2 で追加: 生成中オーバーレイの暗幕
             "--overlay",
+            // P2-6 で追加: 追加先の左縁を box-shadow として合成するための影トークン
+            "--edge", "--edge-off", "--edge-target",
         };
 
         foreach (var name in expected)
@@ -277,6 +281,93 @@ public sealed class AppCssTokenTests
         {
             Assert.True(razor.Contains(id), $"ReconnectModal.razor から {id} が消えている (Blazor JS との契約)");
         }
+    }
+
+    // ────────────────────────────────────────────────
+    // (10) P2-6 追加先の可視化 (課題 #9)
+    //      「パレットのタグが今どこに入るか」の表示。border 幅で描くと
+    //      レイアウトが 3px ずれるので inset の box-shadow で描く、が肝。
+    // ────────────────────────────────────────────────
+    [Fact]
+    public void TargetField_UsesInsetShadowNotBorderWidth()
+    {
+        var tokens = RootTokens();
+
+        // 左縁の実体は inset の box-shadow (border-left ではない)
+        var edge = Normalize(tokens["--edge-target"]);
+        Assert.StartsWith("inset", edge);
+        Assert.Contains("3px", edge);
+        Assert.Contains("var(--accent)", edge);
+
+        // 既定は no-op (影を描かない)。ここが色付きだと全フィールドに縁が出る。
+        Assert.Equal("var(--edge-off)", Normalize(tokens["--edge"]));
+        Assert.Contains("transparent", tokens["--edge-off"]);
+
+        var blocks = Blocks(File.ReadAllText(AppCssPath));
+
+        // 追加先フィールドの規則は「変数を差し替えるだけ」— border 幅も padding も動かさない
+        var target = blocks.Where(b => b.Selector.Contains(".is-target")
+                                       && b.Selector.Contains(".chips")).ToList();
+        Assert.True(target.Count == 1, $".field.is-target ….chips の宣言は 1 つであること (実際 {target.Count} 件)");
+        var body = Normalize(target[0].Body);
+        Assert.Contains("--edge: var(--edge-target)", body);
+        Assert.DoesNotContain("border-left", body);
+        Assert.DoesNotContain("border-width", body);
+        Assert.DoesNotContain("padding", body);
+
+        // .chips 本体が var(--edge) を描画していること (ここが無いと非フォーカス時に出ない)
+        var chips = blocks.Where(b => Normalize(b.Selector) == ".taginput .chips").ToList();
+        Assert.True(chips.Count == 1, ".taginput .chips の宣言は 1 つであること");
+        Assert.Contains("box-shadow: var(--edge)", Normalize(chips[0].Body));
+    }
+
+    [Fact]
+    public void FocusRing_ComposesTargetEdgeSoNeitherIsLost()
+    {
+        // 追加先かつフォーカス中でも「左縁 + リング」が両方出ること。
+        // リングの宣言は 1 ブロックに固定されている (上の (6)) ため、
+        // 合成は var(--edge) を影リストの先頭に置く形でしか成立しない。
+        var ring = Blocks(File.ReadAllText(AppCssPath))
+            .Single(b => b.Body.Contains("var(--focus-ring)"));
+
+        Assert.Contains("box-shadow: var(--edge), 0 0 0 2px var(--focus-ring)", Normalize(ring.Body));
+
+        // チップの × ボタンは --edge を継承してしまうので打ち消していること
+        var cancel = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => b.Selector.Contains(".chip-x")
+                        && Normalize(b.Body).Contains("--edge: var(--edge-off)")).ToList();
+        Assert.True(cancel.Count >= 1, ".chip-x で --edge を打ち消していない (× ボタンに左縁が載る)");
+    }
+
+    [Fact]
+    public void TargetField_IsDrivenByParentParameterNotSelfJudgement()
+    {
+        // 追加先の真実源は Generate.razor。子は降ってきた IsTarget を見るだけ。
+        var field = File.ReadAllText(TagPresetFieldRazorPath);
+        Assert.Contains("public bool IsTarget", field);
+        Assert.Contains("is-target", field);
+        // 子が _target/Target を自前で判定していないこと
+        Assert.DoesNotContain("Target ==", field);
+
+        var razor = File.ReadAllText(GenerateRazorPath);
+        Assert.Contains("IsTarget=\"@(_target == \"prompt\")\"", razor);
+        Assert.Contains("IsTarget=\"@(_target == \"negative\")\"", razor);
+    }
+
+    [Fact]
+    public void Palette_ShowsSurfaceHintWhenFavoritesIsTarget()
+    {
+        var blocks = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => b.Selector.Contains(".fav-target")).ToList();
+
+        Assert.True(blocks.Count == 1, $".palette.fav-target の宣言は 1 つであること (実際 {blocks.Count} 件)");
+        var body = Normalize(blocks[0].Body);
+        // 面で示す = 地色 + 縁。色は既存トークンのみ (新トークンを増やさない)
+        Assert.Contains("background: var(--accent-weak)", body);
+        Assert.Contains("border-color: var(--accent-border)", body);
+
+        var palette = File.ReadAllText(TagPaletteRazorPath);
+        Assert.Contains("fav-target", palette);
     }
 
     // ══════════════════════════════════════════════════
