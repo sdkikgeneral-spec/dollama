@@ -97,6 +97,106 @@ html, body
     height: 100vh;
 }
 
+/* ── ボタン共通 (P3-1 / 課題 #15) ──────────────────────────────
+   ボタンが 5 系統 (+P2 で 2 つ) に分かれて同じ見た目を別々に宣言していたのを、
+   .btn + 3 バリアントへ畳む。
+
+     .btn         押せるものの土台。無効時の作法もここが持つ
+     .btn-primary 主 CTA (accent 塗り)。塗りの上なので hover で文字色を動かさない
+     .btn-ghost   既定 (面 + 枠)。hover は枠を accent へ
+     .btn-icon    透明地のグリフ 1 文字 (×)。20px 角の寸法まで含めてここが持つ
+
+   ★ 分担: 「ボタンらしさ」= ここ / 「置かれた場所で決まるもの」(padding・位置・
+     並び・font) = 器の側 (.gen-actions .btn / .presetbar .btn / .lang-toggle .btn …)。
+     器の規則は 2 クラス = 常にここより詳細度が高いので、順序に依存せず上書きできる。
+
+   ★ ここをファイル先頭側に置くのは意図的。同詳細度 (0,3,0) で衝突しうる器側の規則
+     (例 .lang-toggle .btn + .btn の区切り線 vs .btn-ghost:hover の border-color) を
+     器側に勝たせるため。後ろへ動かすと区切り線が hover で accent に化ける。
+
+   ★ 見た目は据え置き。畳めなかった不揃い (font: inherit 派 / disabled 0.45 の 2 箇所) は
+     コメントを添えて残してある — 揃えると実際に見た目が変わるため、別途デザイン判断。 */
+.btn
+{
+    cursor: pointer;
+}
+
+/* 押せないときは沈める。:disabled は button にしか効かないので、
+   a[download] の保存ボタン (.canvas-save) には元から無関係。 */
+.btn:disabled
+{
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* 入力欄に添う小ボタン (プリセット保存 / お気に入り +) だけは従来どおり深く沈める。
+   0.6 に揃えると見た目が変わるので 2 段のまま残す (統一するならデザイン判断が要る)。 */
+.presetbar .btn:disabled, .fav-bar .btn:disabled
+{
+    opacity: 0.45;
+}
+
+/* 主 CTA。角丸と寸法は器 (.gen-actions .btn) 側が持つ */
+.btn-primary
+{
+    background: var(--accent);
+    color: var(--on-accent);
+    border: none;
+    font-weight: 700;
+    /* §4.2 の寄せ: 15px → --fs-lg (16px)。14px に寄せると下書きボタン (--fs-md) と
+       同寸になり主 CTA の階層が消えるため、大きい側へ寄せる */
+    font-size: var(--fs-lg);
+}
+
+.btn-ghost
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+}
+
+/* hover の作法は「枠を accent へ」に一本化する (従来は枠のみ/枠+文字/文字のみが混在) */
+.btn-ghost:hover:not(:disabled)
+{
+    border-color: var(--accent);
+}
+
+/* 文字色も動かすのは単独で置かれた大きめのボタンだけ。入力欄に添う小ボタン
+   (.presetbar / .fav-bar) は枠だけ動かす従来の見た目を維持する。 */
+.gen-actions .btn-ghost:hover:not(:disabled),
+.conn .btn:hover:not(:disabled),
+.canvas-save:hover:not(:disabled)
+{
+    color: var(--accent);
+}
+
+/* アイコンボタン。20px 角・グリフ 1 文字の箱なので寸法もバリアントの一部 */
+.btn-icon
+{
+    width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border-strong);
+    /* 20px 角の小箱。4px → --r-sm (6px) は §4.2 の許可外なので据え置き (P1-6) */
+    border-radius: 4px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x / .fav-x と統一する
+       (20px 角・line-height 18px の枠に 14px グリフは収まる) */
+    font-size: var(--fs-md);
+    padding: 0;
+    flex-shrink: 0;
+}
+
+/* アイコンボタンは今のところ削除 (破壊操作) 専用なので hover は ng 系のまま */
+.btn-icon:hover:not(:disabled)
+{
+    border-color: var(--ng);
+    color: var(--ng-soft);
+}
+
 /* ── トップバー ── */
 .topbar
 {
@@ -135,30 +235,33 @@ html, body
     white-space: nowrap;
 }
 
-.lang-toggle button
+/* セグメント (.btn .btn-ghost)。器の .lang-toggle 側が枠と角丸を持つので、
+   ghost の枠と角丸はここで打ち消す。 */
+.lang-toggle .btn
 {
     appearance: none;
     border: none;
-    background: var(--panel-2);
+    /* ghost の --r-sm を打ち消す。実効値は従来どおり 0 で見た目は不変 —
+       セグメントを丸めると .lang-toggle の角丸との間に隙間が見える */
+    border-radius: 0;
     color: var(--muted);
     font-size: var(--fs-sm);
     padding: 4px 10px;
-    cursor: pointer;
     transition: background 0.12s, color 0.12s;
 }
 
-.lang-toggle button + button
+.lang-toggle .btn + .btn
 {
     border-left: 1px solid var(--border);
 }
 
-.lang-toggle button:hover
+.lang-toggle .btn:hover
 {
     color: var(--text);
 }
 
-/* 現在の表示言語をハイライト */
-.lang-toggle button.on
+/* 現在の表示言語をハイライト。:hover と同詳細度なので必ずこの順 (後勝ち) で置く */
+.lang-toggle .btn.on
 {
     background: var(--accent);
     color: var(--on-accent);
@@ -194,33 +297,18 @@ html, body
 }
 
 /* 未接続のときだけ出る再接続ボタン (P2-9)。押すと GET /health を 1 回だけ叩き直す。
-   従来はページリロードしか回復手段がなかった。 */
-.conn-retry
+   従来はページリロードしか回復手段がなかった。
+   見た目は .btn .btn-ghost。ここは「接続表示の脇に置く」ための寸法だけを持つ
+   (hover は .btn-ghost + 文字色ブロック / disabled は .btn:disabled)。 */
+.conn .btn
 {
     appearance: none;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
     font-size: var(--fs-xs);
     font-weight: 600;
     padding: 2px 8px;
     margin-left: var(--sp-1);
-    cursor: pointer;
     white-space: nowrap;
     transition: border-color 0.12s, color 0.12s;
-}
-
-.conn-retry:hover:not(:disabled)
-{
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.conn-retry:disabled
-{
-    opacity: 0.6;
-    cursor: default;
 }
 
 /* ── HW テレメトリ・ミニメーター (上部バー・横並び) ── */
@@ -456,12 +544,13 @@ textarea, select, input[type="range"]
 /* フォーカス統一リング (P1-2) — セレクタは ui.Tests/AppCssTokenTests.cs が検査する */
 /* .chips は .taginput .chips で宣言されているので、詳細度負けしないよう同じ形で書く。
    リングは box-shadow で描く (outline で太らせるとレイアウトに響く)。
-   .preview-save は button ではなく a[download] (P2-3) なので個別に足す — ここを
+   画像保存ボタンは button ではなく a[download] (P2-3) なので .btn:focus-visible を
+   個別に足す (P3-1 で保存ボタン固有のセレクタから .btn へ張り替えた) — ここを
    別ブロックに分けると「リングの宣言は 1 箇所」という機械検査に引っかかる。
    先頭の var(--edge) は追加先の左縁 (P2-6) との合成。既定は no-op なので
    フォーカスだけのときは従来どおりリング 1 本、追加先かつフォーカス中は
    「左縁 + リング」が同時に出る (どちらかが消えない)。 */
-textarea:focus, select:focus, input:focus-visible, button:focus-visible, .preview-save:focus-visible, .taginput .chips:focus-within
+textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:focus-visible, .taginput .chips:focus-within
 {
     outline: none;
     border-color: var(--accent);
@@ -489,43 +578,23 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     gap: var(--sp-3);
 }
 
-.generate
+/* 行に置かれた 2 ボタンの寸法 (本番 = .btn-primary / 下書き = .btn-ghost)。
+   塗り・枠・無効時はバリアント側が持つ。 */
+.gen-actions .btn
 {
     /* 2 ボタンを等幅で横並びにする */
     flex: 1;
-    background: var(--accent);
-    color: var(--on-accent);
-    border: none;
     /* §4.2 の寄せ: 8px → --r-md (10px)。器 (.gen / .canvas) と半径をそろえる */
     border-radius: var(--r-md);
     padding: var(--sp-3);
-    font-weight: 700;
-    /* §4.2 の寄せ: 15px → --fs-lg (16px)。14px に寄せると .generate.secondary と
-       同寸になり主 CTA の階層が消えるため、大きい側へ寄せる */
-    font-size: var(--fs-lg);
-    cursor: pointer;
 }
 
-/* 下書きボタンは accent 塗りでなく outline 控えめ配色で本番と視覚区別する */
-.generate.secondary
+/* 下書きボタンは accent 塗りでなく outline 控えめ配色で本番と視覚区別する。
+   主 CTA (--fs-lg / 700) より 1 段細く小さくして階層を作る。 */
+.gen-actions .btn-ghost
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
     font-weight: 600;
     font-size: var(--fs-md);
-}
-
-.generate.secondary:hover:not(:disabled)
-{
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.generate:disabled
-{
-    opacity: 0.6;
-    cursor: default;
 }
 
 /* 生成ボタンが押せない理由 (P2-1 / P2-9)。押せるときは要素ごと出ないのでノイズにならない。
@@ -570,30 +639,22 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 
 /* ── 生成画像の保存導線 (右ペイン右上・P2-3 / 課題 #8) ──
    `<a download href="data:image/png;base64,…">` だけで保存できるので JS interop は要らない。
-   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。 */
-.preview-save
+   モードバッジ (.gen-mode) と対になる位置・寸法にそろえる。
+   見た目は .btn .btn-ghost で、ここは「キャンバス右上に浮かせる」ための宣言だけを持つ。
+   button ではないので text-decoration の打ち消しがここに要る (.btn には置かない —
+   置くと button 側 7 群に無意味な宣言が増える)。 */
+.canvas-save
 {
     position: absolute;
     top: 10px;
     right: 10px;
     z-index: 1;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
     padding: 3px 10px;
     font-size: var(--fs-xs);
     font-weight: 600;
     line-height: 1.6;
     text-decoration: none;
     white-space: nowrap;
-    cursor: pointer;
-}
-
-.preview-save:hover
-{
-    border-color: var(--accent);
-    color: var(--accent);
 }
 
 /* プレビュー枠は右ペイン (.canvas) を埋める */
@@ -898,26 +959,13 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     font-size: var(--fs-sm);
 }
 
-.fav-plus
+/* お気に入り追加 (+)。見た目は .btn .btn-ghost で、ここは入力欄に添えるための寸法だけ。
+   font: inherit は「入力欄と同じ字」に見せるための据え置き
+   (font-size 直書き派と混在しているが、揃えると字が変わるので P3-1 では触らない)。 */
+.fav-bar .btn
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
     padding: 0 10px;
     font: inherit;
-    cursor: pointer;
-}
-
-.fav-plus:hover:not(:disabled)
-{
-    border-color: var(--accent);
-}
-
-.fav-plus:disabled
-{
-    opacity: 0.45;
-    cursor: default;
 }
 
 /* ── 左ペイン: プリセット・コンパクトカード一覧 ── */
@@ -990,30 +1038,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     text-overflow: ellipsis;
 }
 
-.ps-del
-{
-    width: 20px;
-    height: 20px;
-    line-height: 18px;
-    text-align: center;
-    background: transparent;
-    color: var(--muted);
-    border: 1px solid var(--border-strong);
-    /* 20px 角のアイコンボタン。4px → --r-sm (6px) は §4.2 の許可外なので据え置き (P1-6) */
-    border-radius: 4px;
-    cursor: pointer;
-    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x / .fav-x と統一する
-       (20px 角・line-height 18px の枠に 14px グリフは収まる) */
-    font-size: var(--fs-md);
-    padding: 0;
-    flex-shrink: 0;
-}
-
-.ps-del:hover
-{
-    border-color: var(--ng);
-    color: var(--ng-soft);
-}
+/* カードの削除ボタンは .btn .btn-icon そのもの (寸法も hover もバリアント側が持つ)。
+   ここに個別の規則は要らない。 */
 
 /* ── プリセット・保存バー (中央 TagPresetField) ── */
 .presetbar
@@ -1036,26 +1062,12 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     min-width: 120px;
 }
 
-.preset-btn
+/* 保存ボタン。見た目は .btn .btn-ghost で、ここは入力欄 (.preset-name) に添えるための
+   寸法だけを持つ (font: inherit の意図は .fav-bar .btn と同じ)。 */
+.presetbar .btn
 {
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-sm);
     padding: 6px 10px;
     font: inherit;
-    cursor: pointer;
-}
-
-.preset-btn:hover:not(:disabled)
-{
-    border-color: var(--accent);
-}
-
-.preset-btn:disabled
-{
-    opacity: 0.45;
-    cursor: default;
 }
 
 .preset-msg

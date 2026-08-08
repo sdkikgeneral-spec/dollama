@@ -31,9 +31,14 @@ public sealed partial class AppCssTokenTests
     //  (A) P1-6 用: font-size / border-radius の実効値ベースライン
     // ══════════════════════════════════════════════════
 
-    // 現行 app.css の全宣言 (font-size 36 + border-radius 31 = 67)。
+    // 現行 app.css の全宣言 (font-size 36 + border-radius 29 = 65)。
     // 値は var() 解決後の実効値で書く (現状は全て直書きなので px / % がそのまま並ぶ)。
     // P1-6 で var(--fs-sm) / var(--r-sm) へ置換しても、解決結果がこの表と一致すれば緑。
+    //
+    // ★ P3-1 (ボタン統合) で**セレクタだけ**を張り替えた行がある (値は据え置き)。
+    //   ボタン 7 系統の border-radius 6 宣言が .btn-ghost / .gen-actions .btn /
+    //   .btn-icon / .lang-toggle .btn の 4 つに畳まれたので border-radius は 31 → 29。
+    //   font-size は 6 消えて 6 生えたので 36 のまま。
     private static readonly ScaleEntry[] ScaleBaseline =
     {
         // ── ベース / トップバー ──
@@ -41,11 +46,17 @@ public sealed partial class AppCssTokenTests
         new(".brand",                         "font-size",     "16px"),
         new(".brand-sub",                     "font-size",     "12px"),
         new(".lang-toggle",                   "border-radius", "6px"),
-        new(".lang-toggle button",            "font-size",     "12px"),
+        new(".lang-toggle .btn",              "font-size",     "12px"),   // ← .lang-toggle button
+        new(".lang-toggle .btn",              "border-radius", "0"),      // P3-1: ghost の --r-sm を打ち消す (実効 0 のまま)
         new(".conn",                          "font-size",     "12px"),
         new(".conn .dot",                     "border-radius", "50%"),
-        new(".conn-retry",                    "border-radius", "6px"),
-        new(".conn-retry",                    "font-size",     "11px"),
+        new(".conn .btn",                     "font-size",     "11px"),   // ← .conn-retry
+
+        // ── 共通ボタン (P3-1) ──
+        new(".btn-primary",                   "font-size",     "15px"),   // ← .generate (§4.2 で 16 へ寄せ)
+        new(".btn-ghost",                     "border-radius", "6px"),    // ← .preset-btn / .fav-plus / .preview-save / .conn-retry
+        new(".btn-icon",                      "border-radius", "4px"),    // ← .ps-del
+        new(".btn-icon",                      "font-size",     "13px"),   // ← .ps-del (§4.2 で 14 へ寄せ)
 
         // ── テレメトリ ──
         new(".tm-hint",                       "font-size",     "12px"),
@@ -61,9 +72,8 @@ public sealed partial class AppCssTokenTests
         new("textarea, select, input[type=\"range\"]", "border-radius", "6px"),
 
         // ── 生成ボタン行まわり ──
-        new(".generate",                      "border-radius", "8px"),
-        new(".generate",                      "font-size",     "15px"),   // §4.2 で 14 or 16 への寄せを許容
-        new(".generate.secondary",            "font-size",     "14px"),
+        new(".gen-actions .btn",              "border-radius", "8px"),    // ← .generate (§4.2 で 10 へ寄せ・2 ボタン共用)
+        new(".gen-actions .btn-ghost",        "font-size",     "14px"),   // ← .generate.secondary
         new(".gen-reason",                    "font-size",     "12px"),
         new(".error",                         "border-radius", "6px"),
         new(".error",                         "font-size",     "13px"),   // §4.2 で 12 or 14 への寄せを許容
@@ -71,8 +81,7 @@ public sealed partial class AppCssTokenTests
         // ── プレビュー (右ペイン) ──
         new(".gen-mode",                      "border-radius", "999px"),
         new(".gen-mode",                      "font-size",     "11px"),
-        new(".preview-save",                  "border-radius", "6px"),
-        new(".preview-save",                  "font-size",     "11px"),
+        new(".canvas-save",                   "font-size",     "11px"),   // ← .preview-save
         new(".preview",                       "border-radius", "8px"),    // §4.2 で 10 への寄せを許容
         new(".preview-elapsed",               "font-size",     "13px"),
         new(".placeholder",                   "font-size",     "13px"),
@@ -95,7 +104,6 @@ public sealed partial class AppCssTokenTests
         new(".fav-x",                         "font-size",     "13px"),
         new(".fav-entry",                     "border-radius", "6px"),
         new(".fav-entry",                     "font-size",     "12px"),
-        new(".fav-plus",                      "border-radius", "6px"),
 
         // ── プリセット一覧 (左ペイン) ──
         new(".ps-card",                       "border-radius", "6px"),
@@ -103,12 +111,9 @@ public sealed partial class AppCssTokenTests
         new(".ps-noimg",                      "border-radius", "4px"),
         new(".ps-noimg",                      "font-size",     "9px"),    // スケール外の最小値 (要棚卸し)
         new(".ps-name",                       "font-size",     "12px"),
-        new(".ps-del",                        "border-radius", "4px"),
-        new(".ps-del",                        "font-size",     "13px"),
 
         // ── プリセット保存バー (中央) ──
         new(".preset-name",                   "border-radius", "6px"),
-        new(".preset-btn",                    "border-radius", "6px"),
         new(".preset-msg",                    "font-size",     "12px"),
 
         // ── チップ入力 ──
@@ -143,17 +148,18 @@ public sealed partial class AppCssTokenTests
             "§4.2 のセクションヘッダ型 (--fs-sm + letter-spacing + --muted) へ"),
         new(".fav-x", "font-size", "13px", "14px",
             "× グリフの寸法を .chip-x (--fs-md) と統一する"),
-        new(".ps-del", "font-size", "13px", "14px",
+        // P3-1 で宛先セレクタのみ .ps-del → .btn-icon へ張り替え (寄せの中身は不変)
+        new(".btn-icon", "font-size", "13px", "14px",
             "× グリフの寸法を .chip-x / .fav-x (--fs-md) と統一する"),
         new(".tag-chip", "font-size", "13px", "12px",
             "パレットのタグ (--fs-sm) からチップ化しても字の大きさが変わらないように"),
 
-        // ── font-size 15px (1 件) ──
-        new(".generate", "font-size", "15px", "16px",
-            "主 CTA。14px に寄せると .generate.secondary と同寸になり階層が消えるので大きい側へ"),
+        // ── font-size 15px (1 件) ── ※ P3-1 で宛先を .generate → .btn-primary へ張り替え
+        new(".btn-primary", "font-size", "15px", "16px",
+            "主 CTA。14px に寄せると下書きボタンと同寸になり階層が消えるので大きい側へ"),
 
-        // ── border-radius 8px (2 件) ──
-        new(".generate", "border-radius", "8px", "10px",
+        // ── border-radius 8px (2 件) ── ※ P3-1 で宛先を .generate → .gen-actions .btn へ張り替え
+        new(".gen-actions .btn", "border-radius", "8px", "10px",
             "§4.2「現 8/10 を 10 に寄せる」。器 (.gen / .canvas) と半径をそろえる"),
         new(".preview", "border-radius", "8px", "10px",
             "§4.2「現 8/10 を 10 に寄せる」。外側の器 .canvas (--r-md) と半径をそろえる"),
@@ -194,15 +200,16 @@ public sealed partial class AppCssTokenTests
     // 表に無い宣言が増えていない / 表の行が消えていないこと。
     // P1-6 は「宣言を var() へ置換する」だけで件数は動かない想定。件数が動いたら
     // 意図的な統合なので、この数字を書き換えるときに必ずレビューが入る。
+    // (P3-1 = ボタン統合でちょうど border-radius が 2 宣言分だけ畳まれた)
     [Fact]
     public void ScaleBaseline_CoversEveryDeclarationInAppCss()
     {
         var actual = ScaleActual.Value;
 
         Assert.Equal(36, actual.Count(x => x.Property == "font-size"));
-        Assert.Equal(31, actual.Count(x => x.Property == "border-radius"));
-        Assert.Equal(67, actual.Count);
-        Assert.Equal(67, ScaleBaseline.Length);
+        Assert.Equal(29, actual.Count(x => x.Property == "border-radius"));
+        Assert.Equal(65, actual.Count);
+        Assert.Equal(65, ScaleBaseline.Length);
 
         var baseline = ScaleBaseline.Select(e => (e.Selector, e.Property)).ToHashSet();
         var extra = actual
@@ -401,10 +408,13 @@ public sealed partial class AppCssTokenTests
         new(".topbar",                        "gap",            "18px"),
         new(".topbar",                        "padding",        "8px 18px"),
         new(".lang-toggle",                   "gap",            "0"),
-        new(".lang-toggle button",            "padding",        "4px 10px"),
+        new(".lang-toggle .btn",              "padding",        "4px 10px"),     // ← .lang-toggle button
         new(".conn",                          "gap",            "6px"),
-        new(".conn-retry",                    "padding",        "2px 8px"),
-        new(".conn-retry",                    "margin-left",    "4px"),          // ★
+        new(".conn .btn",                     "padding",        "2px 8px"),      // ← .conn-retry
+        new(".conn .btn",                     "margin-left",    "4px"),          // ★ ← .conn-retry
+
+        // ── 共通ボタン (P3-1) ──
+        new(".btn-icon",                      "padding",        "0"),            // ← .ps-del
 
         // ── テレメトリ ──
         new(".telemetry-mini",                "gap",            "14px"),
@@ -425,13 +435,13 @@ public sealed partial class AppCssTokenTests
 
         // ── 生成ボタン行まわり ──
         new(".gen-actions",                   "gap",            "12px"),         // ★
-        new(".generate",                      "padding",        "12px"),         // ★
+        new(".gen-actions .btn",              "padding",        "12px"),         // ★ ← .generate
         new(".gen-reason",                    "margin-top",     "-4px"),         // 負値 (グリッド外)
         new(".error",                         "padding",        "8px 10px"),
 
         // ── プレビュー (右ペイン) ──
         new(".gen-mode",                      "padding",        "3px 10px"),
-        new(".preview-save",                  "padding",        "3px 10px"),
+        new(".canvas-save",                   "padding",        "3px 10px"),     // ← .preview-save
         new(".preview-overlay",               "gap",            "12px"),         // ★
 
         // ── タグパレット (左ペイン) ──
@@ -453,19 +463,18 @@ public sealed partial class AppCssTokenTests
         new(".fav-bar",                       "gap",            "6px"),
         new(".fav-bar",                       "padding-bottom", "8px"),          // ★
         new(".fav-entry",                     "padding",        "4px 8px"),      // ★
-        new(".fav-plus",                      "padding",        "0 10px"),
+        new(".fav-bar .btn",                  "padding",        "0 10px"),       // ← .fav-plus
 
         // ── プリセット一覧 (左ペイン) ──
         new(".ps-list",                       "gap",            "4px"),          // ★
         new(".ps-list",                       "padding",        "4px 0 8px"),    // ★
         new(".ps-card",                       "gap",            "8px"),          // ★
         new(".ps-card",                       "padding",        "4px 6px"),
-        new(".ps-del",                        "padding",        "0"),
 
         // ── プリセット保存バー (中央) ──
         new(".presetbar",                     "gap",            "6px"),
         new(".preset-name",                   "padding",        "6px 8px"),
-        new(".preset-btn",                    "padding",        "6px 10px"),
+        new(".presetbar .btn",                "padding",        "6px 10px"),     // ← .preset-btn
 
         // ── チップ入力 ──
         new(".taginput .chips",               "gap",            "6px"),
@@ -567,13 +576,15 @@ public sealed partial class AppCssTokenTests
 
     // ボタン 8 群 × 4 状態。
     // Chain = その状態を作っている app.css のセレクタを**カスケード順**に並べたもの
-    //         (後ろが後勝ち)。P3-1 後はここを `.btn` + バリアントへ差し替えるだけで、
-    //         Declarations (期待値) は据え置きのまま緑になるはず、というのが本検査の趣旨。
+    //         (後ろが後勝ち)。P3-1 後はここを `.btn` + バリアント (+ 器の規則) へ
+    //         差し替えるだけで、Declarations (期待値) は据え置きのまま緑になるはず、
+    //         というのが本検査の趣旨。**★ P3-1 で書き換えたのは Chain だけ**で、
+    //         期待宣言の literal は 1 文字も動かしていない (動かすなら AllowedButtonDiffs)。
     // Declarations = その状態の最終宣言集合 ("prop: value")。順序は問わない (ソートして比較)。
     private static readonly ButtonStateSpec[] ButtonBaseline =
     {
         // ── 1. 生成 (primary) ─────────────────────────
-        new("generate(primary)", "base", new[] { ".generate" }, new[]
+        new("generate(primary)", "base", new[] { ".btn", ".btn-primary", ".gen-actions .btn" }, new[]
         {
             "flex: 1",
             "background: var(--accent)",
@@ -585,10 +596,11 @@ public sealed partial class AppCssTokenTests
             "font-size: 15px",
             "cursor: pointer",
         }),
-        // primary には hover 規則が無い (accent 塗りのまま変化しない) — P3-1 で .btn:hover が
-        // 付くと**見た目が変わる**ので、そのときは意図的差分として許可リストへ積むこと。
+        // primary には hover 規則が無い (accent 塗りのまま変化しない)。
+        // ★ P3-1 でも空のまま = hover は .btn ではなく .btn-ghost / .btn-icon 側に置いた。
+        //   .btn:hover にすると accent 塗りの上で文字色が動いて**見た目が変わる**ため。
         new("generate(primary)", "hover", Array.Empty<string>(), Array.Empty<string>()),
-        new("generate(primary)", "disabled", new[] { ".generate:disabled" }, new[]
+        new("generate(primary)", "disabled", new[] { ".btn:disabled" }, new[]
         {
             "opacity: 0.6",
             "cursor: default",
@@ -596,8 +608,9 @@ public sealed partial class AppCssTokenTests
         new("generate(primary)", "focus-visible", new[] { "button:focus-visible" }, FocusRingDecls),
 
         // ── 2. 下書き (secondary) ─────────────────────
-        // .generate (1 クラス) の上に .generate.secondary (2 クラス) が乗る = 後勝ち。
-        new("generate.secondary", "base", new[] { ".generate", ".generate.secondary" }, new[]
+        // .btn (1) → .btn-ghost (1) → .gen-actions .btn / .gen-actions .btn-ghost (2) = 後勝ち。
+        new("generate.secondary", "base",
+            new[] { ".btn", ".btn-ghost", ".gen-actions .btn", ".gen-actions .btn-ghost" }, new[]
         {
             "flex: 1",
             "background: var(--panel-2)",
@@ -609,12 +622,13 @@ public sealed partial class AppCssTokenTests
             "font-size: 14px",
             "cursor: pointer",
         }),
-        new("generate.secondary", "hover", new[] { ".generate.secondary:hover:not(:disabled)" }, new[]
+        new("generate.secondary", "hover",
+            new[] { ".btn-ghost:hover:not(:disabled)", ".gen-actions .btn-ghost:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--accent)",
             "color: var(--accent)",
         }),
-        new("generate.secondary", "disabled", new[] { ".generate:disabled" }, new[]
+        new("generate.secondary", "disabled", new[] { ".btn:disabled" }, new[]
         {
             "opacity: 0.6",
             "cursor: default",
@@ -622,7 +636,7 @@ public sealed partial class AppCssTokenTests
         new("generate.secondary", "focus-visible", new[] { "button:focus-visible" }, FocusRingDecls),
 
         // ── 3. プリセット保存バーのボタン ─────────────
-        new(".preset-btn", "base", new[] { ".preset-btn" }, new[]
+        new(".preset-btn", "base", new[] { ".btn", ".btn-ghost", ".presetbar .btn" }, new[]
         {
             "background: var(--panel-2)",
             "color: var(--text)",
@@ -632,11 +646,12 @@ public sealed partial class AppCssTokenTests
             "font: inherit",
             "cursor: pointer",
         }),
-        new(".preset-btn", "hover", new[] { ".preset-btn:hover:not(:disabled)" }, new[]
+        // 枠だけ動かす hover は .btn-ghost 側にそのまま載っている (文字色は動かさない)。
+        new(".preset-btn", "hover", new[] { ".btn-ghost:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--accent)",
         }),
-        new(".preset-btn", "disabled", new[] { ".preset-btn:disabled" }, new[]
+        new(".preset-btn", "disabled", new[] { ".btn:disabled", ".presetbar .btn:disabled" }, new[]
         {
             "opacity: 0.45",
             "cursor: default",
@@ -645,7 +660,8 @@ public sealed partial class AppCssTokenTests
 
         // ── 4. お気に入り追加 (+) ─────────────────────
         // .preset-btn とは padding だけが違う (0 10px vs 6px 10px)。P3-1 の統合対象そのもの。
-        new(".fav-plus", "base", new[] { ".fav-plus" }, new[]
+        // 統合後は「.btn .btn-ghost + 器の padding」だけの差になっている。
+        new(".fav-plus", "base", new[] { ".btn", ".btn-ghost", ".fav-bar .btn" }, new[]
         {
             "background: var(--panel-2)",
             "color: var(--text)",
@@ -655,11 +671,11 @@ public sealed partial class AppCssTokenTests
             "font: inherit",
             "cursor: pointer",
         }),
-        new(".fav-plus", "hover", new[] { ".fav-plus:hover:not(:disabled)" }, new[]
+        new(".fav-plus", "hover", new[] { ".btn-ghost:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--accent)",
         }),
-        new(".fav-plus", "disabled", new[] { ".fav-plus:disabled" }, new[]
+        new(".fav-plus", "disabled", new[] { ".btn:disabled", ".fav-bar .btn:disabled" }, new[]
         {
             "opacity: 0.45",
             "cursor: default",
@@ -667,7 +683,9 @@ public sealed partial class AppCssTokenTests
         new(".fav-plus", "focus-visible", new[] { "button:focus-visible" }, FocusRingDecls),
 
         // ── 5. 言語トグル (セグメント) ────────────────
-        new(".lang-toggle button", "base", new[] { ".lang-toggle button" }, new[]
+        // 器 (.lang-toggle) が枠と角丸を持つので、ghost の枠は border: none で、
+        // 角丸は border-radius: 0 で打ち消す (後者は AllowedButtonDiffs #1)。
+        new(".lang-toggle button", "base", new[] { ".btn", ".btn-ghost", ".lang-toggle .btn" }, new[]
         {
             "appearance: none",
             "border: none",
@@ -678,16 +696,22 @@ public sealed partial class AppCssTokenTests
             "cursor: pointer",
             "transition: background 0.12s, color 0.12s",
         }),
-        // hover 作法がここだけ「文字色替え」(他は枠色替え)。P3-1 の統一で変わるなら許可リストへ。
-        new(".lang-toggle button", "hover", new[] { ".lang-toggle button:hover" }, new[]
+        // hover 作法がここだけ「文字色替え」(他は枠色替え)。文字色は器側で据え置き、
+        // ghost の border-color が上から載る (border: none なので描画には出ない = 差分 #2)。
+        new(".lang-toggle button", "hover",
+            new[] { ".btn-ghost:hover:not(:disabled)", ".lang-toggle .btn:hover" }, new[]
         {
             "color: var(--text)",
         }),
+        // ★ 元から :disabled 規則が無い群。P3-1 後は .btn:disabled が構文上は当たるが、
+        //   この 3 群 (lang-toggle / ps-del / preview-save) は disabled 属性を持たない
+        //   ことを ButtonsWithoutDisabledRule_AreNeverRenderedDisabled が機械保証する。
+        //   よって表示は不変で、Chain は空のまま = 意図的差分ではない。
         new(".lang-toggle button", "disabled", Array.Empty<string>(), Array.Empty<string>()),
         new(".lang-toggle button", "focus-visible", new[] { "button:focus-visible" }, FocusRingDecls),
 
         // ── 6. プリセット削除 (アイコンボタン) ────────
-        new(".ps-del", "base", new[] { ".ps-del" }, new[]
+        new(".ps-del", "base", new[] { ".btn", ".btn-icon" }, new[]
         {
             "width: 20px",
             "height: 20px",
@@ -702,8 +726,8 @@ public sealed partial class AppCssTokenTests
             "padding: 0",
             "flex-shrink: 0",
         }),
-        // 削除だけ hover が ng 系 (赤) — 破壊操作なので P3-1 でも残す想定。
-        new(".ps-del", "hover", new[] { ".ps-del:hover" }, new[]
+        // 削除だけ hover が ng 系 (赤) — 破壊操作なので P3-1 でも残した (.btn-icon の作法)。
+        new(".ps-del", "hover", new[] { ".btn-icon:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--ng)",
             "color: var(--ng-soft)",
@@ -712,7 +736,7 @@ public sealed partial class AppCssTokenTests
         new(".ps-del", "focus-visible", new[] { "button:focus-visible" }, FocusRingDecls),
 
         // ── 7. 画像保存 (button ではなく a[download]) ──
-        new(".preview-save", "base", new[] { ".preview-save" }, new[]
+        new(".preview-save", "base", new[] { ".btn", ".btn-ghost", ".canvas-save" }, new[]
         {
             "position: absolute",
             "top: 10px",
@@ -730,19 +754,22 @@ public sealed partial class AppCssTokenTests
             "white-space: nowrap",
             "cursor: pointer",
         }),
-        // hover が :not(:disabled) を持たない (a には disabled が無いため)。
-        new(".preview-save", "hover", new[] { ".preview-save:hover" }, new[]
+        // 統合後は :not(:disabled) 付きの共通セレクタに当たる。a は決して :disabled に
+        // ならないので :not(:disabled) は常に真 = 挙動不変。
+        new(".preview-save", "hover",
+            new[] { ".btn-ghost:hover:not(:disabled)", ".canvas-save:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--accent)",
             "color: var(--accent)",
         }),
         new(".preview-save", "disabled", Array.Empty<string>(), Array.Empty<string>()),
-        // a 要素なので button:focus-visible には当たらない。リング統一ブロックへ個別に
-        // .preview-save:focus-visible が足してある (P2-3)。
-        new(".preview-save", "focus-visible", new[] { ".preview-save:focus-visible" }, FocusRingDecls),
+        // a 要素なので button:focus-visible には当たらない。リング統一ブロックの
+        // .preview-save:focus-visible を P3-1 で .btn:focus-visible へ張り替えた
+        // (a に .btn を付ける以上、リング側にも明示的な受け皿が要る)。
+        new(".preview-save", "focus-visible", new[] { ".btn:focus-visible" }, FocusRingDecls),
 
         // ── 8. 再接続 (トップバーの極小ボタン) ────────
-        new(".conn-retry", "base", new[] { ".conn-retry" }, new[]
+        new(".conn-retry", "base", new[] { ".btn", ".btn-ghost", ".conn .btn" }, new[]
         {
             "appearance: none",
             "background: var(--panel-2)",
@@ -757,13 +784,16 @@ public sealed partial class AppCssTokenTests
             "white-space: nowrap",
             "transition: border-color 0.12s, color 0.12s",
         }),
-        new(".conn-retry", "hover", new[] { ".conn-retry:hover:not(:disabled)" }, new[]
+        new(".conn-retry", "hover",
+            new[] { ".btn-ghost:hover:not(:disabled)", ".conn .btn:hover:not(:disabled)" }, new[]
         {
             "border-color: var(--accent)",
             "color: var(--accent)",
         }),
-        // disabled の opacity がここだけ 0.6 (preset-btn / fav-plus は 0.45)。統一するなら許可リストへ。
-        new(".conn-retry", "disabled", new[] { ".conn-retry:disabled" }, new[]
+        // disabled の opacity がここだけ 0.6 (preset-btn / fav-plus は 0.45)。
+        // P3-1 では 0.6 を共通 (.btn:disabled) に据え、0.45 の 2 群を器側で残した =
+        // どちらの見た目も変えずに宣言だけ畳んでいる (許可リストの消費ゼロ)。
+        new(".conn-retry", "disabled", new[] { ".btn:disabled" }, new[]
         {
             "opacity: 0.6",
             "cursor: default",
@@ -781,14 +811,30 @@ public sealed partial class AppCssTokenTests
     };
 
     // P3-1 で「意図的に変える」差分。PL 裁定により **上限 6 件**。
-    // 例: hover 作法を枠色替えへ統一する / disabled の opacity を 1 つに揃える など。
+    //
+    // ★ 実際に使ったのは 2 件だけで、どちらも言語トグルのセグメントに .btn-ghost が
+    //   載ったことで**宣言が 1 つ増えた**もの。2 件とも「描画結果は同じ」= 見た目は不変。
+    //   0.45/0.6 の 2 段や hover の枠のみ/枠+文字の別は、器側の規則として残すことで
+    //   差分 0 のまま畳んだ (安易に統一して枠を消費しない方針)。
     private static readonly ButtonDiff[] AllowedButtonDiffs =
     {
-        // 例) new(".lang-toggle button", "hover", "color", "var(--text)", "",
-        //         "hover 作法を枠色替えへ統一 (課題 #15)"),
+        // (1) ghost の角丸をセグメントで打ち消す。従来は border-radius 宣言が無く実効 0、
+        //     打ち消し後も 0 なので描画は同じ。宣言が 1 つ増えただけ。
+        //     打ち消さないと .lang-toggle (角丸 + overflow: hidden) の中でセグメントが
+        //     丸まり、区切りに隙間が見える = そちらが本物の見た目変化になる。
+        new(".lang-toggle button", "base", "border-radius", "", "0",
+            "器 (.lang-toggle) が角丸を持つので ghost の --r-sm を 0 で打ち消す。実効値は従来と同じ 0"),
+
+        // (2) hover の枠色。セグメントは border: none なので border-color は 1px も描かれない。
+        //     文字色は器側 (.lang-toggle .btn:hover) が var(--text) のまま勝つ。
+        new(".lang-toggle button", "hover", "border-color", "", "var(--accent)",
+            "共通 hover (.btn-ghost) の枠色が載るが、セグメントは border: none なので描画に出ない"),
     };
 
     private const int MaxAllowedButtonDiffs = 6;
+
+    // 実際に使った件数。増やすときは必ずレビューが要る (PL 裁定)。
+    private const int ExpectedButtonDiffs = 2;
 
     public static IEnumerable<object[]> ButtonBaselineData()
         => ButtonBaseline.Select(s => new object[] { s.Button, s.State });
@@ -845,14 +891,20 @@ public sealed partial class AppCssTokenTests
         Assert.Equal(Render(expected), Render(actual));
     }
 
-    // 許可リストは今は空。P3-1 実装時にここを実件数へ書き換える (= 反転させる検査)。
+    // ★ P3-1 で反転させた検査 (旧 ButtonDiffAllowList_IsEmptyBeforeP3_1)。
+    //   「空であること」→「レビュー済みの 2 件ちょうどであること」。
+    //   件数を定数で固定しているので、差分を 1 件足すだけでも赤くなる。
     [Fact]
-    public void ButtonDiffAllowList_IsEmptyBeforeP3_1()
+    public void ButtonDiffAllowList_MatchesTheReviewedDiffs()
     {
-        Assert.Empty(AllowedButtonDiffs);
+        Assert.Equal(ExpectedButtonDiffs, AllowedButtonDiffs.Length);
         Assert.True(
             AllowedButtonDiffs.Length <= MaxAllowedButtonDiffs,
             $"意図的差分は {MaxAllowedButtonDiffs} 件まで (PL 裁定)。実際 {AllowedButtonDiffs.Length} 件");
+
+        // 同じ (群, 状態, プロパティ) を二重に積まない (後勝ちで検査が骨抜きになるのを防ぐ)
+        var keys = AllowedButtonDiffs.Select(d => (d.Button, d.State, d.Property)).ToList();
+        Assert.Equal(keys.Count, keys.Distinct().Count());
 
         // 許可リストの宛先が実在する状態であること (書き間違いで検査が素通りするのを防ぐ)
         foreach (var d in AllowedButtonDiffs)
@@ -866,60 +918,64 @@ public sealed partial class AppCssTokenTests
     //  (C) 旧クラス名の在庫 — P3-1 で反転させる検査
     // ══════════════════════════════════════════════════
 
-    // 「そのボタンに今どんな規則が存在するか」の在庫。
-    // 状態表 (B) は宣言の中身を見るが、こちらは**規則の有無そのもの**を凍結する。
-    // 例えば .ps-del に :disabled が無いことは現行仕様であり、P3-1 の .btn:disabled が
-    // 効くようになるなら意図的差分として扱う必要がある。
+    // ★ P3-1 で反転させた検査 (旧 LegacyButtonFamily_OwnsExactlyTheseSelectorsBeforeP3_1)。
+    //   「この 7 系統がこれらのセレクタを持つ」→「7 系統とも app.css から消えている」。
+    //   接頭辞一致なので `.generate` を 1 つでも書き戻すと赤くなる。
     public static IEnumerable<object[]> LegacyButtonFamilyData() => new[]
     {
-        new object[] { ".generate", new[]
-        {
-            ".generate",
-            ".generate.secondary",
-            ".generate.secondary:hover:not(:disabled)",
-            ".generate:disabled",
-        }},
-        new object[] { ".preset-btn", new[]
-        {
-            ".preset-btn",
-            ".preset-btn:disabled",
-            ".preset-btn:hover:not(:disabled)",
-        }},
-        new object[] { ".fav-plus", new[]
-        {
-            ".fav-plus",
-            ".fav-plus:disabled",
-            ".fav-plus:hover:not(:disabled)",
-        }},
-        new object[] { ".lang-toggle button", new[]
-        {
-            ".lang-toggle button",
-            ".lang-toggle button + button",
-            ".lang-toggle button.on",
-            ".lang-toggle button:hover",
-        }},
-        new object[] { ".ps-del", new[]
-        {
-            ".ps-del",
-            ".ps-del:hover",
-        }},
-        new object[] { ".preview-save", new[]
-        {
-            ".preview-save",
-            ".preview-save:focus-visible",
-            ".preview-save:hover",
-        }},
-        new object[] { ".conn-retry", new[]
-        {
-            ".conn-retry",
-            ".conn-retry:disabled",
-            ".conn-retry:hover:not(:disabled)",
-        }},
+        new object[] { ".generate" },
+        new object[] { ".preset-btn" },
+        new object[] { ".fav-plus" },
+        new object[] { ".lang-toggle button" },
+        new object[] { ".ps-del" },
+        new object[] { ".preview-save" },
+        new object[] { ".conn-retry" },
     };
 
     [Theory]
     [MemberData(nameof(LegacyButtonFamilyData))]
-    public void LegacyButtonFamily_OwnsExactlyTheseSelectorsBeforeP3_1(string prefix, string[] expected)
+    public void LegacyButtonFamily_IsFullyRetiredFromAppCss(string prefix)
+    {
+        var actual = SelectorPartsStartingWith(prefix);
+
+        Assert.True(
+            actual.Count == 0,
+            $"P3-1 で退役したはずの {prefix} 系のセレクタが app.css に残っている: " + string.Join(" / ", actual));
+    }
+
+    // ★ P3-1 で反転させた検査 (旧 BtnClasses_DoNotExistYet)。
+    //   「まだ無いこと」→「4 クラスがこの規則だけを持つこと」。
+    //   .btn-lg のような 5 つめのバリアントを足すと赤くなる = 語彙を増やすのは裁定事項。
+    //   ★ 器側の規則 (.gen-actions .btn 等) は**この在庫に含めない** — 接頭辞一致の
+    //     判定 (SelectorPartsStartingWith) が `.btn` で始まる部品しか拾わないため。
+    //     器側は寸法だけを持つ「置き場所の責務」で、ボタンの語彙ではない。
+    public static IEnumerable<object[]> BtnFamilyData() => new[]
+    {
+        new object[] { ".btn", new[]
+        {
+            ".btn",
+            ".btn:disabled",
+            ".btn:focus-visible",
+        }},
+        new object[] { ".btn-primary", new[]
+        {
+            ".btn-primary",
+        }},
+        new object[] { ".btn-ghost", new[]
+        {
+            ".btn-ghost",
+            ".btn-ghost:hover:not(:disabled)",
+        }},
+        new object[] { ".btn-icon", new[]
+        {
+            ".btn-icon",
+            ".btn-icon:hover:not(:disabled)",
+        }},
+    };
+
+    [Theory]
+    [MemberData(nameof(BtnFamilyData))]
+    public void BtnFamily_OwnsExactlyTheseSelectors(string prefix, string[] expected)
     {
         var actual = SelectorPartsStartingWith(prefix);
 
@@ -928,56 +984,255 @@ public sealed partial class AppCssTokenTests
             string.Join("\n", actual));
     }
 
-    // 新クラスはまだ無い (P3-1 で追加され、この検査は「存在すること」へ反転する)。
-    [Fact]
-    public void BtnClasses_DoNotExistYet()
+    // ★ P3-1 で反転させた検査 (旧 LegacyButtonClass_AppearsExactlyOnceInRazorBeforeP3_1)。
+    //   旧クラス名 7 種が razor から**クラストークンとして** 1 つも出てこないこと。
+    //   文字列一致ではなく class 属性を解析してトークン比較するので、
+    //   `class="foo preset-btn"` のような並べ方でも捕まえる。
+    public static IEnumerable<object[]> RetiredButtonClassData() => new[]
     {
-        var css = StripComments(File.ReadAllText(AppCssPath));
-        foreach (var cls in new[] { ".btn", ".btn-primary", ".btn-ghost", ".btn-icon" })
-        {
-            Assert.DoesNotContain(cls, css);
-        }
-
-        foreach (var path in RazorFiles())
-        {
-            Assert.DoesNotContain("class=\"btn", File.ReadAllText(path));
-        }
-    }
-
-    // razor 側の旧クラス名。P3-1 では `class="btn btn-ghost"` 等へ張り替えるので、
-    // ここが「今は 1 箇所ずつ存在する」ことを凍結しておく。
-    public static IEnumerable<object[]> LegacyRazorClassData() => new[]
-    {
-        new object[] { "Generate.razor",        "class=\"generate\"" },
-        new object[] { "Generate.razor",        "class=\"generate secondary\"" },
-        new object[] { "Generate.razor",        "class=\"conn-retry\"" },
-        new object[] { "Generate.razor",        "class=\"preview-save\"" },
-        new object[] { "Generate.razor",        "class=\"lang-toggle\"" },
-        new object[] { "TagPresetField.razor",  "class=\"preset-btn\"" },
-        new object[] { "TagPalette.razor",      "class=\"fav-plus\"" },
-        new object[] { "PresetSidebar.razor",   "class=\"ps-del\"" },
+        new object[] { "generate" },
+        new object[] { "secondary" },
+        new object[] { "conn-retry" },
+        new object[] { "preview-save" },
+        new object[] { "preset-btn" },
+        new object[] { "fav-plus" },
+        new object[] { "ps-del" },
     };
 
     [Theory]
-    [MemberData(nameof(LegacyRazorClassData))]
-    public void LegacyButtonClass_AppearsExactlyOnceInRazorBeforeP3_1(string file, string literal)
+    [MemberData(nameof(RetiredButtonClassData))]
+    public void RetiredButtonClass_IsGoneFromEveryRazor(string cls)
     {
-        var path = RazorFiles().Single(p => Path.GetFileName(p) == file);
-        var text = File.ReadAllText(path);
-        var count = Regex.Matches(text, Regex.Escape(literal)).Count;
+        var hits = new List<string>();
 
-        Assert.True(count == 1, $"{file} の {literal} は 1 箇所であること (実際 {count} 箇所)");
+        foreach (var path in RazorFiles())
+        {
+            foreach (var token in ClassTokens(File.ReadAllText(path)))
+            {
+                if (token == cls)
+                {
+                    hits.Add(Path.GetFileName(path));
+                }
+            }
+        }
+
+        Assert.True(hits.Count == 0, $"退役したクラス {cls} が razor に残っている: " + string.Join(" / ", hits));
     }
 
-    // 言語トグルの button は class を持たず、子孫セレクタだけで装飾されている。
-    // P3-1 で .btn 化するならここに class が生えるので、現状を明示的に固定しておく。
+    // 器 (.lang-toggle) 自体のクラスは残る — 消えたのは中の button の装飾セレクタだけ。
     [Fact]
-    public void LangToggleButtons_HaveNoStaticClassBeforeP3_1()
+    public void LangToggleContainer_KeepsItsClass()
+    {
+        var razor = File.ReadAllText(GenerateRazorPath);
+        var count = Regex.Matches(razor, Regex.Escape("class=\"lang-toggle\"")).Count;
+
+        Assert.True(count == 1, $"器 .lang-toggle のクラスは 1 箇所であること (実際 {count} 箇所)");
+    }
+
+    // ★ P3-1 で反転させた検査 (旧 LangToggleButtons_HaveNoStaticClassBeforeP3_1)。
+    //   子孫セレクタ頼みだったセグメントに .btn が生え、状態クラス (.on) は式のまま残る。
+    [Fact]
+    public void LangToggleButtons_CarryBtnClassAlongsideTheirStateClass()
     {
         var razor = File.ReadAllText(GenerateRazorPath);
 
-        Assert.Contains("class=\"@(_tagLang == \"ja\" ? \"on\" : \"\")\"", razor);
-        Assert.Contains("class=\"@(_tagLang == \"en\" ? \"on\" : \"\")\"", razor);
+        Assert.Contains("class=\"btn btn-ghost @(_tagLang == \"ja\" ? \"on\" : \"\")\"", razor);
+        Assert.Contains("class=\"btn btn-ghost @(_tagLang == \"en\" ? \"on\" : \"\")\"", razor);
+    }
+
+    // ══════════════════════════════════════════════════
+    //  (C2) P3-1 の張り替え漏れ全数検査
+    //
+    //  (C) が「app.css から旧セレクタが消えたか」を見るのに対し、こちらは razor 側。
+    //  張り替え漏れ = クラスが 1 つ落ちるだけで素の <button> に戻り、UA 既定の
+    //  灰色ボタンが 1 つだけ紛れ込む — 目視では気づきにくいので機械で全数を見る。
+    // ══════════════════════════════════════════════════
+
+    private static readonly string[] BtnVariants = { "btn-primary", "btn-ghost", "btn-icon" };
+
+    // 「.btn を持つなら必ずバリアントちょうど 1 つ」「バリアントを持つなら必ず .btn」。
+    //   0 個 → 素の button に落ちて崩壊 / 2 個 → 後勝ちで見た目が不定。
+    [Fact]
+    public void EveryBtnElement_HasTheBaseClassAndExactlyOneVariant()
+    {
+        var bad = new List<string>();
+        var variantCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        var total = 0;
+
+        foreach (var path in AllRazorFiles())
+        {
+            foreach (var tag in ElementTags(File.ReadAllText(path)))
+            {
+                var tokens = SplitClassTokens(ClassAttribute(tag) ?? "").Static;
+                var variants = tokens.Where(t => BtnVariants.Contains(t, StringComparer.Ordinal)).ToList();
+                var hasBase = tokens.Contains("btn", StringComparer.Ordinal);
+
+                if (!hasBase && variants.Count == 0)
+                {
+                    continue;
+                }
+
+                total++;
+                var where = $"{Path.GetFileName(path)}: {Squeeze(tag)}";
+
+                if (!hasBase)
+                {
+                    bad.Add($"{where} … バリアントだけで .btn が無い");
+                }
+
+                if (variants.Count != 1)
+                {
+                    bad.Add($"{where} … バリアントが {variants.Count} 個 ({string.Join("+", variants)})");
+                }
+
+                foreach (var v in variants)
+                {
+                    variantCount[v] = variantCount.GetValueOrDefault(v) + 1;
+                }
+            }
+        }
+
+        Assert.True(bad.Count == 0, string.Join("\n", bad));
+
+        // 張り替えた 9 箇所ちょうど (生成 2 / 言語トグル 2 / 再接続 / 画像保存 /
+        // プリセット保存 / お気に入り + / プリセット削除)。増減はレビュー対象。
+        Assert.Equal(9, total);
+        Assert.Equal(1, variantCount.GetValueOrDefault("btn-primary"));
+        Assert.Equal(7, variantCount.GetValueOrDefault("btn-ghost"));
+        Assert.Equal(1, variantCount.GetValueOrDefault("btn-icon"));
+    }
+
+    // 統合の前後で「どの要素がどのバリアントになったか」を 1 箇所に凍結する。
+    // 目印は razor 中の一意な文字列 (ハンドラ名 / 属性) で、クラス名には依存しない。
+    [Theory]
+    [InlineData("Generate.razor",       "GenerateAsync(false)", "btn-primary")]
+    [InlineData("Generate.razor",       "GenerateAsync(true)",  "btn-ghost")]
+    [InlineData("Generate.razor",       "SetTagLang(\"ja\")",   "btn-ghost")]
+    [InlineData("Generate.razor",       "SetTagLang(\"en\")",   "btn-ghost")]
+    [InlineData("Generate.razor",       "ReconnectAsync",       "btn-ghost")]
+    [InlineData("Generate.razor",       "download=",            "btn-ghost")]
+    [InlineData("TagPresetField.razor", "SaveCurrent",          "btn-ghost")]
+    [InlineData("TagPalette.razor",     "AddFavorite",          "btn-ghost")]
+    [InlineData("PresetSidebar.razor",  "Delete(grp.Kind, p)",  "btn-icon")]
+    public void ReplacedButton_MapsToTheExpectedVariant(string file, string marker, string variant)
+    {
+        var path = AllRazorFiles().Single(p => Path.GetFileName(p) == file);
+        var tags = ElementTags(File.ReadAllText(path))
+            .Where(t => t.Contains(marker, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(tags.Count == 1, $"{file} で {marker} を持つ開始タグは 1 つであること (実際 {tags.Count} 個)");
+
+        var tokens = SplitClassTokens(ClassAttribute(tags[0]) ?? "").Static;
+        Assert.Contains("btn", tokens);
+        Assert.Contains(variant, tokens);
+    }
+
+    // 画像保存だけは <a download>。button ではないので、リング統一ブロック側に
+    // 受け皿 (.btn:focus-visible) が要る (P2-3 で同じ罠を踏んでいる)。
+    [Fact]
+    public void FocusRing_AcceptsBtnClassBecauseItIsAlsoUsedOnAnAnchor()
+    {
+        var saveTag = ElementTags(File.ReadAllText(GenerateRazorPath))
+            .Single(t => t.Contains("download=", StringComparison.Ordinal));
+
+        Assert.StartsWith("<a", saveTag);
+        Assert.Contains("btn", SplitClassTokens(ClassAttribute(saveTag) ?? "").Static);
+
+        // フォーカスリングの宣言は 1 ブロックのまま (P1-2 の契約) で、そこに .btn が居ること
+        var ring = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => b.Body.Contains("var(--focus-ring)")).ToList();
+
+        Assert.True(ring.Count == 1, $"var(--focus-ring) を使うブロックは 1 つであること (実際 {ring.Count} 件)");
+        Assert.Contains(".btn:focus-visible", SelectorParts(ring[0].Selector));
+    }
+
+    // :disabled 規則が無かった 3 群 (言語トグル / 削除 / 画像保存) に .btn:disabled が
+    // 構文上は当たるようになった。表示が変わらない根拠は「disabled にならない」ことなので、
+    // 散文ではなく razor で機械保証する。
+    [Fact]
+    public void ButtonsWithoutDisabledRule_AreNeverRenderedDisabled()
+    {
+        var disabled = new List<string>();
+
+        foreach (var path in AllRazorFiles())
+        {
+            foreach (var tag in ElementTags(File.ReadAllText(path)))
+            {
+                var tokens = SplitClassTokens(ClassAttribute(tag) ?? "").Static;
+                if (!tokens.Contains("btn", StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                // 元から :disabled 規則を持たない 3 群 (計 4 要素)
+                var noDisabledRule =
+                    tag.Contains("SetTagLang", StringComparison.Ordinal)
+                    || tag.Contains("Delete(grp.Kind, p)", StringComparison.Ordinal)
+                    || tag.Contains("download=", StringComparison.Ordinal);
+
+                if (tag.Contains("disabled=", StringComparison.Ordinal))
+                {
+                    Assert.False(noDisabledRule,
+                        "元は :disabled 規則が無かった要素に disabled 属性が付いた " +
+                        $"(.btn:disabled が新たに見た目を変える): {Path.GetFileName(path)}: {Squeeze(tag)}");
+                    disabled.Add(Squeeze(tag));
+                }
+            }
+        }
+
+        // disabled を出しうるのは生成 2 + 再接続 + プリセット保存 + お気に入り + の 5 つ。
+        // どれも元から :disabled 規則を持っていた群 (0.6 / 0.45) なので、
+        // .btn:disabled への集約で見た目は変わらない。
+        Assert.Equal(5, disabled.Count);
+    }
+
+    // 同詳細度 (0,3,0) で衝突する組の**記述順**を固定する。
+    // 詳細度モデルを持たない (B) の後勝ち合成では捕まえられない、けれど実際に
+    // 見た目が壊れる並びなので、順序そのものを検査する。
+    //   ・.btn-ghost:hover の border-color vs 言語トグルの区切り線 (border-left)
+    //     → 共通ボタンが先。後ろへ動かすと区切り線が hover で accent に化ける
+    //   ・.lang-toggle .btn:hover の color vs .on の color
+    //     → .on が後。逆にすると選択中セグメントの文字が hover で暗色に落ちる
+    [Theory]
+    [InlineData(".btn-ghost:hover:not(:disabled)", ".lang-toggle .btn + .btn")]
+    [InlineData(".lang-toggle .btn:hover", ".lang-toggle .btn.on")]
+    public void SameSpecificityRules_KeepTheOrderThatDecidesTheWinner(string earlier, string later)
+    {
+        var blocks = AppCssBlocks.Value;
+
+        var i = blocks.FindIndex(b => SelectorParts(b.Selector).Contains(earlier, StringComparer.Ordinal));
+        var j = blocks.FindIndex(b => SelectorParts(b.Selector).Contains(later, StringComparer.Ordinal));
+
+        Assert.True(i >= 0, $"{earlier} が app.css に無い");
+        Assert.True(j >= 0, $"{later} が app.css に無い");
+        Assert.True(i < j, $"同詳細度なので {earlier} は {later} より前に書くこと (後勝ちで {later} を勝たせる)");
+    }
+
+    // P2-6 の --edge 合成に .btn が割り込んでいないこと。
+    // .btn 側が box-shadow を持つと、追加先の左縁かフォーカスリングのどちらかが消える。
+    [Fact]
+    public void BtnRules_DoNotJoinTheEdgeShadowComposition()
+    {
+        var offenders = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => SelectorParts(b.Selector).Any(p => p.StartsWith(".btn", StringComparison.Ordinal)))
+            .Where(b => Normalize(b.Body).Contains("box-shadow") || Normalize(b.Body).Contains("--edge"))
+            .ToList();
+
+        // 唯一の例外がフォーカス統一リング (共有ブロック・P1-2/P2-6 側の検査が中身を縛る)
+        Assert.True(
+            offenders.Count == 1 && offenders[0].Body.Contains("var(--focus-ring)"),
+            "リング統一ブロック以外の .btn 規則が box-shadow / --edge に触っている: "
+            + string.Join(" / ", offenders.Select(o => o.Selector)));
+
+        // --edge を打ち消しているチップの × は .btn 化していないこと
+        // (.btn 化すると打ち消しの効く範囲が変わり、追加先フィールドの × に左縁が乗る)
+        var chipX = ElementTags(File.ReadAllText(Path.Combine(RepoRoot(), "ui", "Components", "Shared", "TagInput.razor")))
+            .Where(t => t.Contains("chip-x", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(chipX.Count == 1, $".chip-x の要素は 1 つであること (実際 {chipX.Count} 個)");
+        Assert.DoesNotContain("btn", SplitClassTokens(ClassAttribute(chipX[0]) ?? "").Static);
     }
 
     // ══════════════════════════════════════════════════
@@ -1114,6 +1369,72 @@ public sealed partial class AppCssTokenTests
             new Dictionary<string, string>(StringComparer.Ordinal));
 
         Assert.Equal("outline: none", Render(merged));
+    }
+
+    // razor の開始タグ切り出し。属性値に `>` (ラムダの =>) や入れ子の引用符
+    // (@(x ? "on" : "")) が入るので、素朴な正規表現では途中で切れる。
+    // ここが壊れると (C2) の全数検査が「1 件も見ていないのに緑」になる。
+    [Fact]
+    public void TagScanner_SurvivesLambdaArrowsAndNestedQuotes()
+    {
+        const string razor = """
+            <div class="wrap">
+                <button type="button" class="btn btn-ghost @(x == "a" ? "on" : "")"
+                        @onclick="() => Delete(k, p)" disabled="@(!ok)">×</button>
+                <a class="btn btn-ghost canvas-save" download="@name">保存</a>
+            </div>
+            """;
+
+        var tags = ElementTags(razor);
+
+        Assert.Equal(3, tags.Count);
+        Assert.StartsWith("<div", tags[0]);
+        // ラムダの `>` で切れていないこと (切れていれば disabled= が拾えない)
+        Assert.Contains("disabled=\"@(!ok)\"", tags[1]);
+        Assert.EndsWith(">", tags[1]);
+        Assert.StartsWith("<a", tags[2]);
+
+        // 入れ子の引用符をまたいで class 属性を最後まで読めていること
+        Assert.Equal("btn btn-ghost @(x == \"a\" ? \"on\" : \"\")", ClassAttribute(tags[1]));
+        Assert.Equal("btn btn-ghost canvas-save", ClassAttribute(tags[2]));
+    }
+
+    [Fact]
+    public void ClassTokenizer_SeparatesStaticNamesFromExpressionLiterals()
+    {
+        var mixed = SplitClassTokens("btn btn-ghost @(x == \"a\" ? \"on\" : null)");
+        Assert.Equal(new[] { "btn", "btn-ghost" }, mixed.Static);
+        // 式の中の文字列リテラルは「動的に付きうるクラス名」として拾う
+        Assert.Equal(new[] { "a", "on" }, mixed.Dynamic);
+
+        // @Foo.Bar(x) 形式 (括弧の前に識別子が来る) でも静的トークンに混ざらないこと
+        var call = SplitClassTokens("tm-item @DeviceStyle.CssClass(d.Device)");
+        Assert.Equal(new[] { "tm-item" }, call.Static);
+        Assert.Empty(call.Dynamic);
+
+        // 空・空白のみは 0 トークン
+        Assert.Empty(SplitClassTokens("   ").Static);
+    }
+
+    // 変異検査: バリアントを 1 つ落とした / 2 つ付けた razor を食わせると
+    // (C2) の判定が本当に赤くなること (検査が空振りでないことの証明)。
+    [Fact]
+    public void BtnInvariant_DetectsMissingAndDoubledVariants()
+    {
+        static (bool HasBase, int Variants) Check(string tag)
+        {
+            var tokens = SplitClassTokens(ClassAttribute(tag) ?? "").Static;
+            return (tokens.Contains("btn", StringComparer.Ordinal),
+                    tokens.Count(t => BtnVariants.Contains(t, StringComparer.Ordinal)));
+        }
+
+        Assert.Equal((true, 1), Check("<button class=\"btn btn-ghost\">a</button>"));
+        // バリアント落ち (素の button に落ちて UA 既定の見た目になる)
+        Assert.Equal((true, 0), Check("<button class=\"btn\">a</button>"));
+        // .btn 落ち (cursor / disabled / focus の作法が全部消える)
+        Assert.Equal((false, 1), Check("<button class=\"btn-ghost\">a</button>"));
+        // 二重 (後勝ちで不定)
+        Assert.Equal((true, 2), Check("<button class=\"btn btn-ghost btn-icon\">a</button>"));
     }
 
     [Fact]
@@ -1351,4 +1672,245 @@ public sealed partial class AppCssTokenTests
         PresetSidebarRazorPath,
         ReconnectRazorPath,
     };
+
+    // ui/ 配下の razor 全部。張り替え漏れの「全数」検査は列挙漏れがあると
+    // 意味が無いので、手書きの一覧ではなくディレクトリから引く。
+    private static string[] AllRazorFiles()
+    {
+        var files = Directory
+            .GetFiles(Path.Combine(RepoRoot(), "ui"), "*.razor", SearchOption.AllDirectories)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+
+        // 既知の 5 つを含んでいること (glob が空振りしていないことの担保)
+        foreach (var known in RazorFiles())
+        {
+            Assert.Contains(known, files);
+        }
+
+        return files;
+    }
+
+    // ── razor の開始タグ / class 属性の読み取り ─────────────────
+    //
+    // razor の属性値には
+    //   ・ラムダの `=>` (タグ終端の `>` と紛らわしい)
+    //   ・`@(x ? "on" : "")` のような入れ子の引用符
+    // が入る。素朴な `<button[^>]*>` では途中で切れて検査が空振りするので、
+    // 引用符と `@(…)` の括弧深さを見ながら 1 文字ずつ進む。
+
+    private static List<string> ElementTags(string razor)
+    {
+        var tags = new List<string>();
+
+        for (var i = 0; i < razor.Length; i++)
+        {
+            if (razor[i] != '<' || i + 1 >= razor.Length || !char.IsLetter(razor[i + 1]))
+            {
+                continue;
+            }
+
+            var end = ScanTag(razor, i);
+            tags.Add(razor[i..end]);
+            i = end - 1;
+        }
+
+        return tags;
+    }
+
+    // razor[start] の '<' から始まる開始タグの終端 (次の位置) を返す。
+    private static int ScanTag(string razor, int start)
+    {
+        var quote = '\0';
+        var paren = 0;
+
+        for (var j = start + 1; j < razor.Length; j++)
+        {
+            var c = razor[j];
+
+            if (quote != '\0')
+            {
+                if (paren > 0)
+                {
+                    // @( … ) の中。引用符は式の文字列リテラルなので属性の終端に数えない
+                    if (c == '(')
+                    {
+                        paren++;
+                    }
+                    else if (c == ')')
+                    {
+                        paren--;
+                    }
+                }
+                else if (c == '@' && j + 1 < razor.Length && razor[j + 1] == '(')
+                {
+                    paren = 1;
+                    j++;
+                }
+                else if (c == quote)
+                {
+                    quote = '\0';
+                }
+            }
+            else if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (c == '>')
+            {
+                return j + 1;
+            }
+        }
+
+        return razor.Length;
+    }
+
+    // 開始タグから class 属性の中身を返す (無ければ null)。
+    private static string? ClassAttribute(string tag)
+    {
+        var m = Regex.Match(tag, @"(?<![-\w])class\s*=\s*(""|')");
+        if (!m.Success)
+        {
+            return null;
+        }
+
+        var quote = m.Groups[1].Value[0];
+        var i = m.Index + m.Length;
+        var paren = 0;
+
+        for (var j = i; j < tag.Length; j++)
+        {
+            var c = tag[j];
+
+            if (paren > 0)
+            {
+                if (c == '(')
+                {
+                    paren++;
+                }
+                else if (c == ')')
+                {
+                    paren--;
+                }
+            }
+            else if (c == '@' && j + 1 < tag.Length && tag[j + 1] == '(')
+            {
+                paren = 1;
+                j++;
+            }
+            else if (c == quote)
+            {
+                return tag[i..j];
+            }
+        }
+
+        return tag[i..];
+    }
+
+    // class 属性の中身をクラストークンへ分解する。
+    //   Static  … 空白区切りでそのまま書かれている名前 (btn / btn-ghost …)
+    //   Dynamic … @(…) / @Foo(…) の中の文字列リテラル (条件付きで付くクラス名)
+    private static (List<string> Static, List<string> Dynamic) SplitClassTokens(string value)
+    {
+        var statics = new List<string>();
+        var dynamics = new List<string>();
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsWhiteSpace(value[i]))
+            {
+                continue;
+            }
+
+            if (value[i] == '@')
+            {
+                var end = ScanExpression(value, i);
+                foreach (Match lit in Regex.Matches(value[i..end], "\"([^\"]*)\""))
+                {
+                    var s = lit.Groups[1].Value.Trim();
+                    if (s.Length > 0)
+                    {
+                        dynamics.Add(s);
+                    }
+                }
+
+                i = end - 1;
+                continue;
+            }
+
+            var j = i;
+            while (j < value.Length && !char.IsWhiteSpace(value[j]))
+            {
+                j++;
+            }
+
+            statics.Add(value[i..j]);
+            i = j - 1;
+        }
+
+        return (statics, dynamics);
+    }
+
+    // value[start] の '@' から始まる razor 式の終端 (次の位置) を返す。
+    // `@(…)` は括弧の対応で、`@Foo.Bar(x)` は括弧を含めつつ空白まで。
+    private static int ScanExpression(string value, int start)
+    {
+        var paren = 0;
+        var seenParen = false;
+
+        for (var j = start + 1; j < value.Length; j++)
+        {
+            var c = value[j];
+
+            if (c == '(')
+            {
+                paren++;
+                seenParen = true;
+            }
+            else if (c == ')')
+            {
+                paren--;
+                if (paren == 0)
+                {
+                    return j + 1;
+                }
+            }
+            else if (char.IsWhiteSpace(c) && paren == 0 && seenParen)
+            {
+                return j;
+            }
+            else if (char.IsWhiteSpace(c) && paren == 0 && !seenParen)
+            {
+                return j;
+            }
+        }
+
+        return value.Length;
+    }
+
+    // razor 全体の class トークン (静的 + 式の中のリテラル) を平らに列挙する。
+    private static IEnumerable<string> ClassTokens(string razor)
+    {
+        foreach (var tag in ElementTags(razor))
+        {
+            var value = ClassAttribute(tag);
+            if (value is null)
+            {
+                continue;
+            }
+
+            var split = SplitClassTokens(value);
+            foreach (var t in split.Static.Concat(split.Dynamic))
+            {
+                yield return t;
+            }
+        }
+    }
+
+    // 失敗メッセージ用にタグを 1 行へ潰す。
+    private static string Squeeze(string tag)
+    {
+        var s = Normalize(tag);
+        return s.Length <= 120 ? s : s[..117] + "…";
+    }
 }

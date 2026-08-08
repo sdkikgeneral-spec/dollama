@@ -43,9 +43,9 @@
 
         <!-- タグ表示言語トグル ([日本語|EN])。タグ値・生成 prompt は英語のまま不変で表示のみ切替。 -->
         <div class="lang-toggle" title="タグの表示言語 (内部値・生成は英語のまま)">
-            <button type="button" class="@(_tagLang == "ja" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "ja" ? "on" : "")"
                     @onclick="@(() => SetTagLang("ja"))">日本語</button>
-            <button type="button" class="@(_tagLang == "en" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "en" ? "on" : "")"
                     @onclick="@(() => SetTagLang("en"))">EN</button>
         </div>
 
@@ -55,7 +55,7 @@
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
             @if (!_connected)
             {
-                <button type="button" class="conn-retry" @onclick="ReconnectAsync"
+                <button type="button" class="btn btn-ghost" @onclick="ReconnectAsync"
                         disabled="@_reconnecting" title="GET /health を 1 回だけ再試行します">
                     @(_reconnecting ? "確認中…" : "再接続")
                 </button>
@@ -123,10 +123,10 @@
 
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
-                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-primary" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
                     @((_busy && !_runningDraft) ? "生成中…" : "生成")
                 </button>
-                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-ghost" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
                     @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
                 </button>
             </div>
@@ -155,7 +155,7 @@
                生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
             @if (_imageData is not null && !_busy)
             {
-                <a class="preview-save" download="@_downloadName"
+                <a class="btn btn-ghost canvas-save" download="@_downloadName"
                    href="data:image/png;base64,@_imageData"
                    title="@_downloadName として保存します">PNG 保存</a>
             }
