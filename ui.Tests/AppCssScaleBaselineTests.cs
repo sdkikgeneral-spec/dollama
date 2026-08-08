@@ -12,9 +12,10 @@ namespace Dollama.Ui.Tests;
 //   畳んだ後もそれが一致することを機械的に見る。
 //
 // ★ 何を凍結するか
-//   (A) 全 font-size / border-radius の「セレクタ → 実効値」表 (67 件)
-//   (B) ボタン系 8 群 × 4 状態 (base / :hover / :disabled / :focus-visible) の宣言集合
-//   (C) 旧クラス名が「今は存在する」こと (P3-1 後に 0 件へ反転させる)
+//   (A)  全 font-size / border-radius の「セレクタ → 実効値」表 (67 件)
+//   (A2) 全 padding / margin / gap の「セレクタ → 実効値」表 (65 件)
+//   (B)  ボタン系 8 群 × 4 状態 (base / :hover / :disabled / :focus-visible) の宣言集合
+//   (C)  旧クラス名が「今は存在する」こと (P3-1 後に 0 件へ反転させる)
 //
 // ★ やらないこと
 //   完全な CSS カスケード再現はしない。(B) の比較対象は上記 4 状態の宣言集合に限定し、
@@ -127,11 +128,39 @@ public sealed partial class AppCssTokenTests
 
     // §4.2 が明示的に認めている「中間値の寄せ」。
     //   font-size 13 → 12 or 14 / font-size 15 → 14 or 16 / border-radius 8 → 10
-    // P1-6 実装時に、寄せた箇所だけをここへ理由付きで積む。**それ以外の値変更は通さない**。
+    // P1-6 で寄せた箇所を理由付きで 1 件ずつ積んである。**それ以外の値変更は通さない**
+    // (許可の形は ScaleDriftAllowList_OnlyContainsRoundingsPermittedBySection4_2 が縛る)。
     private static readonly ScaleDrift[] AllowedScaleDrifts =
     {
-        // 例) new(".error", "font-size", "13px", "14px", "§4.2: 13px は最寄りへ寄せる"),
+        // ── font-size 13px (7 件) ──
+        new(".error", "font-size", "13px", "14px",
+            "エラーは読ませる文なので本文サイズ (--fs-md) へ"),
+        new(".preview-elapsed", "font-size", "13px", "14px",
+            "減光した前回画像の上に載る経過秒。可読側 (--fs-md) へ寄せる"),
+        new(".placeholder", "font-size", "13px", "14px",
+            "広い空プレビューの案内文。本文サイズ (--fs-md) へ"),
+        new(".palette-head", "font-size", "13px", "12px",
+            "§4.2 のセクションヘッダ型 (--fs-sm + letter-spacing + --muted) へ"),
+        new(".fav-x", "font-size", "13px", "14px",
+            "× グリフの寸法を .chip-x (--fs-md) と統一する"),
+        new(".ps-del", "font-size", "13px", "14px",
+            "× グリフの寸法を .chip-x / .fav-x (--fs-md) と統一する"),
+        new(".tag-chip", "font-size", "13px", "12px",
+            "パレットのタグ (--fs-sm) からチップ化しても字の大きさが変わらないように"),
+
+        // ── font-size 15px (1 件) ──
+        new(".generate", "font-size", "15px", "16px",
+            "主 CTA。14px に寄せると .generate.secondary と同寸になり階層が消えるので大きい側へ"),
+
+        // ── border-radius 8px (2 件) ──
+        new(".generate", "border-radius", "8px", "10px",
+            "§4.2「現 8/10 を 10 に寄せる」。器 (.gen / .canvas) と半径をそろえる"),
+        new(".preview", "border-radius", "8px", "10px",
+            "§4.2「現 8/10 を 10 に寄せる」。外側の器 .canvas (--r-md) と半径をそろえる"),
     };
+
+    // 寄せた件数の固定。増減するときは必ずレビューが要る (PL 裁定)。
+    private const int ExpectedScaleDrifts = 10;
 
     public static IEnumerable<object[]> ScaleBaselineData()
         => ScaleBaseline.Select(e => new object[] { e.Selector, e.Property, e.Value });
@@ -187,11 +216,25 @@ public sealed partial class AppCssTokenTests
         Assert.True(missing.Count == 0, "ベースライン表にあるのに app.css から消えた宣言: " + string.Join(" / ", missing));
     }
 
-    // 許可リストは今は空。P1-6 実装時にここを「寄せた件数」へ書き換える (= 反転させる検査)。
+    // ★ P1-6 で反転させた検査 (旧 ScaleDriftAllowList_IsEmptyBeforeP1_6)。
+    //   「空であること」→「レビュー済みの 10 件ちょうどであること」。
+    //   件数を定数で固定しているので、寄せを 1 件足すだけでも赤くなる。
     [Fact]
-    public void ScaleDriftAllowList_IsEmptyBeforeP1_6()
+    public void ScaleDriftAllowList_MatchesTheReviewedRoundings()
     {
-        Assert.Empty(AllowedScaleDrifts);
+        Assert.Equal(ExpectedScaleDrifts, AllowedScaleDrifts.Length);
+
+        // 同じ宛先を二重に積まない (後勝ちで検査が骨抜きになるのを防ぐ)
+        var keys = AllowedScaleDrifts.Select(d => (d.Selector, d.Property)).ToList();
+        Assert.Equal(keys.Count, keys.Distinct().Count());
+
+        // 宛先がベースライン表に実在し、From が表の値と一致すること
+        foreach (var d in AllowedScaleDrifts)
+        {
+            var row = ScaleBaseline.SingleOrDefault(e => e.Selector == d.Selector && e.Property == d.Property);
+            Assert.True(row is not null, $"許可リストの宛先がベースライン表に無い: {d.Selector} {{ {d.Property} }}");
+            Assert.Equal(row!.Value, d.From);
+        }
     }
 
     // 許可リストが野放しにならないよう、中身の形も縛る。空でも将来のために効かせておく。
@@ -213,18 +256,309 @@ public sealed partial class AppCssTokenTests
         }
     }
 
-    // P1-6 の着手前であることの確認 (= P1-6 後に反転させる検査)。
+    // ★ P1-6 で反転させた検査 (旧 ScaleTokens_DoNotExistYet)。
+    //   「まだ無いこと」→「§4.2 の 12 トークンがちょうど揃っていること」。
+    //   段を勝手に増やす (--fs-xxs 等) と赤くなる = トークン新設は PL 裁定事項。
     [Fact]
-    public void ScaleTokens_DoNotExistYet()
+    public void ScaleTokens_AreExactlyTheTwelveStepsOfSection4_2()
     {
         var tokens = RootTokens();
-        var scale = tokens.Keys
-            .Where(k => k.StartsWith("--fs-") || k.StartsWith("--r-") || k.StartsWith("--sp-"))
+
+        string[] expected =
+        {
+            "--fs-xs", "--fs-sm", "--fs-md", "--fs-lg",
+            "--sp-1", "--sp-2", "--sp-3", "--sp-4", "--sp-6",
+            "--r-sm", "--r-md", "--r-pill",
+        };
+
+        foreach (var name in expected)
+        {
+            Assert.True(tokens.ContainsKey(name), $"寸法トークン {name} が :root に無い");
+        }
+
+        var defined = tokens.Keys.Where(IsScaleTokenName).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.Equal(
+            expected.OrderBy(x => x, StringComparer.Ordinal).ToList(),
+            defined);
+    }
+
+    // スケール名が 4 段 / 5 段 / 3 段から漏れないこと。
+    // app.css・scoped CSS のどこかで var(--fs-xxs) のような未定義段を参照し始めたら赤くする。
+    [Theory]
+    [InlineData("--fs-", new[] { "xs", "sm", "md", "lg" })]
+    [InlineData("--sp-", new[] { "1", "2", "3", "4", "6" })]
+    [InlineData("--r-", new[] { "sm", "md", "pill" })]
+    public void ReferencedScaleSteps_StayWithinTheDeclaredSet(string prefix, string[] steps)
+    {
+        var allowed = steps.Select(s => prefix + s).ToHashSet(StringComparer.Ordinal);
+        var used = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (var path in new[] { AppCssPath, MainLayoutCssPath, ReconnectCssPath })
+        {
+            var text = StripComments(File.ReadAllText(path));
+            foreach (Match m in Regex.Matches(text, @"var\(\s*(--[A-Za-z0-9_-]+)"))
+            {
+                if (m.Groups[1].Value.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    used.Add(m.Groups[1].Value);
+                }
+            }
+        }
+
+        var outside = used.Where(u => !allowed.Contains(u)).ToList();
+        Assert.True(outside.Count == 0, $"{prefix}* の段から外れた参照: " + string.Join(", ", outside));
+    }
+
+    // トークンそのものの健全性。段が入れ替わったり単位が壊れたりすると
+    // 実効 px 表 (A)(A2) は「全部一致しない」形で落ちるので、原因が読める検査を別に置く。
+    [Fact]
+    public void ScaleTokens_AreMonotonicAndWithinSaneRanges()
+    {
+        var tokens = RootTokens();
+
+        // タイポ: xs < sm < md < lg かつ 10–18px
+        var fs = new[] { "--fs-xs", "--fs-sm", "--fs-md", "--fs-lg" }.Select(n => Px(tokens[n])).ToList();
+        for (var i = 0; i < fs.Count; i++)
+        {
+            Assert.InRange(fs[i], 10, 18);
+            if (i > 0)
+            {
+                Assert.True(fs[i - 1] < fs[i], $"--fs-* が単調増加でない: {string.Join(" / ", fs)}");
+            }
+        }
+
+        // スペーシング: 4 の倍数かつ単調増加
+        var sp = new[] { "--sp-1", "--sp-2", "--sp-3", "--sp-4", "--sp-6" }.Select(n => Px(tokens[n])).ToList();
+        for (var i = 0; i < sp.Count; i++)
+        {
+            Assert.True(sp[i] % 4 == 0, $"--sp-* が 4px グリッドから外れた: {sp[i]}px");
+            if (i > 0)
+            {
+                Assert.True(sp[i - 1] < sp[i], $"--sp-* が単調増加でない: {string.Join(" / ", sp)}");
+            }
+        }
+
+        // 名前が刻み数を表しているので --sp-N = N * 4px であること
+        Assert.Equal(new[] { 4, 8, 12, 16, 24 }, sp);
+
+        // 角丸: sm < md、pill は 999px
+        Assert.True(Px(tokens["--r-sm"]) < Px(tokens["--r-md"]), "--r-sm < --r-md であること");
+        Assert.Equal(999, Px(tokens["--r-pill"]));
+    }
+
+    // ペイン見出しはセクションヘッダ型 (§4.2): 小さく (--fs-sm) 薄く (--muted) 広く (letter-spacing)。
+    [Fact]
+    public void PaneHeading_IsSectionHeaderStyle()
+    {
+        var head = Blocks(File.ReadAllText(AppCssPath))
+            .Where(b => Normalize(b.Selector) == ".palette-head")
+            .ToList();
+
+        Assert.True(head.Count == 1, $".palette-head の宣言は 1 つであること (実際 {head.Count} 件)");
+
+        var body = Normalize(head[0].Body);
+        Assert.Contains("font-size: var(--fs-sm)", body);
+        Assert.Contains("letter-spacing: 0.06em", body);
+        Assert.Contains("color: var(--muted)", body);
+
+        // 見出しクラスはタグパレットとプリセット一覧の両ペインで共有されている
+        foreach (var path in new[] { TagPaletteRazorPath, PresetSidebarRazorPath })
+        {
+            Assert.Contains("class=\"palette-head\"", File.ReadAllText(path));
+        }
+    }
+
+    private static bool IsScaleTokenName(string name)
+        => name.StartsWith("--fs-", StringComparison.Ordinal)
+           || name.StartsWith("--sp-", StringComparison.Ordinal)
+           || name.StartsWith("--r-", StringComparison.Ordinal);
+
+    private static int Px(string value)
+    {
+        var m = Regex.Match(value.Trim(), @"^(\d+)px$");
+        Assert.True(m.Success, $"px 値として読めない: {value}");
+        return int.Parse(m.Groups[1].Value);
+    }
+
+    // ══════════════════════════════════════════════════
+    //  (A2) P1-6 用: padding / margin / gap の実効値ベースライン
+    //
+    //  (A) と同じ流儀。**置換前に緑を確認してから** var(--sp-*) を入れる。
+    //  スペーシングには「寄せ」の許可リストを設けない — §4.2 が認めているのは
+    //  font-size / border-radius の中間値だけで、余白は 1px でも動かさない。
+    // ══════════════════════════════════════════════════
+
+    // 4px グリッド。ここにぴったり一致する成分だけがトークン化の対象になる。
+    private static readonly string[] SpacingGrid = { "4px", "8px", "12px", "16px", "24px" };
+
+    // 現行 app.css の全宣言 (padding 33 + padding-right 1 + padding-bottom 1 +
+    // margin 1 + margin-top 2 + margin-right 1 + margin-left 1 + gap 25 = 65)。
+    // 末尾コメントの ★ は「全成分が 4px グリッド (0 は中立) = トークン化の対象」の印。
+    private static readonly ScaleEntry[] SpacingBaseline =
+    {
+        // ── ベース / トップバー ──
+        new("html, body",                     "margin",         "0"),
+        new(".topbar",                        "gap",            "18px"),
+        new(".topbar",                        "padding",        "8px 18px"),
+        new(".lang-toggle",                   "gap",            "0"),
+        new(".lang-toggle button",            "padding",        "4px 10px"),
+        new(".conn",                          "gap",            "6px"),
+        new(".conn-retry",                    "padding",        "2px 8px"),
+        new(".conn-retry",                    "margin-left",    "4px"),          // ★
+
+        // ── テレメトリ ──
+        new(".telemetry-mini",                "gap",            "14px"),
+        new(".tm-item",                       "gap",            "6px"),
+        new(".gen-pill",                      "padding",        "2px 10px"),
+
+        // ── 3 ペインの器 ──
+        new(".main",                          "gap",            "16px"),         // ★
+        new(".main",                          "padding",        "16px"),         // ★
+        new(".sidebar",                       "gap",            "12px"),         // ★
+        new(".sidebar",                       "padding-right",  "4px"),          // ★
+        new(".gen",                           "gap",            "12px"),         // ★
+        new(".gen",                           "padding",        "16px"),         // ★
+        new(".canvas",                        "padding",        "16px"),         // ★
+        new(".field",                         "gap",            "4px"),          // ★
+        new(".row",                           "gap",            "12px"),         // ★
+        new("textarea, select, input[type=\"range\"]", "padding", "8px"),        // ★
+
+        // ── 生成ボタン行まわり ──
+        new(".gen-actions",                   "gap",            "12px"),         // ★
+        new(".generate",                      "padding",        "12px"),         // ★
+        new(".gen-reason",                    "margin-top",     "-4px"),         // 負値 (グリッド外)
+        new(".error",                         "padding",        "8px 10px"),
+
+        // ── プレビュー (右ペイン) ──
+        new(".gen-mode",                      "padding",        "3px 10px"),
+        new(".preview-save",                  "padding",        "3px 10px"),
+        new(".preview-overlay",               "gap",            "12px"),         // ★
+
+        // ── タグパレット (左ペイン) ──
+        new(".palette, .preset-sidebar",      "padding",        "12px"),         // ★
+        new(".palette, .preset-sidebar",      "gap",            "8px"),          // ★
+        new(".palette-target",                "gap",            "6px"),
+        new(".palette-target label",          "gap",            "4px"),          // ★
+        new(".palette-target label",          "padding",        "4px 4px"),      // ★
+        new(".palette-cat",                   "padding",        "0 8px"),        // ★
+        new(".palette-cat > summary",         "padding",        "6px 2px"),
+        new(".palette-tags",                  "gap",            "4px"),          // ★
+        new(".palette-tags",                  "padding",        "4px 0 8px"),    // ★
+        new(".palette-empty",                 "padding",        "4px 0 8px"),    // ★
+        new(".palette-tag",                   "padding",        "2px 8px"),
+
+        // ── お気に入り ──
+        new(".fav-add",                       "padding",        "2px 4px 2px 10px"),
+        new(".fav-x",                         "padding",        "0 6px 0 2px"),
+        new(".fav-bar",                       "gap",            "6px"),
+        new(".fav-bar",                       "padding-bottom", "8px"),          // ★
+        new(".fav-entry",                     "padding",        "4px 8px"),      // ★
+        new(".fav-plus",                      "padding",        "0 10px"),
+
+        // ── プリセット一覧 (左ペイン) ──
+        new(".ps-list",                       "gap",            "4px"),          // ★
+        new(".ps-list",                       "padding",        "4px 0 8px"),    // ★
+        new(".ps-card",                       "gap",            "8px"),          // ★
+        new(".ps-card",                       "padding",        "4px 6px"),
+        new(".ps-del",                        "padding",        "0"),
+
+        // ── プリセット保存バー (中央) ──
+        new(".presetbar",                     "gap",            "6px"),
+        new(".preset-name",                   "padding",        "6px 8px"),
+        new(".preset-btn",                    "padding",        "6px 10px"),
+
+        // ── チップ入力 ──
+        new(".taginput .chips",               "gap",            "6px"),
+        new(".taginput .chips",               "padding",        "6px"),
+        new(".tag-chip",                      "gap",            "4px"),          // ★
+        new(".tag-chip",                      "padding",        "2px 4px 2px 10px"),
+        new(".chip-x",                        "padding",        "0 4px"),        // ★
+        new(".chip-entry",                    "padding",        "4px"),          // ★
+
+        // ── LoRA ──
+        new(".lora-chips",                    "gap",            "6px"),
+        new(".lora-chips",                    "margin-top",     "4px"),          // ★
+        new(".lora-head",                     "margin-right",   "4px"),          // ★
+        new(".lora-item",                     "gap",            "6px"),
+        new(".lora-chip",                     "padding",        "2px 10px"),
+        new(".lora-strength",                 "gap",            "4px"),          // ★
+    };
+
+    public static IEnumerable<object[]> SpacingBaselineData()
+        => SpacingBaseline.Select(e => new object[] { e.Selector, e.Property, e.Value });
+
+    [Theory]
+    [MemberData(nameof(SpacingBaselineData))]
+    public void EffectiveSpacingValue_MatchesBaseline(string selector, string property, string expected)
+    {
+        var actual = SpacingActual.Value
+            .Where(x => x.Selector == selector && x.Property == property)
+            .Select(x => x.Value)
             .ToList();
 
         Assert.True(
-            scale.Count == 0,
-            "P1-6 は未着手のはずだが :root にスケールトークンがある: " + string.Join(", ", scale));
+            actual.Count == 1,
+            $"{selector} の {property} 宣言は 1 つであること (実際 {actual.Count} 件)");
+
+        // 余白に「寄せ」は無い。var(--sp-*) へ畳んでも実効 px は完全一致であること。
+        Assert.Equal(expected, actual[0]);
+    }
+
+    [Fact]
+    public void SpacingBaseline_CoversEveryDeclarationInAppCss()
+    {
+        var actual = SpacingActual.Value;
+
+        Assert.Equal(33, actual.Count(x => x.Property == "padding"));
+        Assert.Equal(25, actual.Count(x => x.Property == "gap"));
+        Assert.Equal(65, actual.Count);
+        Assert.Equal(65, SpacingBaseline.Length);
+
+        var baseline = SpacingBaseline.Select(e => (e.Selector, e.Property)).ToHashSet();
+        var extra = actual
+            .Where(a => !baseline.Contains((a.Selector, a.Property)))
+            .Select(a => $"{a.Selector} {{ {a.Property} }}")
+            .ToList();
+        Assert.True(extra.Count == 0, "ベースライン表に無い余白宣言が増えている: " + string.Join(" / ", extra));
+
+        var found = actual.Select(a => (a.Selector, a.Property)).ToHashSet();
+        var missing = baseline.Where(b => !found.Contains(b)).Select(b => $"{b.Item1} {{ {b.Item2} }}").ToList();
+        Assert.True(missing.Count == 0, "ベースライン表にあるのに app.css から消えた余白宣言: " + string.Join(" / ", missing));
+    }
+
+    // P1-6 の置換ルールそのものの検査。
+    //   「全成分が 4px グリッド (0 は中立) の宣言だけを var(--sp-*) へ畳む。
+    //     6px / 10px / -4px のような非グリッド値を含む宣言は 1 成分も触らない」
+    // ルールを満たしているのに px 直書きが残っていれば取りこぼし = 赤。
+    // ※ 逆向き (非グリッド値をトークンで書く) はトークン定義側が 4 の倍数しか持たないので
+    //   ScaleTokens_AreMonotonicAndWithinSaneRanges が押さえる。
+    [Fact]
+    public void SpacingTokens_CoverEveryFullyOnGridDeclaration()
+    {
+        var tokens = RootTokens();
+        var leftovers = new List<string>();
+
+        foreach (var raw in SpacingRaw.Value)
+        {
+            var parts = ResolveMetricVars(raw.Value, tokens)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            var onGrid = parts.All(p => p == "0" || SpacingGrid.Contains(p, StringComparer.Ordinal));
+            if (!onGrid || parts.All(p => p == "0"))
+            {
+                // 非グリッド値を含む宣言と、0 だけの宣言 (トークン不要) は対象外
+                continue;
+            }
+
+            if (Regex.IsMatch(raw.Value, @"\d+px"))
+            {
+                leftovers.Add($"{raw.Selector} {{ {raw.Property}: {raw.Value} }}");
+            }
+        }
+
+        Assert.True(
+            leftovers.Count == 0,
+            "4px グリッドに乗っているのに var(--sp-*) へ畳まれていない余白: " + string.Join(" / ", leftovers));
     }
 
     // ══════════════════════════════════════════════════
@@ -476,6 +810,19 @@ public sealed partial class AppCssTokenTests
             expected[d[..i].Trim()] = d[(i + 1)..].Trim();
         }
 
+        // (A) の許可リストで寄せた値はここにも波及する (同じ app.css を別角度から見ているだけ)。
+        // ★ ベースライン表の literal は書き換えない — 寄せの正当性は AllowedScaleDrifts 側
+        //   (§4.2 の形 + 件数固定) で 1 箇所に閉じ込めておきたいため。
+        //   連鎖上のセレクタが持つ値と From が一致するときだけ適用するので、
+        //   後勝ちで上書きされている値 (例: .generate.secondary の font-size) は動かない。
+        foreach (var drift in AllowedScaleDrifts.Where(d => spec.Chain.Contains(d.Selector, StringComparer.Ordinal)))
+        {
+            if (expected.TryGetValue(drift.Property, out var current) && current == drift.From)
+            {
+                expected[drift.Property] = drift.To;
+            }
+        }
+
         foreach (var diff in AllowedButtonDiffs.Where(d => d.Button == button && d.State == state))
         {
             if (diff.Before.Length > 0)
@@ -674,6 +1021,30 @@ public sealed partial class AppCssTokenTests
         Assert.Equal(Dump(before), Dump(after));
     }
 
+    // 余白側の自己検査。ショートハンドの一部だけが var() になっても実効値が読めること
+    // (= 「4px 0 8px」→「var(--sp-1) 0 var(--sp-2)」の置換がベースライン表に対して透明であること)。
+    [Fact]
+    public void Scanner_ResolvesSpacingTokensInsideShorthand()
+    {
+        const string before = """
+            :root { --accent: #6ea8fe; }
+            .a { padding: 4px 0 8px; gap: 12px; margin-left: 4px; }
+            """;
+        const string after = """
+            :root { --accent: #6ea8fe; --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; }
+            .a { padding: var(--sp-1) 0 var(--sp-2); gap: var(--sp-3); margin-left: var(--sp-1); }
+            """;
+
+        static string Dump(string css)
+            => string.Join("\n", ScanDeclarations(Blocks(css), SyntheticTokens(css), IsSpacingProperty)
+                .Select(e => $"{e.Selector} {{ {e.Property}: {e.Value} }}"));
+
+        Assert.Equal(
+            ".a { padding: 4px 0 8px }\n.a { gap: 12px }\n.a { margin-left: 4px }",
+            Dump(before));
+        Assert.Equal(Dump(before), Dump(after));
+    }
+
     [Fact]
     public void Scanner_DetectsChangedPixelValue()
     {
@@ -789,10 +1160,21 @@ public sealed partial class AppCssTokenTests
     private sealed record ButtonDiff(string Button, string State, string Property, string Before, string After, string Reason);
 
     // app.css を毎回パースし直すと 100 ケース分で無駄なので 1 回で済ませる。
-    private static readonly Lazy<List<ScaleEntry>> ScaleActual = new(ScanScaleDeclarations);
-
+    // ※ 下の Lazy から参照するので、宣言順はここが先 (静的フィールドの初期化順)。
     private static readonly Lazy<List<CssBlock>> AppCssBlocks =
         new(() => Blocks(File.ReadAllText(AppCssPath)));
+
+    private static readonly Lazy<List<ScaleEntry>> ScaleActual = new(ScanScaleDeclarations);
+
+    private static readonly Lazy<List<ScaleEntry>> SpacingActual =
+        new(() => ScanDeclarations(AppCssBlocks.Value, RootTokens(), IsSpacingProperty));
+
+    // トークンを解決しない「生の値」。var(--sp-*) へ畳めたかどうかを見るのに使う。
+    private static readonly Lazy<List<ScaleEntry>> SpacingRaw =
+        new(() => ScanDeclarations(
+            AppCssBlocks.Value,
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            IsSpacingProperty));
 
     private static List<ScaleEntry> ScanScaleDeclarations()
         => ScanScaleDeclarations(AppCssBlocks.Value, RootTokens());
@@ -802,6 +1184,17 @@ public sealed partial class AppCssTokenTests
     private static List<ScaleEntry> ScanScaleDeclarations(
         List<CssBlock> blocks,
         Dictionary<string, string> tokens)
+        => ScanDeclarations(blocks, tokens, p => p is "font-size" or "border-radius");
+
+    // 余白系プロパティ。ロングハンド (padding-right 等) と row-/column-gap も取りこぼさない。
+    private static bool IsSpacingProperty(string property)
+        => Regex.IsMatch(property, @"^(margin|padding)(-(top|right|bottom|left))?$")
+           || Regex.IsMatch(property, @"^(row-|column-)?gap$");
+
+    private static List<ScaleEntry> ScanDeclarations(
+        List<CssBlock> blocks,
+        Dictionary<string, string> tokens,
+        Func<string, bool> wanted)
     {
         var list = new List<ScaleEntry>();
 
@@ -814,7 +1207,7 @@ public sealed partial class AppCssTokenTests
 
             foreach (var d in ParseDeclarations(b.Body))
             {
-                if (d.Property is "font-size" or "border-radius")
+                if (wanted(d.Property))
                 {
                     list.Add(new ScaleEntry(b.Selector, d.Property, ResolveMetricVars(d.Value, tokens)));
                 }

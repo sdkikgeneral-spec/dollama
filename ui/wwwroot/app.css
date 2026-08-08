@@ -49,6 +49,30 @@
     --dev-npu: #a78bfa;
     --dev-igpu: #5fd4c8;
     --dev-gpu: #f0a860;
+
+    /* ── 寸法トークン (P1-6 / §4.2) ──────────────────────────
+       アドホックな px 直書きを最小限のスケールへ畳む。**px 実値は原則不変**で、
+       トークン名を通すのが主目的 (ui.Tests/AppCssScaleBaselineTests.cs が実効 px を凍結する)。
+       段を増やしたくなったら、まず既存段へ寄せられないかを疑うこと。 */
+
+    /* タイポ 4 段。11=補足 / 12=ラベル・チップ / 14=本文 (html 既定) / 16=ブランド・主 CTA */
+    --fs-xs: 11px;
+    --fs-sm: 12px;
+    --fs-md: 14px;
+    --fs-lg: 16px;
+
+    /* スペーシング (4px グリッド)。グリッドに乗っている余白だけをこれで置換する */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-6: 24px;
+
+    /* 角丸 3 段 + pill。sm=入力・小ボタン / md=ペイン・カード・主 CTA / pill=チップ・バッジ。
+       円 (border-radius: 50%) は「段」ではなく形なのでトークン化しない */
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-pill: 999px;
 }
 
 *
@@ -63,7 +87,7 @@ html, body
     background: var(--bg);
     color: var(--text);
     font-family: "Segoe UI", "Yu Gothic UI", system-ui, sans-serif;
-    font-size: 14px;
+    font-size: var(--fs-md);
 }
 
 .app
@@ -87,7 +111,7 @@ html, body
 .brand
 {
     font-weight: 700;
-    font-size: 16px;
+    font-size: var(--fs-lg);
     letter-spacing: 0.02em;
     white-space: nowrap;
 }
@@ -96,7 +120,7 @@ html, body
 {
     color: var(--muted);
     font-weight: 400;
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
 /* ── タグ表示言語トグル ([日本語|EN]・上部バー) ── */
@@ -106,7 +130,7 @@ html, body
     align-items: center;
     gap: 0;
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     overflow: hidden;
     white-space: nowrap;
 }
@@ -117,7 +141,7 @@ html, body
     border: none;
     background: var(--panel-2);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 4px 10px;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
@@ -146,7 +170,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
     white-space: nowrap;
 }
@@ -177,11 +201,11 @@ html, body
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    font-size: 11px;
+    border-radius: var(--r-sm);
+    font-size: var(--fs-xs);
     font-weight: 600;
     padding: 2px 8px;
-    margin-left: 4px;
+    margin-left: var(--sp-1);
     cursor: pointer;
     white-space: nowrap;
     transition: border-color 0.12s, color 0.12s;
@@ -213,7 +237,7 @@ html, body
 .tm-hint
 {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
 .tm-item
@@ -221,7 +245,7 @@ html, body
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
 }
 
 .tm-dev
@@ -237,6 +261,8 @@ html, body
     width: 64px;
     height: 6px;
     background: var(--panel-2);
+    /* 高さ 6px のバーなので --r-sm (6px) に寄せると完全な pill になり形が変わる。
+       角丸トークンの対象外として 3px 直書きのまま残す (P1-6) */
     border-radius: 3px;
     overflow: hidden;
 }
@@ -331,9 +357,9 @@ html, body
 {
     background: var(--accent);
     color: var(--on-accent);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.04em;
     white-space: nowrap;
@@ -346,8 +372,8 @@ html, body
     display: grid;
     /* 左ペインを 320px に広げ、追加先トグル 3 ラベルが横一列で潰れず収まるようにする */
     grid-template-columns: 320px minmax(340px, 400px) 1fr;
-    gap: 16px;
-    padding: 16px;
+    gap: var(--sp-4);
+    padding: var(--sp-4);
     flex: 1;
     min-height: 0;
 }
@@ -357,10 +383,10 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--sp-3);
     overflow-y: auto;
     min-height: 0;
-    padding-right: 4px;
+    padding-right: var(--sp-1);
 }
 
 /* 中央: 生成コントロール列 */
@@ -368,11 +394,11 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--sp-3);
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    border-radius: var(--r-md);
+    padding: var(--sp-4);
     overflow-y: auto;
     min-height: 0;
 }
@@ -386,8 +412,8 @@ html, body
     justify-content: center;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
+    border-radius: var(--r-md);
+    padding: var(--sp-4);
     min-height: 0;
     overflow: hidden;
 }
@@ -396,19 +422,19 @@ html, body
 {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--sp-1);
 }
 
 .field > span
 {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
 }
 
 .row
 {
     display: flex;
-    gap: 12px;
+    gap: var(--sp-3);
 }
 
 .grow
@@ -421,8 +447,8 @@ textarea, select, input[type="range"]
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 8px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-2);
     font: inherit;
     resize: vertical;
 }
@@ -460,7 +486,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .gen-actions
 {
     display: flex;
-    gap: 12px;
+    gap: var(--sp-3);
 }
 
 .generate
@@ -470,10 +496,13 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--accent);
     color: var(--on-accent);
     border: none;
-    border-radius: 8px;
-    padding: 12px;
+    /* §4.2 の寄せ: 8px → --r-md (10px)。器 (.gen / .canvas) と半径をそろえる */
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
     font-weight: 700;
-    font-size: 15px;
+    /* §4.2 の寄せ: 15px → --fs-lg (16px)。14px に寄せると .generate.secondary と
+       同寸になり主 CTA の階層が消えるため、大きい側へ寄せる */
+    font-size: var(--fs-lg);
     cursor: pointer;
 }
 
@@ -484,7 +513,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     color: var(--text);
     border: 1px solid var(--border-strong);
     font-weight: 600;
-    font-size: 14px;
+    font-size: var(--fs-md);
 }
 
 .generate.secondary:hover:not(:disabled)
@@ -505,7 +534,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .gen-reason
 {
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.5;
     margin-top: -4px;
 }
@@ -515,9 +544,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--ng-weak);
     border: 1px solid var(--ng);
     color: var(--ng-soft);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 8px 10px;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。エラーは読ませる文なので本文サイズへ */
+    font-size: var(--fs-md);
 }
 
 /* ── 直近プレビューのモードバッジ (右ペイン左上・本番/下書き + 解像度) ── */
@@ -530,9 +560,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--muted);
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 3px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -550,9 +580,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 3px 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     line-height: 1.6;
     text-decoration: none;
@@ -580,7 +610,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     justify-content: center;
     background: var(--panel-2);
     border: 1px dashed var(--border);
-    border-radius: 8px;
+    /* §4.2 の寄せ: 8px → --r-md (10px)。外側の器 .canvas (10px) と半径をそろえる */
+    border-radius: var(--r-md);
     overflow: hidden;
 }
 
@@ -608,7 +639,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: var(--sp-3);
     background: var(--overlay);
 }
 
@@ -616,7 +647,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .preview-elapsed
 {
     color: var(--text);
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。減光画像の上に載るので可読側へ寄せる */
+    font-size: var(--fs-md);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
@@ -624,7 +656,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .placeholder
 {
     color: var(--muted);
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。広い空プレビューの案内文なので本文サイズへ */
+    font-size: var(--fs-md);
 }
 
 .spinner
@@ -667,11 +700,11 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px;
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--sp-2);
 }
 
 /* 追加先がお気に入りのときは、パレット全体を面で示す (P2-6 / 課題 #9)。
@@ -684,11 +717,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border-color: var(--accent-border);
 }
 
+/* ペイン見出し (タグパレット / プリセット)。§4.2 のセクションヘッダ型 =
+   「小さく薄く広く」(--fs-sm + letter-spacing + --muted)。本文と 1px 差で並んでいた
+   従来より階層が立つ。§4.2 の寄せ: 13px → --fs-sm (12px)。 */
 .palette-head
 {
-    font-size: 13px;
+    font-size: var(--fs-sm);
     font-weight: 700;
-    color: var(--text);
+    letter-spacing: 0.06em;
+    color: var(--muted);
 }
 
 /* 追加先トグル (◉プロンプト ○ネガティブ ○お気に入り) */
@@ -706,14 +743,14 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: var(--sp-1);
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
     background: var(--panel-2);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px 4px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-1);
     white-space: nowrap;
     cursor: pointer;
 }
@@ -733,15 +770,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .palette-cat
 {
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--panel-2);
-    padding: 0 8px;
+    padding: 0 var(--sp-2);
 }
 
 .palette-cat > summary
 {
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--text);
     padding: 6px 2px;
@@ -768,15 +805,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    padding: 4px 0 8px;
+    gap: var(--sp-1);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 .palette-empty
 {
     color: var(--muted);
-    font-size: 11px;
-    padding: 4px 0 8px;
+    font-size: var(--fs-xs);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 /* クリックで追加するタグボタン */
@@ -785,9 +822,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
 }
 
@@ -804,7 +841,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     align-items: center;
     background: var(--accent-weak);
     border: 1px solid var(--accent-border);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     overflow: hidden;
 }
 
@@ -815,7 +852,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     color: var(--text);
     cursor: pointer;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 2px 4px 2px 10px;
 }
 
@@ -830,7 +867,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x と統一する */
+    font-size: var(--fs-md);
     line-height: 1;
     padding: 0 6px 0 2px;
 }
@@ -844,7 +882,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     gap: 6px;
-    padding-bottom: 8px;
+    padding-bottom: var(--sp-2);
 }
 
 .fav-entry
@@ -854,10 +892,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 4px 8px;
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-2);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
 }
 
 .fav-plus
@@ -865,7 +903,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 0 10px;
     font: inherit;
     cursor: pointer;
@@ -887,8 +925,8 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 4px 0 8px;
+    gap: var(--sp-1);
+    padding: var(--sp-1) 0 var(--sp-2);
 }
 
 .ps-card
@@ -896,10 +934,10 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     position: relative;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--sp-2);
     background: var(--bg);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 4px 6px;
     cursor: pointer;
     transition: border-color 0.12s;
@@ -910,6 +948,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border-color: var(--accent);
 }
 
+/* 36px 角のサムネ / no-image 枠。border-radius: 4px は角丸トークンの対象外 —
+   §4.2 が認めている寄せは「8 or 10 → 10」だけで 4 → 6 は含まれない。
+   36px の小さな箱で半径を 1.5 倍にすると見た目が変わるので直書きのまま残す (P1-6)。 */
 .ps-card img
 {
     width: 36px;
@@ -931,6 +972,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: 1px dashed var(--border);
     border-radius: 4px;
     color: var(--muted);
+    /* スケール外の最小値。--fs-xs (11px) へ寄せると 2px 動き、36px 角に "no image" が
+       収まらなくなる。§4.2 も 9px の寄せは認めていないので直書きのまま残す (P1-6)。
+       ラベルを短くするかアイコン化するなら、そのとき棚卸しする */
     font-size: 9px;
     flex-shrink: 0;
 }
@@ -939,7 +983,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -955,9 +999,12 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: transparent;
     color: var(--muted);
     border: 1px solid var(--border-strong);
+    /* 20px 角のアイコンボタン。4px → --r-sm (6px) は §4.2 の許可外なので据え置き (P1-6) */
     border-radius: 4px;
     cursor: pointer;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-md (14px)。× グリフの寸法を .chip-x / .fav-x と統一する
+       (20px 角・line-height 18px の枠に 14px グリフは収まる) */
+    font-size: var(--fs-md);
     padding: 0;
     flex-shrink: 0;
 }
@@ -982,7 +1029,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 6px 8px;
     font: inherit;
     flex: 1;
@@ -994,7 +1041,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--panel-2);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 6px 10px;
     font: inherit;
     cursor: pointer;
@@ -1013,7 +1060,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 
 .preset-msg
 {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--accent);
 }
 
@@ -1026,7 +1073,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     align-items: center;
     background: var(--panel-2);
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     padding: 6px;
     min-height: 38px;
     /* 追加先の左縁 (P2-6)。既定は no-op で、下の .field.is-target が値を差し替える */
@@ -1046,13 +1093,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--sp-1);
     background: var(--accent-weak);
     border: 1px solid var(--accent-border);
     color: var(--text);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 4px 2px 10px;
-    font-size: 13px;
+    /* §4.2 の寄せ: 13px → --fs-sm (12px)。パレットのタグ (12px) をクリックして
+       チップになったときに字の大きさが変わらないようにする */
+    font-size: var(--fs-sm);
     line-height: 1.4;
 }
 
@@ -1062,9 +1111,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--muted);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--fs-md);
     line-height: 1;
-    padding: 0 4px;
+    padding: 0 var(--sp-1);
     border-radius: 50%;
     /* --edge は継承するので、追加先フィールド内の × ボタンのフォーカスリングに
        左縁が載らないよう打ち消す (P2-6) */
@@ -1084,7 +1133,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     border: none;
     color: var(--text);
     font: inherit;
-    padding: 4px;
+    padding: var(--sp-1);
 }
 
 .chip-entry:focus
@@ -1105,20 +1154,20 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin-top: 4px;
+    margin-top: var(--sp-1);
 }
 
 .lora-head
 {
     color: var(--muted);
-    font-size: 12px;
-    margin-right: 4px;
+    font-size: var(--fs-sm);
+    margin-right: var(--sp-1);
 }
 
 .lora-empty
 {
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
 }
 
 /* チップ + 強度スライダを 1 まとまりに */
@@ -1135,9 +1184,9 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border-strong);
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     padding: 2px 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
 }
 
@@ -1159,7 +1208,7 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--sp-1);
 }
 
 .lora-strength input[type="range"]
@@ -1170,6 +1219,6 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .previe
 .lora-val
 {
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     min-width: 2.5em;
 }
