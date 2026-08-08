@@ -214,6 +214,49 @@ html, body
     text-align: right;
 }
 
+/* デバイス別の色 (P1-5 / §4.4-1)。tm-item のクラスは Services/DeviceStyle.cs が決める。
+   4 色が別々に動くことで「4 つの HW が協調して働いている」が一瞥で伝わる。
+   未知のデバイスはクラスが付かず上の既定グラデへフォールバックする。 */
+.tm-cpu .tm-fill
+{
+    background: var(--dev-cpu);
+}
+
+.tm-cpu .tm-pct
+{
+    color: var(--dev-cpu);
+}
+
+.tm-npu .tm-fill
+{
+    background: var(--dev-npu);
+}
+
+.tm-npu .tm-pct
+{
+    color: var(--dev-npu);
+}
+
+.tm-igpu .tm-fill
+{
+    background: var(--dev-igpu);
+}
+
+.tm-igpu .tm-pct
+{
+    color: var(--dev-igpu);
+}
+
+.tm-gpu .tm-fill
+{
+    background: var(--dev-gpu);
+}
+
+.tm-gpu .tm-pct
+{
+    color: var(--dev-gpu);
+}
+
 /* ── メイン 3 ペイン (左ペイン + 中央コントロール + 右プレビュー) ── */
 .main
 {
