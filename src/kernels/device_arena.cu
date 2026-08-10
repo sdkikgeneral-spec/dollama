@@ -51,6 +51,9 @@ struct Arena
     // DOLLAMA_POOL=0 用: 素の cudaMalloc で配ったポインタ (rewind で末尾から free)。
     std::vector<FallbackBlock> fallback_ptrs;
 
+    // 同時生存要求バイト (アライン後の合計)。捨て分を含まない真の live 量 (S2b)。
+    size_t req_live = 0;
+
     // 所有スレッド (初回使用時に確定。以後不一致なら throw)。
     std::thread::id owner;
     bool            owner_set = false;
@@ -77,60 +80,43 @@ inline size_t align_up(size_t bytes)
 }
 
 // ----------------------------------------------------------------
-// チャンク成長ポリシー
-//   - 初期チャンク: UNet 64MiB / VAE 256MiB (VAE は 512MB 級のキャリーがあるため大きめ)。
-//   - 2 本目以降: 「直前までのチャンク本数」で倍々に伸ばし、上限でクランプする
-//     (UNet 512MiB / VAE 1GiB)。要求が上限より大きければ要求サイズそのもの。
-//   - 断片化より「実 cudaMalloc 回数 0 への収束」を優先する設計。
+// チャンク成長ポリシー (G-8k S2b で倍々成長を撤去)
+//   - チャンクサイズ = max(刻み幅, 要求サイズ)。**倍々に伸ばさない**。
+//   - 刻み幅: UNet 256MiB / UNetPersist 64MiB / VAE 256MiB。
+//   - 理由 (S2b): 倍々成長は「あと少し足りない」ために 512MiB を丸ごと生やすため、
+//     UNet で capacity 1984MiB に対し実需 (POOL=0 の live peak) 1095MiB = 捨て分
+//     872MiB という収支になっていた。VAE (S3) の GB 級を足す前に VRAM ゲートを
+//     割るため、要求に沿って刻む方式へ変更。
+//   - **刻み幅は「単発の最大要求」以上でなければならない** (実測で確定):
+//     conv2d の im2col バッファは IM2COL_TILE_BYTES = 256MiB まで来る。刻みを
+//     64MiB / 128MiB にすると、この 1 本が入らないチャンクを次々に読み飛ばして
+//     捨て分が激増する (実測 capacity: 刻み 64MiB=1876MiB / 128MiB=1722MiB /
+//     **256MiB=1280MiB**)。よって UNet の刻みは im2col タイル上限と同値に揃える。
+//   - 代償はチャンク本数の増加 (実 cudaMalloc は初回 forward に集中) だけで、
+//     **既存チャンクを解放しない = 生存中ポインタを無効化しない**という設計の急所は
+//     一切変えていない。定常状態の実 cudaMalloc 0 も変わらない。
 // ----------------------------------------------------------------
 size_t first_chunk_bytes(DeviceArenaId id)
 {
     switch (id)
     {
     case DeviceArenaId::UNet:
-        return (size_t)64 << 20;   // 64MiB
+        return (size_t)256 << 20;  // 256MiB (S2b 実測合わせ = im2col タイル上限と同値)
     case DeviceArenaId::VAE:
         return (size_t)256 << 20;  // 256MiB
     case DeviceArenaId::UNetPersist:
-        // G-8k S2: skip 9 本 (B=2 で ~102MiB) + d_cur 固定バッファ (B=2 で 42MiB) +
-        // temb。B=2 まで 1 チャンクで収まる 256MiB を初期値にして実 cudaMalloc を 1 回に。
-        return (size_t)256 << 20;  // 256MiB
+        // skip 9 本 + d_cur 固定バッファ + temb で B=1 ~68MiB / B=2 ~136MiB。
+        // 刻み 64MiB で 2-3 本に収める (S2 の 256MiB 一括は捨て分が大きすぎた)。
+        return (size_t)64 << 20;   // 64MiB
     }
     return (size_t)64 << 20;
-}
-
-size_t max_chunk_bytes(DeviceArenaId id)
-{
-    switch (id)
-    {
-    case DeviceArenaId::UNet:
-        return (size_t)512 << 20;         // 512MiB
-    case DeviceArenaId::VAE:
-        return (size_t)1024 << 20;        // 1GiB
-    case DeviceArenaId::UNetPersist:
-        return (size_t)512 << 20;         // 512MiB
-    }
-    return (size_t)512 << 20;
 }
 
 // 新チャンクのサイズ決定 (need を必ず満たす)。
 size_t next_chunk_bytes(DeviceArenaId id, const Arena& a, size_t need)
 {
-    size_t       want = first_chunk_bytes(id);
-    const size_t cap  = max_chunk_bytes(id);
-    for (size_t k = 0; k < a.chunks.size(); ++k)
-    {
-        if (want >= cap)
-        {
-            want = cap;
-            break;
-        }
-        want <<= 1;  // 2 のべき乗倍は左シフト (プロジェクト規約)
-    }
-    if (want > cap)
-    {
-        want = cap;
-    }
+    (void)a;  // 本数依存の成長 (倍々) は S2b で廃止した。
+    size_t want = first_chunk_bytes(id);
     if (want < need)
     {
         want = need;
@@ -247,6 +233,7 @@ DeviceArenaMark device_arena_mark(DeviceArenaId id)
     m.chunk          = a.cur;
     m.offset         = a.offset;
     m.fallback_count = a.fallback_ptrs.size();
+    m.req_bytes      = a.req_live;
     return m;
 }
 
@@ -265,6 +252,14 @@ void* device_arena_alloc(DeviceArenaId id, size_t bytes)
     a.stats.alloc_calls++;
 
     const size_t need = align_up(bytes);
+
+    // 真の同時生存量 (捨て分を含まない)。プール経路とキルスイッチ経路で共通。
+    a.req_live += need;
+    a.stats.live_request_bytes = a.req_live;
+    if (a.req_live > a.stats.peak_request_bytes)
+    {
+        a.stats.peak_request_bytes = a.req_live;
+    }
 
     // --- キルスイッチ経路: 素の cudaMalloc (旧経路の完全復元) ---
     if (!device_arena_pool_enabled())
@@ -348,6 +343,9 @@ void device_arena_rewind(const DeviceArenaMark& mark)
     Arena& a = arena_of(mark.id);
     check_thread(mark.id, a);
 
+    a.req_live                 = mark.req_bytes;
+    a.stats.live_request_bytes = a.req_live;
+
     if (!device_arena_pool_enabled())
     {
         // キルスイッチ経路: mark 以降に配ったポインタを LIFO で cudaFree する。
@@ -405,6 +403,8 @@ void device_arena_release(DeviceArenaId id)
 
     a.cur                 = 0;
     a.offset              = 0;
+    a.req_live            = 0;
+    a.stats.live_request_bytes = 0;
     a.stats.total_capacity = 0;
     a.stats.live_chunks    = 0;
     a.stats.bytes_in_use   = 0;
@@ -431,6 +431,7 @@ void device_arena_reset_counters(DeviceArenaId id)
     a.stats.chunk_alloc_calls = 0;
     a.stats.alloc_calls       = 0;
     a.stats.peak_bytes_in_use = a.stats.bytes_in_use;
+    a.stats.peak_request_bytes = a.req_live;
 }
 
 } // namespace dollama

@@ -1348,6 +1348,36 @@ void unet_weights_destroy(UnetWeightsHandle handle)
         return;
     }
     delete static_cast<DeviceWeights*>(handle);
+
+    // G-8k S2b: DOLLAMA_PROFILE=1 のとき、プロセス通算のアリーナ収支を出す
+    //   (capacity = 実際に握った VRAM / live_peak = 真の同時生存ピーク)。
+    if (profile_enabled())
+    {
+        const DeviceArenaId ids[2] = {DeviceArenaId::UNet, DeviceArenaId::UNetPersist};
+        for (int i = 0; i < 2; ++i)
+        {
+            const DeviceArenaStats s = device_arena_stats(ids[i]);
+            std::printf("[ALLOC] arena=%s cap=%zuMiB live_peak=%zuMiB cursor_peak=%zuMiB"
+                        " chunks=%zu cudaMalloc=%llu cudaFree=%llu alloc=%llu\n",
+                        device_arena_name(ids[i]),
+                        s.total_capacity >> 20, s.peak_request_bytes >> 20,
+                        s.peak_bytes_in_use >> 20, s.live_chunks,
+                        (unsigned long long)s.cuda_malloc_calls,
+                        (unsigned long long)s.cuda_free_calls,
+                        (unsigned long long)s.alloc_calls);
+        }
+    }
+
+    // G-8k S2b: 常駐重みを手放すタイミングで UNet 側アリーナのチャンクも返す。
+    //   rewind はチャンクを解放しない設計 (それが step ループ内 malloc 0 の根拠) なので、
+    //   長寿命プロセス (HTTP サーバー) ではハンドル破棄後も GB 級が残り続けてしまう。
+    //   ここでの release は PL が禁じた「定期 trim / step 間 trim」には当たらない
+    //   (step ループの内側では 1 回も走らず、目的である malloc/free 0 を損なわない)。
+    //   前提: この時点で forward は 1 本も走っておらずアリーナは静止状態
+    //   (= 生存中ポインタが無いので解放は安全)。所有スレッドが違っても静止状態なので
+    //   S2 の所有権移譲ルールでそのまま通る。
+    device_arena_release(DeviceArenaId::UNet);
+    device_arena_release(DeviceArenaId::UNetPersist);
 }
 
 // ----------------------------------------------------------------

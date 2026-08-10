@@ -361,29 +361,40 @@ static int run_test()
                 // 出力バッファも毎回汚す (書き残しがあれば検出できる)。
                 CUDA_CHECK(cudaMemset(d_np_g8k, 0xCD, latent_n * sizeof(__half)));
 
-                const DeviceArenaStats u0 = device_arena_stats(DeviceArenaId::UNet);
-                const DeviceArenaStats p0 = device_arena_stats(DeviceArenaId::UNetPersist);
+                // カウンタとピークを毎 run リセットする。peak_request_bytes は
+                // 「この forward だけの真の同時生存量」になり、poison (アリーナ経由で
+                // 大量に確保する) の混入を排除できる。
+                device_arena_reset_counters(DeviceArenaId::UNet);
+                device_arena_reset_counters(DeviceArenaId::UNetPersist);
                 launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_g8k,
                             cfg.attn_fast, cfg.epilogue);
                 CUDA_CHECK(cudaDeviceSynchronize());
                 const DeviceArenaStats u1 = device_arena_stats(DeviceArenaId::UNet);
                 const DeviceArenaStats p1 = device_arena_stats(DeviceArenaId::UNetPersist);
 
-                last_malloc = (u1.cuda_malloc_calls - u0.cuda_malloc_calls)
-                              + (p1.cuda_malloc_calls - p0.cuda_malloc_calls);
-                last_free   = (u1.cuda_free_calls - u0.cuda_free_calls)
-                              + (p1.cuda_free_calls - p0.cuda_free_calls);
+                last_malloc = u1.cuda_malloc_calls + p1.cuda_malloc_calls;
+                last_free   = u1.cuda_free_calls + p1.cuda_free_calls;
                 cap_unet    = u1.total_capacity;
                 cap_persist = p1.total_capacity;
-                if (r == 0)
+
+                // G-8k S2b VRAM ゲート: 総容量 − 真の同時生存ピーク <= 512MB。
+                //   live (peak_request_bytes) は捨て分を含まない値で、POOL=0 の
+                //   bytes_in_use と直接比較できる (実測で default 1095MiB が一致)。
+                const size_t cap_sum  = u1.total_capacity + p1.total_capacity;
+                const size_t live_pk  = u1.peak_request_bytes + p1.peak_request_bytes;
+                const long long over  = (long long)(cap_sum >> 20) - (long long)(live_pk >> 20);
+                std::cout << "[g8k_s2] " << cfg.label << " r" << r << " footprint: unet cap="
+                          << (u1.total_capacity >> 20) << "MiB live_peak="
+                          << (u1.peak_request_bytes >> 20) << "MiB (cursor="
+                          << (u1.peak_bytes_in_use >> 20) << "MiB) / persist cap="
+                          << (p1.total_capacity >> 20) << "MiB live_peak="
+                          << (p1.peak_request_bytes >> 20) << "MiB | overhead = "
+                          << (cap_sum >> 20) << " - " << (live_pk >> 20) << " = " << over << "MiB\n";
+                if (device_arena_pool_enabled() && over > 512)
                 {
-                    // 汚染前 = 実運用そのままの VRAM フットプリント (汚染は 16MiB 粒度で
-                    // チャンクを跨ぐため容量を水増しする。ゲート値と分けて報告する)。
-                    std::cout << "[g8k_s2] " << cfg.label << " footprint(pre-poison): unet cap="
-                              << (u1.total_capacity >> 20) << "MiB peak_in_use="
-                              << (u1.peak_bytes_in_use >> 20) << "MiB / persist cap="
-                              << (p1.total_capacity >> 20) << "MiB peak_in_use="
-                              << (p1.peak_bytes_in_use >> 20) << "MiB\n";
+                    std::cerr << "[g8k_s2] FAIL: VRAM overhead " << over
+                              << "MiB > 512MiB (" << cfg.label << " r" << r << ")\n";
+                    ok = false;
                 }
 
                 runs[r] = gather_raw(d_np_g8k, latent_n);

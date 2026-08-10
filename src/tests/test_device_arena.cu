@@ -364,7 +364,27 @@ static void test_thread_guard()
     }
     check(back_ok, "thread guard: ownership can be handed back");
 
-    std::cout << "[8] thread guard: concurrent entry throws / quiescent handoff OK\n";
+    // --- (c) G-8k S2b: release (ハンドル破棄で呼ばれる) を挟んでも契約が壊れないこと ---
+    //     release 後もアリーナは静止状態なので、別スレッドからの再利用が成立する。
+    device_arena_release(id);
+    bool after_release_ok = false;
+    std::thread t4([&after_release_ok, id]
+                   {
+                       try
+                       {
+                           DeviceArenaScope sc(id);
+                           void* q = sc.alloc_bytes(1 << 20);
+                           after_release_ok = (q != nullptr);
+                       }
+                       catch (const std::exception&)
+                       {
+                           after_release_ok = false;
+                       }
+                   });
+    t4.join();
+    check(after_release_ok, "thread guard: usable from another thread after release");
+
+    std::cout << "[8] thread guard: concurrent entry throws / quiescent handoff / post-release OK\n";
 }
 
 // ----------------------------------------------------------------

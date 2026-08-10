@@ -93,6 +93,7 @@ struct DeviceArenaMark
     size_t        chunk          = 0;
     size_t        offset         = 0;
     size_t        fallback_count = 0;
+    size_t        req_bytes      = 0;  // その時点の「同時生存要求バイト」(S2b)
 };
 
 // ----------------------------------------------------------------
@@ -108,6 +109,11 @@ struct DeviceArenaStats
     size_t   live_chunks        = 0;  // 現在のチャンク本数
     size_t   bytes_in_use       = 0;  // 現在の使用中バイト (bump カーソル基準)
     size_t   peak_bytes_in_use  = 0;  // 使用中バイトのピーク
+    // G-8k S2b: カーソル基準の bytes_in_use は「跨いだチャンクの捨て分」も数えるため、
+    // 真の同時生存量 (= POOL=0 の live 合計と直接比較できる値) を別に持つ。
+    // VRAM ゲート (capacity - 真の live peak <= 512MB) はこちらで判定する。
+    size_t   live_request_bytes = 0;  // 現在の同時生存要求バイト (アライン後合計)
+    size_t   peak_request_bytes = 0;  // 同上のピーク
 };
 
 // ----------------------------------------------------------------
