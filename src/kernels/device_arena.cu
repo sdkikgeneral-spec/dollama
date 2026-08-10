@@ -91,6 +91,10 @@ size_t first_chunk_bytes(DeviceArenaId id)
         return (size_t)64 << 20;   // 64MiB
     case DeviceArenaId::VAE:
         return (size_t)256 << 20;  // 256MiB
+    case DeviceArenaId::UNetPersist:
+        // G-8k S2: skip 9 本 (B=2 で ~102MiB) + d_cur 固定バッファ (B=2 で 42MiB) +
+        // temb。B=2 まで 1 チャンクで収まる 256MiB を初期値にして実 cudaMalloc を 1 回に。
+        return (size_t)256 << 20;  // 256MiB
     }
     return (size_t)64 << 20;
 }
@@ -103,6 +107,8 @@ size_t max_chunk_bytes(DeviceArenaId id)
         return (size_t)512 << 20;         // 512MiB
     case DeviceArenaId::VAE:
         return (size_t)1024 << 20;        // 1GiB
+    case DeviceArenaId::UNetPersist:
+        return (size_t)512 << 20;         // 512MiB
     }
     return (size_t)512 << 20;
 }
@@ -143,7 +149,18 @@ size_t in_use_bytes(const Arena& a)
     return sum + a.offset;
 }
 
-// 所有スレッド検査 (単一スレッド前提を「落ちる契約」にする)。
+// 静止状態か (生存中の確保がゼロ = カーソルが基点かつ fallback 空)。
+// 静止状態でだけ所有権の移譲を許す (G-8k S2)。
+bool is_quiescent(const Arena& a)
+{
+    return a.cur == 0 && a.offset == 0 && a.fallback_ptrs.empty();
+}
+
+// 所有スレッド検査 (G-8k S2 で「所有権移譲つき」に格上げ)。
+//   - 生存中の確保があるのに別スレッドが触った = 同時進入 → throw (落ちる契約は維持)。
+//   - 静止状態なら所有権を現スレッドへ移譲する。HTTP サーバー (cpp-httplib) は
+//     リクエストごとにプールの別ワーカーで生成を回すため、リクエスト間でスレッドが
+//     変わる。生成自体は逐次なので、この移譲が無いと 2 リクエスト目で必ず落ちる。
 void check_thread(DeviceArenaId id, Arena& a)
 {
     const std::thread::id me = std::this_thread::get_id();
@@ -153,12 +170,20 @@ void check_thread(DeviceArenaId id, Arena& a)
         a.owner_set = true;
         return;
     }
-    if (a.owner != me)
+    if (a.owner == me)
     {
-        throw std::runtime_error(std::string("device_arena: アリーナ '")
-                                 + device_arena_name(id)
-                                 + "' は所有スレッド以外から使用された (単一スレッド契約違反)");
+        return;
     }
+    if (is_quiescent(a))
+    {
+        // 引き渡し (前の所有スレッドの作業は既に全て rewind 済み)。
+        a.owner = me;
+        return;
+    }
+    throw std::runtime_error(std::string("device_arena: アリーナ '")
+                             + device_arena_name(id)
+                             + "' へ生存確保のある状態で別スレッドが進入した"
+                               " (同時使用は単一スレッドのみ)");
 }
 
 } // namespace (匿名)
@@ -174,6 +199,8 @@ const char* device_arena_name(DeviceArenaId id)
         return "unet";
     case DeviceArenaId::VAE:
         return "vae";
+    case DeviceArenaId::UNetPersist:
+        return "unet_persist";
     }
     return "?";
 }
@@ -381,7 +408,8 @@ void device_arena_release(DeviceArenaId id)
     a.stats.total_capacity = 0;
     a.stats.live_chunks    = 0;
     a.stats.bytes_in_use   = 0;
-    // 所有スレッドは維持する (release を「別スレッドへの引き渡し」に使わせない)。
+    // 所有スレッドの記録自体は維持する (release 後は静止状態なので、次に別スレッドが
+    // 触れば check_thread が正規の移譲を行う)。
 }
 
 // ----------------------------------------------------------------

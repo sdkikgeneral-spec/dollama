@@ -18,6 +18,11 @@
 // VRAM 設計: 段間受け渡しは局所 Scratch で都度確保し、スコープ脱出で解放する。
 // UNet の最大解像度は 320ch x 128x128 = 5.24M 要素 (skip concat で 2560ch x 32x32
 // = 2.6M など) で VAE より遥かに小さいため、ping-pong 大バッファは使わない。
+//   G-8k S2: 上記の「確保/解放」の実体は cudaMalloc/cudaFree ではなく bump アリーナの
+//   mark/rewind になった (step ループ内 cudaFree = 暗黙同期点の除去と、CUDA Graphs の
+//   前提条件充足が目的)。短命 Scratch は DeviceArenaId::UNet、forward 寿命の常駐
+//   (temb / skip / d_cur) は DeviceArenaId::UNetPersist と、**アリーナを分ける**。
+//   キルスイッチ DOLLAMA_POOL=0 で旧経路 (素の cudaMalloc/cudaFree) に完全復元する。
 
 #include <cstdint>
 #include <cstdio>
@@ -35,6 +40,7 @@
 #include "infer/unet.cuh"
 #include "infer/profile.cuh"
 #include "kernels/conv2d.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/groupnorm.cuh"
 #include "kernels/layernorm.cuh"
 #include "kernels/activation.cuh"
@@ -285,7 +291,9 @@ static void launch_concat_chw(const __half* d_a, const __half* d_b, __half* d_ou
 //   発火点: L-2 ランタイム LoRA で unet 側 DeviceWeights にだけ 4 メンバ目
 //   std::set<std::string> patched_ を足したことでレイアウトが決定的にずれ、
 //   ~DiffusionPipeline (VAE ハンドルと UNet ハンドルが同居して破棄される経路) で
-//   AV が顕在化した。Scratch も ptrs_ が両方先頭なので現状は無症状なだけの同型の地雷。
+//   AV が顕在化した。Scratch も同型の地雷 (G-8k S2 で unet 側だけ実体が
+//   DeviceArenaScope に変わり、vae_decode 側の ptrs_ 版とレイアウトが完全に別物に
+//   なった。匿名 namespace に入っているからこそ無害でいられる)。
 //
 //   よって「他 TU から参照されていないから外でもよい」ではなく、参照されていない
 //   からこそ匿名 namespace が正解。善意で外に出すと再発する。
@@ -473,12 +481,13 @@ public:
     explicit Scratch(bool attn_fast, bool epilogue = false)
         : attn_fast_(attn_fast), epilogue_(epilogue) {}
 
+    // G-8k S2: 実体を bump アリーナ (DeviceArenaId::UNet) から切り出す。
+    //   呼び出し側は 1 行も変わらない (要素数 n を受けて __half* を返す形は不変)。
+    //   DOLLAMA_POOL=0 のときは DeviceArenaScope が素の cudaMalloc/cudaFree へ
+    //   フォールバックするため、旧経路がそのまま復元される。
     __half* alloc(size_t n)
     {
-        __half* p = nullptr;
-        CUDA_CHECK(cudaMalloc(&p, n * sizeof(__half)));
-        ptrs_.push_back(p);
-        return p;
+        return scope_.alloc<__half>(n);
     }
 
     // FAST モードで attention 高速バリアントを使うか。
@@ -487,18 +496,16 @@ public:
     // FAST モードで GroupNorm multi-block 版 (epilogue 経路) を使うか。
     bool epilogue() const { return epilogue_; }
 
-    ~Scratch()
-    {
-        for (__half* p : ptrs_)
-        {
-            cudaFree(p);
-        }
-    }
+    // デストラクタは書かない: メンバの DeviceArenaScope が rewind する
+    // (ctor=mark / dtor=rewind の RAII をそのまま借りる)。
 
 private:
-    std::vector<__half*> ptrs_;
-    bool                 attn_fast_ = false;
-    bool                 epilogue_  = false;
+    // 段 (down/mid/up ブロック) の入れ子スコープ。Scratch は必ず LIFO に生成・破棄され、
+    // conv2d の im2col スコープ (同じ UNet アリーナ) もこの内側で入れ子になる。
+    // forward 寿命の常駐バッファは **別アリーナ** (UNetPersist) に置く (交差すると壊れる)。
+    DeviceArenaScope scope_{DeviceArenaId::UNet};
+    bool             attn_fast_ = false;
+    bool             epilogue_  = false;
 };
 } // namespace (匿名): TU ローカル型 DeviceWeights / Scratch ここまで
 
@@ -931,6 +938,36 @@ static void launch_unet_impl(DeviceWeights&     w,
     const int   ctx_dim    = 2048;
     const int   C0 = 320, C1 = 640, C2 = 1280;
 
+    // ============ G-8k S2: forward 寿命の常駐バッファ ============
+    // temb / temb_silu / skip スタック / 段間キャリー d_cur は forward 1 回を通して
+    // 生きる。これらを Scratch (UNet アリーナ・入れ子 rewind) と同居させると、
+    // 「skip を積んだ後に段の Scratch が rewind して skip の領域が再利用される」形で
+    // 確実に壊れる。よって専用アリーナ (UNetPersist) に隔離し、個別解放はせず
+    // forward 終了時の rewind 1 回でまとめて返す (= 生存中ポインタが無効化されない)。
+    //
+    // DOLLAMA_POOL=0 (キルスイッチ) では、確保も解放も d_cur の再確保連鎖も含めて
+    // 旧経路 (素の cudaMalloc/cudaFree) をそのまま通す。
+    const bool       pool = device_arena_pool_enabled();
+    DeviceArenaScope persist(DeviceArenaId::UNetPersist);
+    auto persist_alloc = [&](size_t n_elems) -> __half*
+    {
+        if (pool)
+        {
+            return persist.alloc<__half>(n_elems);
+        }
+        __half* p = nullptr;
+        CUDA_CHECK(cudaMalloc(&p, n_elems * sizeof(__half)));
+        return p;
+    };
+    auto persist_free = [&](__half* p)
+    {
+        // プール経路では何もしない (rewind が forward 末尾でまとめて戻す)。
+        if (!pool && p != nullptr)
+        {
+            CUDA_CHECK(cudaFree(p));
+        }
+    };
+
     // ============ time embedding ============
     // sinusoidal(320) -> linear_1(1280,320)+SiLU -> linear_2(1280,1280) = temb[B,1280]
     //   G-2k S2: timestep は cond/uncond 共通スカラ。sinusoidal を [B,320] に複製して
@@ -950,7 +987,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         linear(w, "time_embedding.linear_1.weight", "time_embedding.linear_1.bias",
                d_sin, d_h1, B, 1280, 320, true);
         launch_silu(d_h1, d_h1, B * 1280);
-        CUDA_CHECK(cudaMalloc(&d_temb, (size_t)B * 1280 * sizeof(__half)));
+        d_temb = persist_alloc((size_t)B * 1280);
         linear(w, "time_embedding.linear_2.weight", "time_embedding.linear_2.bias",
                d_h1, d_temb, B, 1280, 1280, true);
         dbg_stat("time_embedding_out", d_temb, (size_t)B * 1280);
@@ -989,8 +1026,7 @@ static void launch_unet_impl(DeviceWeights&     w,
     dbg_stat("temb_final", d_temb, (size_t)B * 1280);
 
     // ResnetBlock 内で使う silu(temb) を 1 回計算して共有。
-    __half* d_temb_silu = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_temb_silu, (size_t)B * 1280 * sizeof(__half)));
+    __half* d_temb_silu = persist_alloc((size_t)B * 1280);
     launch_silu(d_temb, d_temb_silu, B * 1280);
     prof_lap(&pc.unet_embed_sec);
 
@@ -999,16 +1035,39 @@ static void launch_unet_impl(DeviceWeights&     w,
     auto push_skip = [&](const __half* d_src, int C, int H, int W)
     {
         // G-2k S2: skip エントリは [B,C,H,W]。B=1 では従来と同一サイズ。
-        __half* p = nullptr;
         const size_t sz = (size_t)B * C * H * W;
-        CUDA_CHECK(cudaMalloc(&p, sz * sizeof(__half)));
+        __half*      p  = persist_alloc(sz);
         CUDA_CHECK(cudaMemcpy(p, d_src, sz * sizeof(__half), cudaMemcpyDeviceToDevice));
         skips.push_back({p, C, H, W});
     };
 
     // ============ conv_in (3x3 pad1, 4->320), 128x128 ============
-    __half* d_cur = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * 128 * 128 * sizeof(__half)));
+    // G-8k S2: 段間キャリー d_cur は、旧経路では段ごとに cudaFree → 別サイズ cudaMalloc を
+    //   繰り返していた (8 箇所)。プール経路では **全段の最大サイズ 1 本**を確保して
+    //   ポインタを固定し、再確保連鎖そのものを消す (ポインタ swap すら不要になる)。
+    //   最大は up_blocks[1] upsample 後の [B,640,128,128]。
+    //   正当性: 旧経路の free 直前で d_cur の中身は必ず死んでおり (直後に downsample /
+    //   upsample / memcpy が全域を書く)、書き込み元は常に Scratch 側の別バッファなので
+    //   自己重複も起きない。
+    const size_t cur_max_elems = (size_t)B * C1 * 128 * 128;
+    __half*      d_cur = persist_alloc(pool ? cur_max_elems : (size_t)B * C0 * 128 * 128);
+    // 段のたびに「d_cur を n_elems サイズで作り直す」操作。
+    //   旧経路 (POOL=0): 実際に free → malloc (従来と 1 バイト同じ挙動)。
+    //   プール経路      : 固定バッファなので何もしない (容量超過だけ落として守る)。
+    auto reshape_cur = [&](size_t n_elems)
+    {
+        if (!pool)
+        {
+            CUDA_CHECK(cudaFree(d_cur));
+            CUDA_CHECK(cudaMalloc(&d_cur, n_elems * sizeof(__half)));
+            return;
+        }
+        if (n_elems > cur_max_elems)
+        {
+            // 将来の形状追加で静かに溢れるのを防ぐ (無音の破壊より即死を選ぶ)。
+            throw std::runtime_error("unet: d_cur 固定バッファの容量不足 (G-8k S2)");
+        }
+    };
     launch_conv2d(d_latent, w.get("conv_in.weight"), w.get("conv_in.bias"),
                   d_cur, B, 4, 128, 128, C0, 3, 3, 1, 1, 1, 1, 1, 1);
     dbg_stat("conv_in_out", d_cur, (size_t)B * C0 * 128 * 128);
@@ -1026,8 +1085,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         resnet_block(w, "down_blocks.0.resnets.1.", d_r0, B, C0, C0, H, Wd, d_temb_silu, d_r1, sc);
         push_skip(d_r1, C0, H, Wd);
         // downsample 128->64
-        CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * 64 * 64 * sizeof(__half)));
+        reshape_cur((size_t)B * C0 * 64 * 64);
         downsample(w, "down_blocks.0.downsamplers.0.", d_r1, B, C0, H, Wd, d_cur);
         push_skip(d_cur, C0, 64, 64);
         dbg_stat("down_block_0_out", d_cur, (size_t)B * C0 * 64 * 64);
@@ -1052,8 +1110,7 @@ static void launch_unet_impl(DeviceWeights&     w,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
         push_skip(d_r1, C1, H, Wd);
         // downsample 64->32
-        CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * 32 * 32 * sizeof(__half)));
+        reshape_cur((size_t)B * C1 * 32 * 32);
         downsample(w, "down_blocks.1.downsamplers.0.", d_r1, B, C1, H, Wd, d_cur);
         push_skip(d_cur, C1, 32, 32);
         dbg_stat("down_block_1_out", d_cur, (size_t)B * C1 * 32 * 32);
@@ -1077,8 +1134,7 @@ static void launch_unet_impl(DeviceWeights&     w,
                       d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
         push_skip(d_r1, C2, H, Wd);
         // d_cur <- d_r1 (block 出力, downsample なし)
-        CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * H * Wd * sizeof(__half)));
+        reshape_cur((size_t)B * C2 * H * Wd);
         CUDA_CHECK(cudaMemcpy(d_cur, d_r1, (size_t)B * C2 * H * Wd * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
         dbg_stat("down_block_2_out", d_cur, (size_t)B * C2 * H * Wd);
@@ -1123,7 +1179,7 @@ static void launch_unet_impl(DeviceWeights&     w,
                 launch_concat_chw(d_cur + (size_t)b * C2 * HW, sk.ptr + (size_t)b * sk.C * HW,
                                   d_cat + (size_t)b * (C2 + sk.C) * HW, C2, sk.C, HW);
             }
-            CUDA_CHECK(cudaFree(sk.ptr));
+            persist_free(sk.ptr);
             __half* d_out = sc.alloc((size_t)B * C2 * HW);
             resnet_block(w, "up_blocks.0.resnets." + std::to_string(r) + ".",
                          d_cat, B, C2 + sk.C, C2, H, Wd, d_temb_silu, d_out, sc);
@@ -1131,8 +1187,7 @@ static void launch_unet_impl(DeviceWeights&     w,
             transformer2d(w, "up_blocks.0.attentions." + std::to_string(r) + ".",
                           d_out, B, C2, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
             if (r == 0) { dbg_stat("up_block_0_attn0_out", d_out, (size_t)B * C2 * HW); }
-            CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * HW * sizeof(__half)));
+            reshape_cur((size_t)B * C2 * HW);
             CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C2 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
         }
@@ -1140,8 +1195,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         Scratch sc;
         __half* d_up = sc.alloc((size_t)B * C2 * 64 * 64);
         upsample(w, "up_blocks.0.upsamplers.0.", d_cur, B, C2, H, Wd, d_up, sc);
-        CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C2 * 64 * 64 * sizeof(__half)));
+        reshape_cur((size_t)B * C2 * 64 * 64);
         CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)B * C2 * 64 * 64 * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
         dbg_stat("up_block_0_out", d_cur, (size_t)B * C2 * 64 * 64);
@@ -1161,7 +1215,7 @@ static void launch_unet_impl(DeviceWeights&     w,
                 launch_concat_chw(d_cur + (size_t)b * curC * HW, sk.ptr + (size_t)b * sk.C * HW,
                                   d_cat + (size_t)b * (curC + sk.C) * HW, curC, sk.C, HW);
             }
-            CUDA_CHECK(cudaFree(sk.ptr));
+            persist_free(sk.ptr);
             __half* d_out = sc.alloc((size_t)B * C1 * HW);
             resnet_block(w, "up_blocks.1.resnets." + std::to_string(r) + ".",
                          d_cat, B, curC + sk.C, C1, H, Wd, d_temb_silu, d_out, sc);
@@ -1169,8 +1223,7 @@ static void launch_unet_impl(DeviceWeights&     w,
             transformer2d(w, "up_blocks.1.attentions." + std::to_string(r) + ".",
                           d_out, B, C1, H, Wd, Ln, d_encoder_hidden_states, ctx_tokens, ctx_dim, sc);
             if (r == 0) { dbg_stat("up_block_1_attn0_out", d_out, (size_t)B * C1 * HW); }
-            CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * HW * sizeof(__half)));
+            reshape_cur((size_t)B * C1 * HW);
             CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C1 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
             curC = C1;
@@ -1179,8 +1232,7 @@ static void launch_unet_impl(DeviceWeights&     w,
         Scratch sc;
         __half* d_up = sc.alloc((size_t)B * C1 * 128 * 128);
         upsample(w, "up_blocks.1.upsamplers.0.", d_cur, B, C1, H, Wd, d_up, sc);
-        CUDA_CHECK(cudaFree(d_cur));
-        CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C1 * 128 * 128 * sizeof(__half)));
+        reshape_cur((size_t)B * C1 * 128 * 128);
         CUDA_CHECK(cudaMemcpy(d_cur, d_up, (size_t)B * C1 * 128 * 128 * sizeof(__half),
                               cudaMemcpyDeviceToDevice));
         dbg_stat("up_block_1_out", d_cur, (size_t)B * C1 * 128 * 128);
@@ -1200,12 +1252,11 @@ static void launch_unet_impl(DeviceWeights&     w,
                 launch_concat_chw(d_cur + (size_t)b * curC * HW, sk.ptr + (size_t)b * sk.C * HW,
                                   d_cat + (size_t)b * (curC + sk.C) * HW, curC, sk.C, HW);
             }
-            CUDA_CHECK(cudaFree(sk.ptr));
+            persist_free(sk.ptr);
             __half* d_out = sc.alloc((size_t)B * C0 * HW);
             resnet_block(w, "up_blocks.2.resnets." + std::to_string(r) + ".",
                          d_cat, B, curC + sk.C, C0, H, Wd, d_temb_silu, d_out, sc);
-            CUDA_CHECK(cudaFree(d_cur));
-            CUDA_CHECK(cudaMalloc(&d_cur, (size_t)B * C0 * HW * sizeof(__half)));
+            reshape_cur((size_t)B * C0 * HW);
             CUDA_CHECK(cudaMemcpy(d_cur, d_out, (size_t)B * C0 * HW * sizeof(__half),
                                   cudaMemcpyDeviceToDevice));
             curC = C0;
@@ -1249,11 +1300,12 @@ static void launch_unet_impl(DeviceWeights&     w,
     // 残った skip があれば解放 (正常時は空)。
     for (SkipEntry& e : skips)
     {
-        cudaFree(e.ptr);
+        persist_free(e.ptr);
     }
-    CUDA_CHECK(cudaFree(d_cur));
-    CUDA_CHECK(cudaFree(d_temb));
-    CUDA_CHECK(cudaFree(d_temb_silu));
+    persist_free(d_cur);
+    persist_free(d_temb);
+    persist_free(d_temb_silu);
+    // プール経路の実解放は persist (DeviceArenaScope) のデストラクタが 1 回の rewind で行う。
 }
 
 // ----------------------------------------------------------------

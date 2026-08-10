@@ -287,16 +287,27 @@ static void test_release()
 }
 
 // ----------------------------------------------------------------
-// 8) thread guard: 別スレッドから触ると throw すること。
+// 8) thread guard (G-8k S2 で契約改訂):
+//    (a) **生存中の確保がある**状態で別スレッドが触ったら throw (同時進入の検出)。
+//    (b) 静止状態 (全 rewind 済み) なら別スレッドへ所有権が移譲される。
+//        HTTP サーバーはリクエストごとにプールの別ワーカーで生成を回すため、
+//        (b) が無いと 2 リクエスト目で必ず落ちる。
 // ----------------------------------------------------------------
 static void test_thread_guard()
 {
+    const DeviceArenaId id = DeviceArenaId::UNet;
+
+    // --- (a) 生存確保あり → 別スレッドは throw ---
+    DeviceArenaMark m = device_arena_mark(id);
+    void*           p = device_arena_alloc(id, 1024);
+    check(p != nullptr, "thread guard: precondition alloc");
+
     bool threw = false;
-    std::thread t([&threw]
+    std::thread t([&threw, id]
                   {
                       try
                       {
-                          (void)device_arena_alloc(DeviceArenaId::UNet, 1024);
+                          (void)device_arena_alloc(id, 1024);
                       }
                       catch (const std::exception&)
                       {
@@ -304,14 +315,14 @@ static void test_thread_guard()
                       }
                   });
     t.join();
-    check(threw, "thread guard: alloc from foreign thread throws");
+    check(threw, "thread guard: alloc from foreign thread throws while live");
 
     bool threw_mark = false;
-    std::thread t2([&threw_mark]
+    std::thread t2([&threw_mark, id]
                    {
                        try
                        {
-                           (void)device_arena_mark(DeviceArenaId::UNet);
+                           (void)device_arena_mark(id);
                        }
                        catch (const std::exception&)
                        {
@@ -319,8 +330,41 @@ static void test_thread_guard()
                        }
                    });
     t2.join();
-    check(threw_mark, "thread guard: mark from foreign thread throws");
-    std::cout << "[8] thread guard: foreign thread throws\n";
+    check(threw_mark, "thread guard: mark from foreign thread throws while live");
+
+    // --- (b) 静止状態 → 別スレッドへ移譲される ---
+    device_arena_rewind(m);
+    bool handoff_ok = false;
+    std::thread t3([&handoff_ok, id]
+                   {
+                       try
+                       {
+                           DeviceArenaScope sc(id);
+                           void* q = sc.alloc_bytes(1024);
+                           handoff_ok = (q != nullptr);
+                       }
+                       catch (const std::exception&)
+                       {
+                           handoff_ok = false;
+                       }
+                   });
+    t3.join();
+    check(handoff_ok, "thread guard: quiescent arena hands ownership to foreign thread");
+
+    // --- 元スレッドへも (静止状態なので) 戻せる ---
+    bool back_ok = true;
+    try
+    {
+        DeviceArenaScope sc(id);
+        back_ok = (sc.alloc_bytes(1024) != nullptr);
+    }
+    catch (const std::exception&)
+    {
+        back_ok = false;
+    }
+    check(back_ok, "thread guard: ownership can be handed back");
+
+    std::cout << "[8] thread guard: concurrent entry throws / quiescent handoff OK\n";
 }
 
 // ----------------------------------------------------------------
