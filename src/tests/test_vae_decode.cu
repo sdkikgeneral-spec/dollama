@@ -199,6 +199,26 @@ static int run_test()
                   << (totalb >> 20) << "MB (before decode)\n";
     }
 
+    // --- G-8k S3b: env DOLLAMA_ARENA_RESERVE_MB が非 0 なら、diffusion.cu と同じく
+    //     decode 前にアリーナを reserve しておく (VAE 単体でも reserve 経路を踏み、
+    //     4 者 (POOL=0 / 既定 / reserve / release) の出力一致を検査できるようにする)。
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* rmb = std::getenv("DOLLAMA_ARENA_RESERVE_MB");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        const long long mb = (rmb != nullptr && rmb[0] != 0) ? std::atoll(rmb) : 0;
+        if (mb > 0)
+        {
+            device_arena_reserve(DeviceArenaId::UNet, (size_t)mb << 20);
+            std::cout << "[test_vae_decode] arena reserved " << mb << "MiB\n";
+        }
+    }
+
     // --- ウォームアップ + 正当性 ---
     launch_vae_decode(weights, d_latent, d_image);
 
@@ -289,6 +309,7 @@ static int run_test()
             std::cout << "[test_vae_decode] [ALLOC] arena="
                       << device_arena_name(DeviceArenaId::UNet)
                       << " cap=" << (su.total_capacity >> 20) << "MiB"
+                      << " reserved=" << (su.reserved_bytes >> 20) << "MiB"
                       << " live_peak=" << (su.peak_request_bytes >> 20) << "MiB"
                       << " cursor_peak=" << (su.peak_bytes_in_use >> 20) << "MiB"
                       << " chunks=" << su.live_chunks

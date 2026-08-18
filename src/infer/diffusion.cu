@@ -171,6 +171,75 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 } // namespace
 
 // ----------------------------------------------------------------
+// G-8k S3b: アリーナの事前 reserve (VRAM 収支の本線)。
+//
+//   捨て分の唯一の発生源はチャンク跨ぎなので、live peak を包む 1 本を初期化時に
+//   確保してしまえば跨ぎは原理的に起きず capacity ≒ live peak になる。
+//   S4 の e2e 実測 (1024^2 20step CFG --fast 相当・3 枚連続):
+//     UNet        live peak 6051MiB → 6051 * 1.1 ≈ 6656MiB を既定 reserve
+//     UNetPersist live peak  137MiB → +10% は 151MiB だが、収束後の実 capacity が
+//                                     192MiB (刻み 64MiB x3) なのでそこに合わせる
+//   env DOLLAMA_ARENA_RESERVE_MB で UNet 側を上書きできる。**0 指定で reserve 無効
+//   = S3 と同じ挙動** (S4b の A/B に必須)。getenv は初回のみ・以後キャッシュ。
+// ----------------------------------------------------------------
+static size_t arena_reserve_unet_mb()
+{
+    static long long v = -1;
+    if (v < 0)
+    {
+        v = 6656;  // 既定 (S4 実測 live peak 6051MiB + 10%)
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* e = std::getenv("DOLLAMA_ARENA_RESERVE_MB");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (e != nullptr && e[0] != '\0')
+        {
+            char*           end = nullptr;
+            const long long got = std::strtoll(e, &end, 10);
+            if (end != e && got >= 0)
+            {
+                v = got;  // 0 = reserve 無効 (device_arena_reserve は bytes==0 で no-op)
+            }
+        }
+    }
+    return static_cast<size_t>(v);
+}
+
+// UNetPersist 側の reserve (MiB)。UNet 側が 0 (無効) のときは道連れで無効にする
+// (A/B の被験変数を 1 本に保つため)。
+static size_t arena_reserve_persist_mb()
+{
+    return arena_reserve_unet_mb() == 0 ? 0 : 192;
+}
+
+// 初期化時と、release 直後の復元に呼ぶ。静止状態でしか呼べない契約
+// (device_arena_reserve が検査する)。
+static void reserve_arenas()
+{
+    const size_t unet_mb    = arena_reserve_unet_mb();
+    const size_t persist_mb = arena_reserve_persist_mb();
+    if (unet_mb == 0)
+    {
+        return;  // reserve 無効 (S3 挙動)
+    }
+    device_arena_reserve(DeviceArenaId::UNet,        unet_mb    << 20);
+    device_arena_reserve(DeviceArenaId::UNetPersist, persist_mb << 20);
+    // 告知は初回のみ (release 併用時は画像ごとに呼ばれるため)。
+    static bool announced = false;
+    if (profile_enabled() && !announced)
+    {
+        announced = true;
+        std::printf("[ALLOC] reserve: unet=%zuMiB unet_persist=%zuMiB"
+                    " (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)\n", unet_mb, persist_mb);
+        std::fflush(stdout);
+    }
+}
+
+// ----------------------------------------------------------------
 // コンストラクタ: 重み 2 つと golden 埋め込みをロードし、埋め込みをデバイス常駐させる。
 // ----------------------------------------------------------------
 DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
@@ -217,6 +286,10 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
     // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
     //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
     vae_weights_handle_ = vae_weights_create(vae_weights_);
+
+    // G-8k S3b: 重みロード後・最初の generate 前に 1 回だけアリーナを reserve する。
+    //   ここはアリーナが静止状態であることが保証される唯一の安全地帯。
+    reserve_arenas();
 }
 
 DiffusionPipeline::~DiffusionPipeline()
@@ -297,6 +370,13 @@ static void maybe_release_arenas()
     }
     device_arena_release(DeviceArenaId::UNet);
     device_arena_release(DeviceArenaId::UNetPersist);
+
+    // G-8k S3b: release は reserve した 1 本も返してしまう。復元しないと次画像が
+    // チャンク成長へ逆戻りし、**reserve 分と成長分が重なって VRAM peak が最悪化する**
+    // (実測: reserve+release 併用で PEAK_USED が 14250MB -> 16302MB = 物理張り付き)。
+    // よって release 直後に必ず reserve をやり直す。reserve 無効時 (RESERVE_MB=0) は
+    // no-op なので、S3 の release 挙動はそのまま残る。
+    reserve_arenas();
 }
 
 // ----------------------------------------------------------------

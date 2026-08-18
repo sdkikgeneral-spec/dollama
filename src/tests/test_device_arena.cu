@@ -639,6 +639,183 @@ static void test_release_then_regrow()
     device_arena_release(id);
 }
 
+// ----------------------------------------------------------------
+// 14) G-8k S3b: 事前 reserve が効いていること。
+//     reserve 1 本の中に収まる確保を何度繰り返しても、新チャンクは 1 本も生えない
+//     (= チャンク跨ぎ = 捨て分がゼロ)。S4 で VRAM ゲートを割った原因への直接の回帰。
+// ----------------------------------------------------------------
+static void test_reserve_no_chunk_growth()
+{
+    const DeviceArenaId id = DeviceArenaId::UNet;
+    const size_t        rsv = (size_t)768 << 20;  // 768MiB を 1 本
+
+    device_arena_release(id);
+    device_arena_reserve(id, rsv);
+
+    const DeviceArenaStats s0 = device_arena_stats(id);
+    if (device_arena_pool_enabled())
+    {
+        check(s0.reserved_bytes == rsv, "reserve: reserved_bytes == request");
+        check(s0.total_capacity == rsv, "reserve: capacity == reserve (single chunk)");
+        check(s0.live_chunks == 1, "reserve: live_chunks == 1");
+    }
+    else
+    {
+        check(s0.reserved_bytes == 0, "reserve: no-op under DOLLAMA_POOL=0");
+        check(s0.total_capacity == 0, "reserve: no capacity under DOLLAMA_POOL=0");
+    }
+
+    device_arena_reset_counters(id);
+
+    // reserve 未満の確保を、寸法を変えながら何周も回す (跨ぎが起きるなら必ず出る形)。
+    const size_t sizes[5] = { (size_t)200 << 20, (size_t)5 << 20, (size_t)300 << 20,
+                              (size_t)1 << 20,   (size_t)120 << 20 };
+    for (int rep = 0; rep < 4; ++rep)
+    {
+        DeviceArenaScope sc(id);
+        for (int i = 0; i < 5; ++i)
+        {
+            void* p = sc.alloc_bytes(sizes[i]);
+            check(p != nullptr, "reserve: alloc within reserve");
+        }
+    }
+    const DeviceArenaStats s1 = device_arena_stats(id);
+    if (device_arena_pool_enabled())
+    {
+        check(s1.chunk_alloc_calls == 0, "reserve: no new chunk while within reserve");
+        check(s1.cuda_malloc_calls == 0, "reserve: no real cudaMalloc while within reserve");
+        check(s1.cuda_free_calls == 0, "reserve: no real cudaFree while within reserve");
+        check(s1.total_capacity == rsv, "reserve: capacity unchanged");
+        // 捨て分 = capacity - live peak。reserve 内に収まる限り reserve 分だけ。
+        check(s1.peak_request_bytes <= s1.total_capacity, "reserve: live peak <= capacity");
+    }
+
+    std::cout << "[14] reserve: cap=" << (s1.total_capacity >> 20)
+              << "MiB reserved=" << (s1.reserved_bytes >> 20)
+              << "MiB live_peak=" << (s1.peak_request_bytes >> 20)
+              << "MiB chunk_alloc=" << s1.chunk_alloc_calls << "\n";
+
+    device_arena_release(id);
+}
+
+// ----------------------------------------------------------------
+// 15) G-8k S3b: reserve を **超えた** 要求はフォールバック (チャンク追加) し、
+//     そのとき既に配ってある生存ポインタの内容が壊れないこと。
+//     reserve は速度/VRAM の最適化であって正しさの前提ではない、の回帰。
+// ----------------------------------------------------------------
+static void test_reserve_overflow_fallback()
+{
+    const DeviceArenaId id  = DeviceArenaId::UNet;
+    const size_t        rsv = (size_t)512 << 20;
+
+    device_arena_release(id);
+    device_arena_reserve(id, rsv);
+    device_arena_reset_counters(id);
+
+    const size_t small = 64u << 20;
+    DeviceArenaMark m  = device_arena_mark(id);
+
+    void* ps[3];
+    for (int i = 0; i < 3; ++i)
+    {
+        ps[i] = device_arena_alloc(id, small);
+        check(ps[i] != nullptr, "overflow: alloc within reserve");
+        CUDA_CHECK(cudaMemset(ps[i], (unsigned char)(0x40 + i), small));
+    }
+
+    // reserve の残りに入らない要求 -> フォールバックで新チャンクが生える。
+    const size_t over = (size_t)768 << 20;
+    void*        po   = device_arena_alloc(id, over);
+    check(po != nullptr, "overflow: fallback alloc beyond reserve");
+    CUDA_CHECK(cudaMemset(po, 0x7E, over));
+
+    // フォールバック後にもう 1 本 (挿入後のカーソルからの確保)。
+    void* pl = device_arena_alloc(id, small);
+    check(pl != nullptr, "overflow: alloc after fallback");
+    CUDA_CHECK(cudaMemset(pl, 0x43, small));
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    bool all = true;
+    for (int i = 0; i < 3; ++i)
+    {
+        all = verify_pattern(ps[i], small, (unsigned char)(0x40 + i)) && all;
+    }
+    all = verify_pattern(po, over, 0x7E) && all;
+    all = verify_pattern(pl, small, 0x43) && all;
+    check(all, "overflow: all live pointers intact across fallback chunk insertion");
+
+    const DeviceArenaStats s = device_arena_stats(id);
+    if (device_arena_pool_enabled())
+    {
+        check(s.chunk_alloc_calls >= 1, "overflow: fallback added a chunk");
+        check(s.reserved_bytes == rsv, "overflow: reserved_bytes stays as reserved");
+    }
+    std::cout << "[15] reserve overflow: chunk_alloc=" << s.chunk_alloc_calls
+              << " cap=" << (s.total_capacity >> 20)
+              << "MiB reserved=" << (s.reserved_bytes >> 20) << "MiB / pointers intact\n";
+
+    device_arena_rewind(m);
+    device_arena_release(id);
+}
+
+// ----------------------------------------------------------------
+// 16) G-8k S3b: 非静止状態での reserve は throw すること。
+//     reserve は既存チャンクを解放するので、生存ポインタがあると dangling になる。
+//     (POOL=0 では no-op が正なので throw しない = そちらも検査する)
+// ----------------------------------------------------------------
+static void test_reserve_requires_quiescent()
+{
+    const DeviceArenaId id = DeviceArenaId::UNet;
+
+    device_arena_release(id);
+
+    DeviceArenaMark m = device_arena_mark(id);
+    void*           p = device_arena_alloc(id, 4u << 20);
+    check(p != nullptr, "reserve guard: precondition alloc");
+
+    bool threw = false;
+    try
+    {
+        device_arena_reserve(id, (size_t)256 << 20);
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    if (device_arena_pool_enabled())
+    {
+        check(threw, "reserve guard: reserve while live throws");
+    }
+    else
+    {
+        check(!threw, "reserve guard: no-op (no throw) under DOLLAMA_POOL=0");
+    }
+
+    device_arena_rewind(m);
+
+    // 静止状態なら通ること。
+    bool ok = true;
+    try
+    {
+        device_arena_reserve(id, (size_t)256 << 20);
+    }
+    catch (const std::exception&)
+    {
+        ok = false;
+    }
+    check(ok, "reserve guard: reserve succeeds when quiescent");
+    // bytes == 0 は no-op (capacity も reserved_bytes も動かない)。
+    const DeviceArenaStats sb = device_arena_stats(id);
+    device_arena_reserve(id, 0);
+    const DeviceArenaStats sa = device_arena_stats(id);
+    check(sb.total_capacity == sa.total_capacity && sb.reserved_bytes == sa.reserved_bytes,
+          "reserve guard: bytes==0 is a no-op");
+
+    std::cout << "[16] reserve guard: live -> throw / quiescent -> ok\n";
+
+    device_arena_release(id);
+}
+
 #endif // HAVE_CUDA
 
 } // namespace dollama
@@ -674,6 +851,10 @@ int main()
             dollama::test_giant_alloc_exact_chunk();
             dollama::test_insert_across_live_pointers();
             dollama::test_release_then_regrow();
+            // G-8k S3b 追加分 (事前 reserve)。
+            dollama::test_reserve_no_chunk_growth();
+            dollama::test_reserve_overflow_fallback();
+            dollama::test_reserve_requires_quiescent();
             dollama::device_arena_release(dollama::DeviceArenaId::UNet);
         }
         else
@@ -687,6 +868,9 @@ int main()
             // 同じ結果になること (チャンク本数の検査はプール経路のみで判定する)。
             dollama::test_insert_across_live_pointers();
             dollama::test_release_then_regrow();
+            // G-8k S3b: キルスイッチ経路では reserve が no-op であること。
+            dollama::test_reserve_no_chunk_growth();
+            dollama::test_reserve_requires_quiescent();
         }
     }
     catch (const std::exception& e)

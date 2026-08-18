@@ -28,6 +28,31 @@
 //   環境変数 DOLLAMA_POOL=0 (存在かつ "0") のとき、alloc は素の cudaMalloc、
 //   rewind は対応する cudaFree にフォールバックし、旧経路が完全に復元される。
 //
+// VRAM 収支の急所 (G-8k S3b で確定・善意の再設計を止めるために残す):
+//   **捨て分 (total_capacity - peak_request_bytes) の唯一の発生源はチャンク跨ぎ**である。
+//   現チャンクの残りに入らない要求が来ると、その残りを丸ごと捨てて新チャンクへ移る。
+//   GB 級の単発要求 (VAE の FP16 キャリー 512MiB x2 / FP32 キャリー 1024MiB x2 /
+//   up2-up3 の Scratch32 512MiB-1024MiB 級) が並ぶと、これが積み上がる。
+//   S4 の e2e 実測では capacity 10688MiB に対し真の live peak 6051MiB = 捨て分 4637MiB
+//   となり、プロセス GPU peak が POOL=0 比 +2993MB で VRAM ゲートを割った
+//   (物理 16302MB に張り付き WDDM ページングで 2 枚目以降が 11s -> 25s に劣化)。
+//
+//   **解は事前 reserve** (device_arena_reserve): live peak を包む 1 本を静止状態で
+//   先に確保しておけば、跨ぎは原理的に起きない (capacity ≒ live peak)。既存の
+//   「跨いだら新チャンク」経路はフォールバックとして残るので、reserve が足りなくても
+//   壊れず遅くなるだけ。確保が初期化時に固まるため、1 枚目から chunk_alloc=0 になり
+//   CUDA Graphs (G-1k) の capture 前提もウォーム 1 回で満たせる。
+//
+//   採らなかった案 (再提案を止めるための記録):
+//     (1) VAE の GB 級を「固定寿命バッファ」に切り出す案は **不採用**。UNet アリーナの
+//         capacity は ~1280MiB に戻るが、プロセス peak が立つのは VAE decode の瞬間で、
+//         その瞬間この 1280MiB は丸ごと遊んでいる。試算 peak ≈ weights 7067 +
+//         VAE 固定 ~5632 + 遊休 1280 + persist ~190 ≈ 14169MB で POOL=0 の 13309MB に
+//         対し +860MB > 512MB = VRAM ゲート未達。「二相の live が同時常駐する」構造が
+//         残るうえ vae_decode.cu の全面改修で S3 の BIT-EXACT 資産を危険に晒す。
+//     (2) アリーナ基盤そのものの再設計 (フリーリスト化等) はコスト最大で、
+//         「配ったポインタが無効化されない」という急所を触る危険が最も大きい。
+//
 // スレッド契約 (G-8k S2 で改訂):
 //   同時使用は単一スレッドのみ。初回使用時に所有スレッド id を記録し、
 //   **生存中の確保がある状態**で別スレッドが触ったら throw する (落ちる契約)。
@@ -122,6 +147,10 @@ struct DeviceArenaStats
     // VRAM ゲート (capacity - 真の live peak <= 512MB) はこちらで判定する。
     size_t   live_request_bytes = 0;  // 現在の同時生存要求バイト (アライン後合計)
     size_t   peak_request_bytes = 0;  // 同上のピーク
+    // G-8k S3b: device_arena_reserve() で先に確保した 1 本のサイズ (0 = 未 reserve)。
+    // capacity - peak_request が捨て分なので、reserved_bytes >= peak_request なら
+    // チャンク跨ぎは起きていない (= reserve が効いている) と読める。
+    size_t   reserved_bytes     = 0;
 };
 
 // ----------------------------------------------------------------
@@ -141,6 +170,16 @@ void* device_arena_alloc(DeviceArenaId id, size_t bytes);
 // mark 時点までカーソルを巻き戻す。**チャンクは解放しない** (grow は単調)。
 // DOLLAMA_POOL=0 のときのみ、対応する cudaFree を行う。
 void device_arena_rewind(const DeviceArenaMark& mark);
+
+// ----------------------------------------------------------------
+// G-8k S3b: 事前 reserve。**静止状態でのみ呼べる** (生存確保があれば throw)。
+//   既存チャンクを全解放し、bytes ちょうど 1 本を確保してカーソルを基点に戻す。
+//   以後 bytes 以内の確保はこの 1 本から切られ、チャンク跨ぎ = 捨て分が消える。
+//   bytes を超えたら従来どおり新チャンクを追加する (正しさは不変・遅くなるだけ)。
+//   DOLLAMA_POOL=0 のときは **no-op** (旧経路を汚さない)。
+//   bytes == 0 も no-op (reserve 無効化の指定は呼び出し側で「呼ばない」で表現する)。
+// ----------------------------------------------------------------
+void device_arena_reserve(DeviceArenaId id, size_t bytes);
 
 // 指定アリーナの全チャンクを解放し、カーソルを初期化する。
 // 定期 trim / step 間 trim は **実装しない** (目的を殺すため)。明示呼び出し専用。

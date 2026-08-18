@@ -1357,10 +1357,11 @@ void unet_weights_destroy(UnetWeightsHandle handle)
         for (int i = 0; i < 2; ++i)
         {
             const DeviceArenaStats s = device_arena_stats(ids[i]);
-            std::printf("[ALLOC] arena=%s cap=%zuMiB live_peak=%zuMiB cursor_peak=%zuMiB"
+            std::printf("[ALLOC] arena=%s cap=%zuMiB reserved=%zuMiB live_peak=%zuMiB cursor_peak=%zuMiB"
                         " chunks=%zu cudaMalloc=%llu cudaFree=%llu alloc=%llu\n",
                         device_arena_name(ids[i]),
-                        s.total_capacity >> 20, s.peak_request_bytes >> 20,
+                        s.total_capacity >> 20, s.reserved_bytes >> 20,
+                        s.peak_request_bytes >> 20,
                         s.peak_bytes_in_use >> 20, s.live_chunks,
                         (unsigned long long)s.cuda_malloc_calls,
                         (unsigned long long)s.cuda_free_calls,

@@ -11,6 +11,7 @@
 #include "kernels/device_arena.cuh"
 #include "kernels/utils.cuh"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -57,6 +58,10 @@ struct Arena
     // 所有スレッド (初回使用時に確定。以後不一致なら throw)。
     std::thread::id owner;
     bool            owner_set = false;
+
+    // G-8k S3b: reserve 済みなのに跨ぎが起きた (= reserve 不足) ことを
+    // DOLLAMA_PROFILE=1 のとき 1 回だけ知らせるためのフラグ。黙って太らせない。
+    bool            reserve_warned = false;
 
     DeviceArenaStats stats;
 };
@@ -221,6 +226,27 @@ bool device_arena_pool_enabled()
 }
 
 // ----------------------------------------------------------------
+// DOLLAMA_PROFILE の有無 (infer/profile.cuh と同じ判定を kernels 層で独立に持つ。
+// 依存を張らないのは device_arena が最下層だから)。getenv は初回のみ・以後キャッシュ。
+// ----------------------------------------------------------------
+static bool arena_profile_enabled()
+{
+    static int e = -1;
+    if (e < 0)
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        e = std::getenv("DOLLAMA_PROFILE") != nullptr ? 1 : 0;
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+    }
+    return e == 1;
+}
+
+// ----------------------------------------------------------------
 // mark
 // ----------------------------------------------------------------
 DeviceArenaMark device_arena_mark(DeviceArenaId id)
@@ -313,6 +339,24 @@ void* device_arena_alloc(DeviceArenaId id, size_t bytes)
     //     (vector が持つのはチャンク記述子であり、デバイスメモリ本体は動かない)。
     //   - LIFO 前提より、生存中の mark は chunk <= a.cur しか無く、挿入で index が
     //     ずれるのは a.cur 以降だけ → 巻き戻し先は依然として「その時点以降の全確保」を覆う。
+    // G-8k S3b: reserve 済みなのに新チャンクが要る = reserve 不足。
+    // 黙って太らせず、DOLLAMA_PROFILE=1 のとき 1 回だけ報告する
+    // (正しさは不変。ここから先は従来どおりチャンクを足して続行する)。
+    if (a.stats.reserved_bytes != 0 && !a.reserve_warned)
+    {
+        a.reserve_warned = true;
+        if (arena_profile_enabled())
+        {
+            std::printf("[ALLOC] reserve shortage: arena=%s peak_request %zu MiB"
+                        " > reserve %zu MiB (falling back to chunk growth)\n",
+                        device_arena_name(id),
+                        (a.req_live > a.stats.peak_request_bytes
+                             ? a.req_live : a.stats.peak_request_bytes) >> 20,
+                        a.stats.reserved_bytes >> 20);
+            std::fflush(stdout);
+        }
+    }
+
     ArenaChunk nc;
     nc.bytes = next_chunk_bytes(id, a, need);
     void* raw = nullptr;
@@ -374,6 +418,66 @@ void device_arena_rewind(const DeviceArenaMark& mark)
 }
 
 // ----------------------------------------------------------------
+// reserve (G-8k S3b): 静止状態で「live peak を包む 1 本」を先に確保する。
+//   チャンク跨ぎ = 捨て分の唯一の発生源を、原理的に消すのが目的。
+//   - 非静止状態 (生存確保あり) で呼ばれたら throw する (落ちる契約は維持)。
+//     既存チャンクを解放するため、生存ポインタがあると dangling になるから。
+//   - DOLLAMA_POOL=0 / bytes==0 は no-op。
+// ----------------------------------------------------------------
+void device_arena_reserve(DeviceArenaId id, size_t bytes)
+{
+    Arena& a = arena_of(id);
+    check_thread(id, a);
+
+    if (bytes == 0)
+    {
+        return;
+    }
+    if (!device_arena_pool_enabled())
+    {
+        // キルスイッチ経路は素の cudaMalloc/cudaFree。旧経路を汚さない。
+        return;
+    }
+    if (!is_quiescent(a))
+    {
+        throw std::runtime_error(std::string("device_arena: アリーナ '")
+                                 + device_arena_name(id)
+                                 + "' の reserve は静止状態でのみ可能"
+                                   " (生存中の確保があるとポインタが dangling になる)");
+    }
+
+    // 既存チャンクを畳んでから 1 本にまとめ直す。
+    for (size_t i = 0; i < a.chunks.size(); ++i)
+    {
+        if (a.chunks[i].ptr != nullptr)
+        {
+            cudaFree(a.chunks[i].ptr);
+            a.stats.cuda_free_calls++;
+        }
+    }
+    a.chunks.clear();
+    a.stats.total_capacity = 0;
+
+    ArenaChunk nc;
+    nc.bytes  = align_up(bytes);
+    void* raw = nullptr;
+    CUDA_CHECK(cudaMalloc(&raw, nc.bytes));
+    nc.ptr = static_cast<char*>(raw);
+    a.chunks.push_back(nc);
+
+    a.stats.cuda_malloc_calls++;
+    a.stats.chunk_alloc_calls++;
+    a.stats.total_capacity  = nc.bytes;
+    a.stats.live_chunks     = a.chunks.size();
+    a.stats.reserved_bytes  = nc.bytes;
+
+    a.cur                = 0;
+    a.offset             = 0;
+    a.stats.bytes_in_use = 0;
+    a.reserve_warned     = false;
+}
+
+// ----------------------------------------------------------------
 // release (全チャンク解放)。定期 trim は実装しない。明示呼び出し専用。
 // ----------------------------------------------------------------
 void device_arena_release(DeviceArenaId id)
@@ -406,6 +510,10 @@ void device_arena_release(DeviceArenaId id)
     a.req_live            = 0;
     a.stats.live_request_bytes = 0;
     a.stats.total_capacity = 0;
+    // reserve 済みの 1 本もここで手放したので、reserve 状態は解除する
+    // (再 reserve するかは呼び出し側の判断)。
+    a.stats.reserved_bytes = 0;
+    a.reserve_warned       = false;
     a.stats.live_chunks    = 0;
     a.stats.bytes_in_use   = 0;
     // 所有スレッドの記録自体は維持する (release 後は静止状態なので、次に別スレッドが
