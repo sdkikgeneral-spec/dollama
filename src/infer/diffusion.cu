@@ -171,23 +171,56 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 } // namespace
 
 // ----------------------------------------------------------------
-// G-8k S3b: アリーナの事前 reserve (VRAM 収支の本線)。
+// G-8k S3b/S3c: アリーナの事前 reserve (VRAM 収支の本線)。
 //
 //   捨て分の唯一の発生源はチャンク跨ぎなので、live peak を包む 1 本を初期化時に
 //   確保してしまえば跨ぎは原理的に起きず capacity ≒ live peak になる。
-//   S4 の e2e 実測 (1024^2 20step CFG --fast 相当・3 枚連続):
-//     UNet        live peak 6051MiB → 6051 * 1.1 ≈ 6656MiB を既定 reserve
-//     UNetPersist live peak  137MiB → +10% は 151MiB だが、収束後の実 capacity が
-//                                     192MiB (刻み 64MiB x3) なのでそこに合わせる
+//
+//   **ヘッドルームは比例 (%) ではなく固定バイトを積む (S3c で是正)**:
+//     実測 live peak (= peak_request_bytes) は
+//       UNet 5914MiB / UNetPersist 137MiB
+//     で、出典は S3b (commit 8e2e48d) の e2e 実測 —— 1024^2 / 20step / CFG g=7.5 /
+//     --fast 相当を 4 構成 (POOL=0 / 既定 / RESERVE_MB=0 / ARENA_RELEASE=1) x 3 枚、
+//     計 12 枚回して **変動ゼロ (完全に決定的)** だった値である。
+//     確保列は形状で決まり乱数や実行順に依存しないので、live peak は分散を持たない。
+//     したがって「+10%」のような比例マージンは **何の分散に備えているのか答えられない
+//     根拠のない数字** であり、S3c で固定ヘッドルーム (下記 kArenaHeadroom*) に置き換えた。
+//     予約した VRAM は他プロセス・iGPU/OV 側から見て実際に取り上げられており
+//     (free VRAM を削る実害があり、G-8k のページング事故の直接原因がこれ) 、
+//     使わない予約を比例で膨らませる正当化は無い。**「% に戻す」提案は却下済み。**
+//
+//   解像度・batch・step 構成が変わって live peak がこの値を超えた場合は、
+//   device_arena 側の **reserve 不足警告** (DOLLAMA_PROFILE=1 で
+//   "[ALLOC] reserve shortage: ...") が出たうえで従来のチャンク追加へ
+//   フォールバックする。正しさは不変で、静かに壊れる経路は無い。
+//
 //   env DOLLAMA_ARENA_RESERVE_MB で UNet 側を上書きできる。**0 指定で reserve 無効
 //   = S3 と同じ挙動** (S4b の A/B に必須)。getenv は初回のみ・以後キャッシュ。
 // ----------------------------------------------------------------
+
+// 実測 live peak (S3b 8e2e48d の 4 構成 x 3 枚・変動ゼロ)。
+static const size_t kArenaLivePeakUnetMiB    = 5914;
+static const size_t kArenaLivePeakPersistMiB = 137;
+
+// 固定ヘッドルーム。live peak が決定的なので、比例ではなくこの固定分だけ積む。
+// (端数と将来の小さな配線差を吸収する分。超えたら reserve 不足警告 + フォールバック)
+static const size_t kArenaHeadroomUnetMiB    = 128;
+static const size_t kArenaHeadroomPersistMiB = 32;
+
+// 64MiB 境界へ切り上げ (チャンクの刻みに揃える)。
+static size_t round_up_64mib(size_t mib)
+{
+    return (mib + 63) & ~(size_t)63;
+}
+
 static size_t arena_reserve_unet_mb()
 {
     static long long v = -1;
     if (v < 0)
     {
-        v = 6656;  // 既定 (S4 実測 live peak 6051MiB + 10%)
+        // 5914 + 128 = 6042 -> 64MiB 境界へ切り上げ = 6080MiB
+        v = static_cast<long long>(
+            round_up_64mib(kArenaLivePeakUnetMiB + kArenaHeadroomUnetMiB));
 #if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4996)
@@ -211,9 +244,17 @@ static size_t arena_reserve_unet_mb()
 
 // UNetPersist 側の reserve (MiB)。UNet 側が 0 (無効) のときは道連れで無効にする
 // (A/B の被験変数を 1 本に保つため)。
+// 137 + 32 = 169 -> 16MiB 境界へ切り上げ = 176MiB。
+// (UNetPersist は総量が小さいので刻みは 16MiB で足りる。reserve は要求サイズ
+//  ちょうどで 1 本取るため、176MiB がそのまま capacity になる)
 static size_t arena_reserve_persist_mb()
 {
-    return arena_reserve_unet_mb() == 0 ? 0 : 192;
+    if (arena_reserve_unet_mb() == 0)
+    {
+        return 0;
+    }
+    const size_t mib = kArenaLivePeakPersistMiB + kArenaHeadroomPersistMiB;  // 169
+    return (mib + 15) & ~(size_t)15;                                        // 176
 }
 
 // 初期化時と、release 直後の復元に呼ぶ。静止状態でしか呼べない契約
