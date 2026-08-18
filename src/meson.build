@@ -883,6 +883,21 @@ if cuda_enabled
   )
   test('diffusion', test_diffusion_exe, timeout : 600, is_parallel : false)
 
+  # G-8k S4: e2e アリーナ A/B 計測ハーネス (計測専用・test 未登録)。
+  # 同一プロセスで N 枚連続生成し、プロセス GPU peak (cudaMemGetInfo) と
+  # device_arena 統計の画像ごとデルタを出す。被験コードは無改変。
+  prof_arena_e2e_exe = executable('prof_arena_e2e',
+    sources             : files(['tests/prof_arena_e2e.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args + [
+      '-DUNET_WEIGHTS_PATH="' + diff_unet_w + '"',
+      '-DVAE_WEIGHTS_PATH="' + diff_vae_w + '"',
+      '-DUNET_IO_PATH="' + diff_unet_io + '"',
+    ],
+  )
+
   # FAST モード G-2k S3c: CFG batch2 on/off パリティゲート (generate_txt2img 縦通し)。
   # batch2=off / batch2=on を逐次実行し (VRAM 二重常駐回避) 最終 RGB の SSIM を突合する。
   # 依存ソース・-D 埋め込みは test_diffusion と同型。CUDA 依存ゆえ with_cuda gate 内。

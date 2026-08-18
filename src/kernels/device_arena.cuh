@@ -63,7 +63,15 @@ namespace dollama
 //               LIFO 契約が破れる (skip を積んだ後に Scratch が rewind すると skip の
 //               領域が再利用されてしまう)。**アリーナを分けることが正しさの条件**で
 //               あって、単なる整理ではない。
-// VAE         : S3 用 (未使用)。
+// VAE         : **S3 で不採用** (未使用のまま残す)。VAE decode のスクラッチは
+//               UNet アリーナへ共有した (vae_decode.cu の kVaeArena)。理由:
+//               VAE の同時生存ピークは ~5.5GiB (FP16 キャリー 2 本 1.0GiB + FP32
+//               キャリー 2 本 2.0GiB + up2 の Scratch32 群 ~2.5GiB) で、専用アリーナに
+//               置くと次画像の UNet step 中ずっと常駐して VRAM peak を押し上げる。
+//               UNet アリーナへ共有すれば capacity は「和」ではなく「max」で済む。
+//               VAE decode の時点で UNet アリーナは静止状態 (全 step 完了後) なので
+//               LIFO 契約は破れない。conv2d の im2col は元から UNet アリーナ共有だった。
+//               revert は vae_decode.cu の kVaeArena 1 行を戻すだけ。
 // ----------------------------------------------------------------
 enum class DeviceArenaId : int
 {

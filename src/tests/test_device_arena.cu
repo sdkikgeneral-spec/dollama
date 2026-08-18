@@ -458,6 +458,187 @@ static void test_pool_off()
               << " cudaFree=" << s2.cuda_free_calls << " (legacy path restored)\n";
 }
 
+// ----------------------------------------------------------------
+// 11) G-8k S3: GB 級の単発要求 (VAE のキャリー 512MiB / 1GiB がこれに当たる)。
+//     成長則は「チャンクサイズ = max(刻み幅, 要求サイズ)」なので、刻み幅を超える
+//     要求に対しては **要求サイズちょうど** のチャンクが 1 本だけ生えるはず。
+//     (倍々成長が復活すると capacity がここで跳ねるので、その回帰検知でもある)
+// ----------------------------------------------------------------
+static void test_giant_alloc_exact_chunk()
+{
+    const DeviceArenaId id = DeviceArenaId::UNet;
+
+    device_arena_release(id);
+    const DeviceArenaStats s0 = device_arena_stats(id);
+
+    const size_t giant = (size_t)1 << 30;  // 1GiB (VAE の FP32 キャリー 1 本と同寸)
+    DeviceArenaMark m  = device_arena_mark(id);
+    void*           p  = device_arena_alloc(id, giant);
+    check(p != nullptr, "giant: alloc 1GiB");
+
+    const DeviceArenaStats s1 = device_arena_stats(id);
+    if (device_arena_pool_enabled())
+    {
+        check(s1.chunk_alloc_calls == s0.chunk_alloc_calls + 1,
+              "giant: exactly one new chunk");
+        check(s1.total_capacity == s0.total_capacity + giant,
+              "giant: chunk size == request size (no doubling growth)");
+        check(s1.live_chunks == 1, "giant: live_chunks == 1");
+    }
+    check(s1.peak_request_bytes >= giant, "giant: peak_request_bytes >= 1GiB");
+
+    // 端まで実体があること (先頭/中央/末尾を書いて読み返す)。
+    CUDA_CHECK(cudaMemset(p, 0x77, giant));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    check(verify_pattern(p, giant, 0x77), "giant: whole 1GiB region is backed");
+
+    std::cout << "[11] giant alloc: cap=" << (s1.total_capacity >> 20)
+              << "MiB chunks=" << s1.live_chunks
+              << " (要求 " << (giant >> 20) << "MiB ちょうど)\n";
+
+    device_arena_rewind(m);
+    device_arena_release(id);
+}
+
+// ----------------------------------------------------------------
+// 12) G-8k S3 の急所: 「小確保を複数 → 全 rewind → GB 級確保 → 再び小確保」。
+//     GB 級は現チャンクに収まらないため **チャンク列の途中に新チャンクが挿入** される。
+//     挿入で vector 内の index はずれるが、デバイスメモリ本体は動かない設計なので、
+//     挿入を跨いで生き続けているポインタの中身は壊れてはならない。
+//     (VAE decode が正にこの形: 段の Scratch を rewind した後、外側スコープから
+//      FP32 キャリー 1GiB x2 を切り、その後また段内の小確保が続く)
+// ----------------------------------------------------------------
+static void test_insert_across_live_pointers()
+{
+    const DeviceArenaId id    = DeviceArenaId::UNet;
+    const size_t        first = device_arena_first_chunk_bytes(id);
+
+    device_arena_release(id);
+
+    // --- 事前に複数チャンクへ育てておく (挿入位置が「末尾」でなく「途中」になる条件) ---
+    {
+        DeviceArenaMark warm = device_arena_mark(id);
+        const size_t    each = (first >> 3) + 1024;   // 8 本で 1 チャンクを溢れさせる寸法
+        for (int i = 0; i < 12; ++i)
+        {
+            (void)device_arena_alloc(id, each);
+        }
+        device_arena_rewind(warm);                    // ここで全 rewind (チャンクは残る)
+    }
+    const DeviceArenaStats sw = device_arena_stats(id);
+    check(!device_arena_pool_enabled() || sw.live_chunks >= 2,
+          "insert: pre-grown to >= 2 chunks");
+
+    // --- 小確保 (前半) ---
+    const size_t    small = 1u << 20;
+    DeviceArenaMark m     = device_arena_mark(id);
+    void*           ps[6];
+    for (int i = 0; i < 3; ++i)
+    {
+        ps[i] = device_arena_alloc(id, small);
+        check(ps[i] != nullptr, "insert: small alloc (first half)");
+        CUDA_CHECK(cudaMemset(ps[i], (unsigned char)(0x10 + i), small));
+    }
+
+    // --- GB 級 (ここでチャンク挿入が起きる) ---
+    const size_t giant = (size_t)1 << 30;
+    void*        pg    = device_arena_alloc(id, giant);
+    check(pg != nullptr, "insert: giant alloc");
+    CUDA_CHECK(cudaMemset(pg, 0x2A, giant));
+    const DeviceArenaStats sg = device_arena_stats(id);
+    check(!device_arena_pool_enabled() || sg.live_chunks > sw.live_chunks,
+          "insert: giant alloc added one chunk");
+
+    // --- 小確保 (後半) ---
+    for (int i = 3; i < 6; ++i)
+    {
+        ps[i] = device_arena_alloc(id, small);
+        check(ps[i] != nullptr, "insert: small alloc (second half)");
+        CUDA_CHECK(cudaMemset(ps[i], (unsigned char)(0x10 + i), small));
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    // --- 全部読み返す: 挿入を跨いでも前半のポインタが無傷であること ---
+    bool all = true;
+    for (int i = 0; i < 6; ++i)
+    {
+        all = verify_pattern(ps[i], small, (unsigned char)(0x10 + i)) && all;
+    }
+    all = verify_pattern(pg, giant, 0x2A) && all;
+    check(all, "insert: all pointers intact across chunk insertion");
+
+    // 重なりが無いこと (アドレス範囲の総当たり)。
+    bool        disjoint = true;
+    const char* bases[7];
+    size_t      lens[7];
+    for (int i = 0; i < 6; ++i)
+    {
+        bases[i] = (const char*)ps[i];
+        lens[i]  = small;
+    }
+    bases[6] = (const char*)pg;
+    lens[6]  = giant;
+    for (int i = 0; i < 7; ++i)
+    {
+        for (int j = i + 1; j < 7; ++j)
+        {
+            const bool ov = (bases[i] < bases[j] + lens[j]) && (bases[j] < bases[i] + lens[i]);
+            disjoint      = disjoint && !ov;
+        }
+    }
+    check(disjoint, "insert: handed-out regions are disjoint");
+
+    std::cout << "[12] insert across live: chunks " << sw.live_chunks << " -> "
+              << sg.live_chunks << " / 7 ptrs intact / disjoint\n";
+
+    device_arena_rewind(m);
+    device_arena_release(id);
+}
+
+// ----------------------------------------------------------------
+// 13) G-8k S3: device_arena_release() の統計ゼロ化と再成長。
+//     DOLLAMA_ARENA_RELEASE=1 (画像境界での明示解放) が踏む経路そのもの。
+// ----------------------------------------------------------------
+static void test_release_then_regrow()
+{
+    const DeviceArenaId id = DeviceArenaId::UNet;
+
+    // 何かしら育てる。
+    {
+        DeviceArenaScope sc(id);
+        void*            p = sc.alloc_bytes(64u << 20);
+        check(p != nullptr, "regrow: alloc before release");
+    }
+    const DeviceArenaStats sb = device_arena_stats(id);
+    check(!device_arena_pool_enabled() || sb.total_capacity > 0, "regrow: capacity > 0 before release");
+
+    device_arena_release(id);
+    const DeviceArenaStats s0 = device_arena_stats(id);
+    check(s0.total_capacity == 0, "regrow: release -> total_capacity == 0");
+    check(s0.live_chunks == 0, "regrow: release -> live_chunks == 0");
+    check(s0.bytes_in_use == 0, "regrow: release -> bytes_in_use == 0");
+    check(s0.live_request_bytes == 0, "regrow: release -> live_request_bytes == 0");
+    check(!device_arena_pool_enabled() || s0.cuda_free_calls > sb.cuda_free_calls,
+          "regrow: release issues real cudaFree");
+
+    // 再成長 + 実データの往復。
+    {
+        DeviceArenaScope sc(id);
+        void*            q = sc.alloc_bytes(64u << 20);
+        check(q != nullptr, "regrow: alloc works after release");
+        CUDA_CHECK(cudaMemset(q, 0x63, 64u << 20));
+        CUDA_CHECK(cudaDeviceSynchronize());
+        check(verify_pattern(q, 64u << 20, 0x63), "regrow: reused region is usable");
+    }
+    const DeviceArenaStats s1 = device_arena_stats(id);
+    check(!device_arena_pool_enabled() || s1.total_capacity > 0, "regrow: capacity grew again");
+
+    std::cout << "[13] release -> regrow: cap " << (sb.total_capacity >> 20) << "MiB -> 0 -> "
+              << (s1.total_capacity >> 20) << "MiB\n";
+
+    device_arena_release(id);
+}
+
 #endif // HAVE_CUDA
 
 } // namespace dollama
@@ -489,6 +670,10 @@ int main()
             dollama::test_release();
             dollama::test_scope_raii();
             dollama::test_thread_guard();
+            // G-8k S3 追加分 (GB 級チャンク / 挿入跨ぎ / release -> 再成長)。
+            dollama::test_giant_alloc_exact_chunk();
+            dollama::test_insert_across_live_pointers();
+            dollama::test_release_then_regrow();
             dollama::device_arena_release(dollama::DeviceArenaId::UNet);
         }
         else
@@ -498,6 +683,10 @@ int main()
             dollama::test_alignment();
             dollama::test_scope_raii();
             dollama::test_thread_guard();
+            // G-8k S3: キルスイッチ経路でも「挿入跨ぎ」相当の同時生存と release -> 再成長が
+            // 同じ結果になること (チャンク本数の検査はプール経路のみで判定する)。
+            dollama::test_insert_across_live_pointers();
+            dollama::test_release_then_regrow();
         }
     }
     catch (const std::exception& e)

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -24,6 +25,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include "kernels/vae_decode.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/utils.cuh"
 #include "io/safetensors.hpp"
 #endif
@@ -203,6 +205,106 @@ static int run_test()
     std::vector<__half> h_image(img_n);
     CUDA_CHECK(cudaMemcpy(h_image.data(), d_image, img_n * sizeof(__half),
                           cudaMemcpyDeviceToHost));
+
+    // ------------------------------------------------------------
+    // G-8k S3: アリーナ化した VAE 経路の bit-exact 検査。
+    //   (a) 2 回目の decode が 1 回目と memcmp 一致すること (アリーナ再利用の決定性)。
+    //   (b) env DOLLAMA_ARENA_RELEASE=1 のときは 1 回目と 2 回目の間でアリーナを
+    //       release し、チャンクを返して再確保しても出力が変わらないことを見る。
+    //   (c) env DOLLAMA_VAE_DUMP=<path> で 1 回目の FP16 出力を生バイトで落とす。
+    //       DOLLAMA_POOL=0 / 既定 / RELEASE=1 の 3 プロセスを外から cmp して
+    //       BIT-EXACT を確認するための出口 (env は初回キャッシュされるため、
+    //       1 プロセス内でプール経路を混ぜられない)。
+    // ------------------------------------------------------------
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* rel  = std::getenv("DOLLAMA_ARENA_RELEASE");
+        const char* dump = std::getenv("DOLLAMA_VAE_DUMP");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        const bool do_release = (rel != nullptr && std::strcmp(rel, "1") == 0);
+        if (do_release)
+        {
+            device_arena_release(DeviceArenaId::UNet);
+            device_arena_release(DeviceArenaId::UNetPersist);
+        }
+
+        // 再利用領域の残留値に依存していないことを炙り出すため、2 回目の前に
+        // 出力バッファを毒値で潰しておく (全書きされない場所があれば差分になる)。
+        CUDA_CHECK(cudaMemset(d_image, 0x5A, img_n * sizeof(__half)));
+
+        // G-8k の完了条件そのもの: 定常状態の decode で実 cudaMalloc / cudaFree が
+        // 0 回になること。チャンク列は「入りきらない要求が来たら挿入」で育つため、
+        // 1 回目の decode だけでは育ち切らない (実測: 2 回目でも +1 本生える)。
+        // 数回まで回して 0 回に収束することを見る。
+        // プール経路のときだけ判定する (POOL=0 は素の cudaMalloc/cudaFree へ戻す
+        // 経路なので 0 にならないのが正しく、release を挟む場合も再確保が走る)。
+        int converged_at = -1;
+        for (int it = 0; it < 6; ++it)
+        {
+            device_arena_reset_counters(DeviceArenaId::UNet);
+            launch_vae_decode(weights, d_latent, d_image);
+            const DeviceArenaStats sd = device_arena_stats(DeviceArenaId::UNet);
+            std::cout << "[test_vae_decode] decode#" << (it + 2)
+                      << ": cudaMalloc=" << sd.cuda_malloc_calls
+                      << " cudaFree=" << sd.cuda_free_calls
+                      << " alloc=" << sd.alloc_calls
+                      << " cap=" << (sd.total_capacity >> 20) << "MiB\n";
+            if (sd.cuda_malloc_calls == 0 && sd.cuda_free_calls == 0)
+            {
+                converged_at = it;
+                break;
+            }
+        }
+        std::cout << "[test_vae_decode] steady state reached at decode#"
+                  << (converged_at >= 0 ? converged_at + 2 : -1) << "\n";
+        if (device_arena_pool_enabled() && !do_release && converged_at < 0)
+        {
+            std::cerr << "[test_vae_decode] FAIL: decode still calls"
+                         " cudaMalloc/cudaFree after 6 iterations\n";
+            return 1;
+        }
+
+        std::vector<__half> h_image2(img_n);
+        CUDA_CHECK(cudaMemcpy(h_image2.data(), d_image, img_n * sizeof(__half),
+                              cudaMemcpyDeviceToHost));
+        const bool same = (std::memcmp(h_image.data(), h_image2.data(),
+                                       img_n * sizeof(__half)) == 0);
+        std::cout << "[test_vae_decode] arena bit-exact (2nd decode"
+                  << (do_release ? " after release" : "") << "): "
+                  << (same ? "BIT-EXACT" : "MISMATCH") << "\n";
+        if (!same)
+        {
+            std::cerr << "[test_vae_decode] FAIL: 2nd decode != 1st decode"
+                         " (arena reuse changed the numerics)\n";
+            return 1;
+        }
+
+        {
+            const DeviceArenaStats su = device_arena_stats(DeviceArenaId::UNet);
+            std::cout << "[test_vae_decode] [ALLOC] arena="
+                      << device_arena_name(DeviceArenaId::UNet)
+                      << " cap=" << (su.total_capacity >> 20) << "MiB"
+                      << " live_peak=" << (su.peak_request_bytes >> 20) << "MiB"
+                      << " cursor_peak=" << (su.peak_bytes_in_use >> 20) << "MiB"
+                      << " chunks=" << su.live_chunks
+                      << " cudaMalloc=" << su.cuda_malloc_calls
+                      << " cudaFree=" << su.cuda_free_calls
+                      << " alloc=" << su.alloc_calls << "\n";
+        }
+
+        if (dump != nullptr && dump[0] != '\0')
+        {
+            std::ofstream of(dump, std::ios::binary);
+            of.write(reinterpret_cast<const char*>(h_image.data()),
+                     (std::streamsize)(img_n * sizeof(__half)));
+            std::cout << "[test_vae_decode] dumped FP16 image to " << dump << "\n";
+        }
+    }
 
     // FP16 -> FP32 デコード + Inf/NaN 検査
     std::vector<float> got(img_n);

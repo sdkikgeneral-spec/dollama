@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -26,6 +27,7 @@
 #include "infer/profile.cuh"
 #include "infer/scheduler.hpp"
 #include "kernels/vae_decode.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/utils.cuh"
 #include "io/safetensors.hpp"
 
@@ -259,6 +261,46 @@ void DiffusionPipeline::clear_loras()
 }
 
 // ----------------------------------------------------------------
+// G-8k S3: 画像 1 枚を出し終えた境界でアリーナのチャンクを返すかどうか。
+//   既定 OFF。env DOLLAMA_ARENA_RELEASE=1 のときだけ有効。
+//   位置づけ: S4 の VRAM 主ゲートが落ちたときの救済策 (VRAM を返す代わりに次画像の
+//   初回チャンク確保が復活する) を、同一走行で A/B 比較できるようにするためのスイッチ。
+//   **これは device_arena.cuh が禁じている「定期 trim / step 間 trim」ではない**:
+//   呼ばれるのは画像境界 (step ループの完全な外側) だけで、step ループ内の
+//   cudaMalloc/cudaFree 0 という目的は一切損なわない。
+//   env 読みの作法は fast_config.hpp の fast_env_true に倣い初回のみ getenv (以後キャッシュ)。
+// ----------------------------------------------------------------
+static bool arena_release_enabled()
+{
+    static int e = -1;
+    if (e < 0)
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* v = std::getenv("DOLLAMA_ARENA_RELEASE");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        e = (v != nullptr && std::strcmp(v, "1") == 0) ? 1 : 0;
+    }
+    return e == 1;
+}
+
+// 画像境界でのアリーナ解放 (既定 OFF)。
+static void maybe_release_arenas()
+{
+    if (!arena_release_enabled())
+    {
+        return;
+    }
+    device_arena_release(DeviceArenaId::UNet);
+    device_arena_release(DeviceArenaId::UNetPersist);
+}
+
+// ----------------------------------------------------------------
+// ----------------------------------------------------------------
 // guidance_scale=1.0 の簡略オーバーロード。
 // ----------------------------------------------------------------
 void DiffusionPipeline::generate(int                   steps,
@@ -461,6 +503,9 @@ void DiffusionPipeline::generate(int                   steps,
     CUDA_CHECK(cudaFree(d_latent));
     CUDA_CHECK(cudaFree(d_noise_pred));
     CUDA_CHECK(cudaFree(d_image));
+
+    // G-8k S3: 画像境界での明示解放 (既定 OFF / DOLLAMA_ARENA_RELEASE=1 のみ)。
+    maybe_release_arenas();
 }
 
 // ----------------------------------------------------------------
@@ -712,6 +757,10 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
         CUDA_CHECK(cudaFree(d_latent2));
         CUDA_CHECK(cudaFree(d_noise2));
     }
+
+    // G-8k S3: 画像境界での明示解放 (既定 OFF / DOLLAMA_ARENA_RELEASE=1 のみ)。
+    // 出荷経路 (txt2img) も同一走行で A/B できるよう generate と同じ位置に置く。
+    maybe_release_arenas();
 }
 
 } // namespace dollama

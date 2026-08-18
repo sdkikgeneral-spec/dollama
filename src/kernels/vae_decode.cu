@@ -38,6 +38,7 @@
 
 #include "kernels/vae_decode.cuh"
 #include "kernels/conv2d.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/groupnorm.cuh"
 #include "kernels/activation.cuh"
 #include "kernels/attention.cuh"
@@ -198,6 +199,23 @@ static void launch_add_bias_sc(__half* d_x, const __half* d_bias, int S, int C)
 namespace
 {
 // ----------------------------------------------------------------
+// G-8k S3: VAE のスクラッチをどのアリーナから切るか。
+//   **UNet アリーナと共有する** (専用 DeviceArenaId::VAE は不採用)。理由:
+//     - VAE の同時生存ピークは ~5.5GiB (FP16 キャリー 2 本 1.0GiB + FP32 キャリー
+//       2 本 2.0GiB + up2 の Scratch32 群 ~2.5GiB)。専用アリーナに置くと、次画像の
+//       UNet step の間ずっとこの ~5.5GiB が遊んだまま常駐し VRAM peak を確実に悪化させる。
+//       共有なら capacity は「和」ではなく「max」で済む。
+//     - VAE decode の時点で UNet アリーナは静止状態 (全 step 完了後) なので、
+//       LIFO 契約は破れない。
+//     - conv2d.cu の im2col は元から無条件で UNet アリーナから切っており、VAE decode は
+//       全段で launch_conv2d を呼ぶ = 既に共有が成立して動いている。split は現行より
+//       一貫性を落とす。
+//   split へ戻したくなったらこの 1 行だけを DeviceArenaId::VAE に変えればよい
+//   (以降のアリーナ参照は全てこの定数経由)。
+// ----------------------------------------------------------------
+constexpr DeviceArenaId kVaeArena = DeviceArenaId::UNet;
+
+// ----------------------------------------------------------------
 // 重み管理: SafeTensors から FP16 テンソルを GPU へアップロードし、
 // デバイスポインタを名前で引けるようにする小ヘルパ。
 // vae_weights は全テンソル FP16 なので raw bytes をそのまま転送する。
@@ -260,6 +278,11 @@ private:
 
 // ----------------------------------------------------------------
 // 局所スクラッチプール: 段内で確保し、スコープ脱出 (デストラクタ) で全解放する。
+//
+// G-8k S3: 実体を bump アリーナ (kVaeArena) から切り出す。unet.cu の Scratch (S2) と
+// 同型の薄ラッパで、alloc(n) のシグネチャは不変 = 呼び出し側は 1 行も変わらない。
+// DOLLAMA_POOL=0 のときは DeviceArenaScope が素の cudaMalloc/cudaFree へ完全
+// フォールバックするため旧経路がそのまま復元される。
 // ----------------------------------------------------------------
 class Scratch
 {
@@ -267,46 +290,27 @@ public:
     // n 要素 (FP16) を確保したデバイスバッファを返す。
     __half* alloc(size_t n)
     {
-        __half* p = nullptr;
-        CUDA_CHECK(cudaMalloc(&p, n * sizeof(__half)));
-        ptrs_.push_back(p);
-        return p;
+        return scope_.alloc<__half>(n);
     }
 
-    ~Scratch()
-    {
-        for (__half* p : ptrs_)
-        {
-            cudaFree(p);
-        }
-    }
+    // デストラクタは書かない: メンバの DeviceArenaScope が rewind する
+    // (ctor=mark / dtor=rewind の RAII をそのまま借りる)。
 
 private:
-    std::vector<__half*> ptrs_;
+    DeviceArenaScope scope_{kVaeArena};
 };
 
-// FP32 版スクラッチプール (up2 以降の FP32 経路用)。
+// FP32 版スクラッチプール (up2 以降の FP32 経路用)。構造は Scratch と同一。
 class Scratch32
 {
 public:
     float* alloc(size_t n)
     {
-        float* p = nullptr;
-        CUDA_CHECK(cudaMalloc(&p, n * sizeof(float)));
-        ptrs_.push_back(p);
-        return p;
-    }
-
-    ~Scratch32()
-    {
-        for (float* p : ptrs_)
-        {
-            cudaFree(p);
-        }
+        return scope_.alloc<float>(n);
     }
 
 private:
-    std::vector<float*> ptrs_;
+    DeviceArenaScope scope_{kVaeArena};
 };
 } // namespace (匿名): TU ローカル型 DeviceWeights / Scratch / Scratch32 ここまで
 
@@ -699,12 +703,18 @@ static void launch_vae_decode_impl(DeviceWeights& w,
     const int   groups = 32;
     const float eps    = 1e-6f;
 
+    // G-8k S3: decode 1 回の寿命いっぱい生きるキャリー 4 本 (FP16 2 本 + FP32 2 本) を
+    // 束ねる外側スコープ。段内の Scratch / Scratch32 / conv2d の im2col はこの内側で
+    // 入れ子になり、必ず LIFO で mark/rewind される。
+    //   **急所**: 内側スコープが生存中に外側から alloc してはならない。f_cur/f_next の
+    //   確保は up1 の内側 Scratch が破棄された後に行われる (下記) ので合法。確保順序を
+    //   変えるとこの契約が壊れる。
+    DeviceArenaScope carry(kVaeArena);
+
     // 段間キャリーバッファ 2 本を ping-pong。最大解像度 256ch 1024x1024 = 268M 要素。
     const size_t CARRY = static_cast<size_t>(256) * 1024 * 1024;
-    __half* d_cur  = nullptr;  // 現在の活性
-    __half* d_next = nullptr;  // 次段の出力先
-    CUDA_CHECK(cudaMalloc(&d_cur,  CARRY * sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&d_next, CARRY * sizeof(__half)));
+    __half* d_cur  = carry.alloc<__half>(CARRY);  // 現在の活性
+    __half* d_next = carry.alloc<__half>(CARRY);  // 次段の出力先
 
     // ============ post_quant_conv (1x1, 4->4) + conv_in (3x3 pad1, 4->512), 128x128 ============
     {
@@ -792,10 +802,9 @@ static void launch_vae_decode_impl(DeviceWeights& w,
     // FP32 化し、以降 (up2 -> up3 -> conv_norm_out -> conv_out) を FP32 で計算する。
     // FP32 キャリーバッファ 2 本 (各 256ch x 1024x1024 = 268M 要素 = 1GB) を ping-pong。
     const size_t FCARRY = static_cast<size_t>(256) * 1024 * 1024;
-    float* f_cur  = nullptr;
-    float* f_next = nullptr;
-    CUDA_CHECK(cudaMalloc(&f_cur,  FCARRY * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(&f_next, FCARRY * sizeof(float)));
+    // 外側 carry スコープから切る (up1 の内側 Scratch は既に破棄済み = LIFO 合法)。
+    float* f_cur  = carry.alloc<float>(FCARRY);
+    float* f_next = carry.alloc<float>(FCARRY);
     // up1 出力 (FP16 d_cur, 512ch 512x512) を f_cur へ FP32 化。
     launch_h2f(d_cur, f_cur, static_cast<long>(512) * 512 * 512);
 
@@ -859,11 +868,9 @@ static void launch_vae_decode_impl(DeviceWeights& w,
         dbg_stat("final_image", d_image_out, (size_t)3*1024*1024);
     }
 
+    // G-8k S3: キャリー 4 本の cudaFree は削除 (外側 carry スコープの rewind が担う)。
+    // 同期は残す: 呼び出し側は decode 完了後に d_image_out を D2H する契約のため。
     CUDA_CHECK(cudaDeviceSynchronize());
-    CUDA_CHECK(cudaFree(f_cur));
-    CUDA_CHECK(cudaFree(f_next));
-    CUDA_CHECK(cudaFree(d_cur));
-    CUDA_CHECK(cudaFree(d_next));
 }
 
 // ----------------------------------------------------------------
