@@ -220,7 +220,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作 SiLU/GeLU FFN / GroupNorm / Conv2d direct | 544 GB/s / 73 GB/s / 1807 GFLOPS | test_activation/groupnorm/conv2d |
 | 自作 Attention (self/cross) | 1.65ms 1631 GFLOPS / 0.116ms 1748 GFLOPS | test_attention |
 | safetensors ローダー | 19.0 µs/op | test_safetensors |
-| 自作 VAE decoder 全段 | SSIM **0.999988** (旧掲載 0.999992 は陳腐化した記録値の訂正。VAE の数値は動いていない — G-8k S3 の前後で出力 FP16 画像が byte 一致・S3 前ベースラインでも同値 0.999988 を確認済) / decode 7.96s | test_vae_decode |
+| 自作 VAE decoder 全段 | SSIM **0.999988** (旧掲載 0.999992 は **2-6 最適化 S3-E で 0.999992 → 0.999988 に変化**していたもの (VAE up2/up3 を FP32 direct conv → im2col+cuBLAS TF32 GEMM に置換 = 丸め経路が変わった) で、本表が追随していなかった分の訂正。出典 `docs/measurements-log.md` の「タスク 2-6 最適化」行 (現 :132)・2026-06-22。0.999992 は 2-4 実装当時の正しい実測値であり誤記ではない。**G-8k S3/S3c は VAE 数値を動かしていない** — G-8k S3 前後で出力 FP16 画像が byte 一致 (出典 commit `88b3ae7` 本文)) / decode 7.96s | test_vae_decode |
 | 自作 SDXL UNet 全段 | noise_pred SSIM **0.999998** / 1step ~9.2s / 2.57B params | test_unet |
 | UNet バッチ (G-2k S2) | `launch_unet_batched(B=2)` per-sample パリティ **実走緑** (SAC OFF): sample0/1 とも MAE**6.4e-05**/bad0・wmma M=154 タイル境界も異常なし。ビット一致には非到達=FP16 tol 内 (linear の M=B*tokens 単発 GEMM が cuBLAS タイル選択を変え蓄積順が変わるため・1 ULP)。conv2d S1 は per-n ループで **BIT-EXACT** | test_unet/conv2d |
 | CFG batch2 パリティ+速度 (G-2k S3c **完了**) | **parity gate g=1.0 SSIM 0.9994≥0.999 PASS** (SAC OFF 実走): ノイズ床 (off@g=1.0 x2) 完全 bit-exact → 発散源 100% batch2 tiling 差。guidance sweep g=1/3/7.5 = 0.9995/0.9988/0.9966 (FP16 tiling が CFG で単調増幅・平均差≤0.3/255)。**正典 CFG e2e (20step/warm/VAE 込)**: default **20.93s** / batch2 単独 **17.59s(1.19x)** / **--fast(attn+batch2) 15.88s(1.32x)**。batch2 が ~2× 未達なのは conv2d per-n 直列が batch されないため | test_diffusion_batch2 |
