@@ -517,6 +517,10 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   - ★**この 12 枚実測は reserve 定数 5914/137 の唯一の根拠**であり、崩れれば reserve 不足 (= 警告 +
     チャンク成長へフォールバック) に直結する。**根拠の所在は commit `8e2e48d` / `acca803` の本文と
     `src/infer/diffusion.cu:199-208` のコメントだけで、S3b 期の生ログは保存していない**
+    (★**一次証拠の不整合に注意**: `8e2e48d` 本文は「UNet 6656MiB = S4 実測 live peak **6051MiB** +10%」
+    と書くが、`88b3ae7` / `acca803` 本文と現物 `src/infer/diffusion.cu:202` は **5914**MiB。
+    6051 は 5914 + persist live peak 137 の**合算とみられる** (推測の域を出ない)。
+    **unet 単体の live peak として引くべきは 5914** で、6051 ではない。)
     (保存してあるのは S4b の 7 本のみ)。解像度 / batch / step を変える改修時は、この定数を再測すること。
 - **S4b (2026-08-19 研究機実走・6 ハードゲート全 PASS)**: 出力不変 (18 枚すべて同一 `rgb_hash`) /
   step ループ内 malloc・free = 0 / 1 枚目から `chunk_alloc=0` /
@@ -601,7 +605,13 @@ G-0 以降未着手のバケット。内訳の直接 profile は無いが、コ�
 ### micro (単独 Pkg にしない小物)
 
 - `src/infer/unet.cu:761-763` — time_ids を **毎 forward D2H 同期読み** (cudaMemcpy DeviceToHost)。step 間で不変なのでハンドル or 呼び出し側キャッシュで除去 (CFG 20step で 40 回の同期点)。
-- `src/infer/unet.cu:934-937` 等 — 上記 G-8k の swap 化に含める。
+- ~~`src/infer/unet.cu:934-937` 等 — 上記 G-8k の swap 化に含める。~~ **解決済 (G-8k S2 `4dee0b7`)**。
+  `d_cur` の「cudaFree → 別サイズ cudaMalloc」連鎖 (8 箇所) は `reshape_cur()` に集約され、
+  プール経路では**全段の最大サイズ `[B,640,128,128]` を 1 本**確保してポインタを固定するため
+  **swap すら不要**になった (出典: `4dee0b7` 本文)。現物は `src/infer/unet.cu:1045-1068`
+  (起草時に引いていた `:934-937` は現物とズレており、その位置は現在プロファイル用コード)。
+  旧経路 (free→malloc) は `DOLLAMA_POOL=0` 用に**意図的に温存**されているので、grep で
+  `cudaFree(d_cur)` を見つけても撲滅対象ではない。
 - `src/infer/unet.cu:799-807` — push_skip が全 skip を D2D コピー (~40MB/forward)。所有権移動で削減可。~ms 級。
 - `src/kernels/vae_decode.cu:382-438` — `k_conv2d_f32`/`launch_conv2d_f32` は resnet_block_f32 が GEMM 版へ移行済みで**未使用の死コード** (性能でなく保守の話)。
 
