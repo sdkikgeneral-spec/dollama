@@ -483,8 +483,38 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 > **「速くなった」とは主張しない** — 秒は characterization としてのみ記す (秒数の本命は
 > **G-10k = conv 真 batch2**)。実測値・ゲート合否の完全版は `docs/measurements-log.md` の
 > 「G-8k S4」「G-8k S4b」行。
+>
+> ★**ただし「秒に効いていない」という意味ではない** (要約を実データと逆向きに読まないこと):
+> S4b の同一プロセス A/B は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%**
+> (独立の傍証: `4dee0b7` 本文の 1step warm **479.3ms(POOL=0) / 329.0ms(プール)**)。
+> これは**旧 malloc 経路との比較**であって、正典ハーネス (`test_diffusion_batch2` の DB2_BENCH) での
+> 再測を経ていないため**出荷性能値としては使わない**。禁止しているのは出荷性能の主張であり、
+> 実測の記述ではない — **この効きを「ゼロ」と読んで reserve 縮小やアリーナ廃止を提案しないこと**
+> (既定構成の +6.5GB 定常 residency は、見返りゼロのコストではない)。
 
-- **S2 / S2b**: `src/infer/unet.cu` の `Scratch` と forward 寿命バッファを `device_arena` の bump 確保へ移設。
+- **S1a (`3541457`)**: `src/kernels/device_arena.{cuh,cu}` を新設 = **チャンク連結型 bump アリーナ** (mark/rewind の 2 API・
+  `DeviceArenaScope` で RAII)。急所は**既存チャンクを解放しない**こと — `unet.cu` の `Scratch` は
+  transformer_block 1 回で 9-13 本が同時生存するため、`groupnorm.cu` の grow-only 単一バッファ方式は一般化できない。
+  named arena・所有スレッド検査・キルスイッチ `DOLLAMA_POOL=0`・統計カウンタもここで入った。
+  既存ファイルは無改変 (`meson.build` への追加のみ)。
+- **S1b (`7941562`)**: `conv2d.cu` の **FP16 im2col 経路** (`d_col` / `d_out_band`) をアリーナへ。
+  ★この時点で **im2col は `DeviceArenaId::UNet` を共有**しており (S3 節の「元から共有」はこれが出典)、
+  FP32 経路は S3・`d_weight_f32` は G-9k の担当として意図的に**スコープ外**に残した。
+- **S2 (`4dee0b7`)**: `src/infer/unet.cu` の `Scratch` と forward 寿命バッファを bump 確保へ移設。
+  forward 寿命の常駐 (temb / skip スタック / 段間キャリー `d_cur`) は**専用アリーナ `UNetPersist` に隔離** —
+  `Scratch` と同居させると「skip を積んだ後に段の Scratch が rewind して skip の領域が再利用される」形で
+  確実に壊れる (**アリーナ分離は整理ではなく正しさの条件**)。`d_cur` の free→別サイズ malloc 連鎖 8 箇所は
+  `reshape_cur()` に集約。あわせて所有スレッド契約を「静止状態なら移譲可」へ格上げ (HTTP の ThreadPool は
+  リクエストごとに別ワーカーで回るため、S1a の即 throw のままだと 2 本目で落ちる)。
+- **S2b (`0a7ca97`)**: アリーナ VRAM 収支の是正。**チャンク成長則から倍々成長を撤去**し
+  「新チャンク = max(刻み幅, 要求サイズ)」へ。刻み幅は**単発の最大要求以上**でなければ逆に太ることが実測で確定
+  (64MiB=1876 / 128MiB=1722 / **256MiB=1280MiB** を採用 = im2col タイル上限と同値)。
+  あわせて **`unet_weights_destroy` で `device_arena_release` を呼ぶ**ようにした = **長寿命 HTTP で
+  ハンドル破棄後も GB 級が残る**問題への対処であって、step ループ内の trim ではない
+  (★**env `DOLLAMA_ARENA_RELEASE` = 画像境界での release はこれとは別物で、初出は S3 `88b3ae7`**。
+  出典: `git log -S DOLLAMA_ARENA_RELEASE -- src/` が `88b3ae7` 1 本のみを返す。混同しないこと)。
+  収支計測用に `peak_request_bytes` を追加 (従来の `bytes_in_use` はカーソル基準で捨て分も数えるため
+  VRAM ゲートに使えない)。
 - **S3 (`88b3ae7`)**: VAE decode の `Scratch`/`Scratch32`/段間キャリー 4 本 (FP16 512MiB×2 + FP32 1024MiB×2) と
   conv2d の FP32 経路 (`d_col`/`d_out_band`/`d_weight_f32`) を同じく bump 確保へ。
   → **VAE decode 1 回あたり 96 対の実 cudaMalloc/cudaFree が消滅** (アリーナ確保 102 本のうち S3 前から
