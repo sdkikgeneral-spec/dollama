@@ -19,6 +19,7 @@ S5d (2026-08-20) で、消える temp (セッション ID 付き scratchpad) か
 | `s4b_roundB_1_pool0.log` | B-1 | 基準 |
 | `s4b_roundC_steps2_default.log` | C | 既定・`PROF_STEPS=2` の補走 |
 | `smi_timeline.txt` | — | 各走行の前後で採った `nvidia-smi` の温度 / SM クロック / 常駐 / 電力 |
+| `smi_before_A2.txt` | — | 棄却走行 A-2 の直前に単発で採った同種サンプル (`smi_timeline.txt` の `pre-A2` と重複) |
 | `DISCARDED_A2_overlap_risk.log` | A-2 (棄却) | **採用しない**。下記参照 |
 
 ## 読むときの注意 (誤読しやすい点)
@@ -36,3 +37,7 @@ S5d (2026-08-20) で、消える temp (セッション ID 付き scratchpad) か
   判定は**終了時の `cap` / `reserved` / `chunks`** で行うこと。
 - `PEAK_USED` は `cudaMemGetInfo` の total−free = **device-wide** (他プロセス分を含む)。
   「プロセス GPU peak」と呼ばないこと。
+- ★**呼称の注意**: `docs/measurements-log.md` の S4b 行は採用した既定走行を **「A-2」** と呼ぶが、
+  本 README では**棄却した初回**を A-2・**採り直した採用分**を A-2b と呼び分けている (指している走行は同じ)。
+  ファイル `s4b_roundA_2_default.log` は**採用分 (A-2b)** である (棄却分は `DISCARDED_A2_overlap_risk.log`)。
+  measurements-log 側の「A-2」を棄却走行と読み違えないこと。

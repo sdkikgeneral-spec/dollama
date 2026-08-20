@@ -485,7 +485,9 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 > 「G-8k S4」「G-8k S4b」行。
 >
 > ★**ただし「秒に効いていない」という意味ではない** (要約を実データと逆向きに読まないこと):
-> S4b の同一プロセス A/B は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%**
+> S4b の **A/B (同一バイナリ・env だけを変えた構成間比較)** は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%**
+> (★**「同一プロセス内の A/B」ではない** — S4b は**独立プロセス 7 本**・走行間 68-85s。同一プロセス内で
+> 構成を切り替えたのは **S4** の方であり、条件を混同しないこと)
 > (独立の傍証: `4dee0b7` 本文の 1step warm **479.3ms(POOL=0) / 329.0ms(プール)**)。
 > これは**旧 malloc 経路との比較**であって、正典ハーネス (`test_diffusion_batch2` の DB2_BENCH) での
 > 再測を経ていないため**出荷性能値としては使わない**。禁止しているのは出荷性能の主張であり、
@@ -532,7 +534,10 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   `max(刻み, 要求)` で 512MiB/1024MiB のチャンクが立ち、直前チャンクの残りを丸ごと捨てる。捨て分 **4637MiB**)。
 - **S3b (`8e2e48d`)**: `device_arena_reserve(id, bytes)` を新設し、重みロード後・最初の generate 前に
   **live peak を包む 1 本**を確保 → 跨ぎが原理的に消滅 (1 枚目から `chunk_alloc=0`・実 cudaMalloc は
-  **アリーナ 1 本あたり reserve の 1 回のみ** = `unet` + `unet_persist` で**プロセス全体では計 2 回**)。
+  **アリーナ 1 本あたり reserve の 1 回のみ** = `unet` + `unet_persist` で **アリーナ由来は計 2 回**)。
+  ★**「プロセス全体で 2 回」ではない** (S5e で是正・S5d は measurements-log 側だけ直して本行を取りこぼしていた) —
+  重みロードで別途 GB 級の cudaMalloc がある (出典: `docs/logs/g8k-s4b/s4b_roundA_1_pool0.log:4`
+  `used_after_weight_load=7067MB` = ctx 1317MB からの差分 5750MB)。
   既存の「跨いだら新チャンク」経路はフォールバックとして残してあり、**reserve が足りなくても壊れず遅くなるだけ**
   (`DOLLAMA_PROFILE=1` のとき `[ALLOC] reserve shortage: ...` を 1 回だけ警告し、黙って太らせない)。
   env **`DOLLAMA_ARENA_RESERVE_MB`** で上書き・**`0` で reserve 無効 (= S3 挙動)**。
