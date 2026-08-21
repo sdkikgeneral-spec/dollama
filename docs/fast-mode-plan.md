@@ -556,14 +556,23 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   (単純な加算では 6042 / 169 にしかならない。**チャンクの刻みに揃えるための 64MiB 切り上げ**が入る。)
   live peak は S3b の 12 枚実測 (4 構成 × 3 枚) で **変動ゼロ** (確保列は形状で決まり乱数や実行順に依存しない) ゆえ、
   比例マージンは「何の分散に備えているのか」を答えられない根拠のない数字だった。**ゲート合わせではなく設計の是正**である。
-  - ★**この 12 枚実測は reserve 定数 5914/137 の唯一の根拠**であり、崩れれば reserve 不足 (= 警告 +
-    チャンク成長へフォールバック) に直結する。**根拠の所在は commit `8e2e48d` / `acca803` の本文と
-    `src/infer/diffusion.cu:199-208` のコメントだけで、S3b 期の生ログは保存していない**
+  - ★**この 12 枚実測は reserve 定数 5914/137 の設計時の出典**であり、崩れれば reserve 不足 (= 警告 +
+    チャンク成長へフォールバック) に直結する。**S3b 期の生ログは保存しておらず、S3b だけが持つ
+    `DOLLAMA_ARENA_RELEASE=1` 構成込みの不変性 (出典: `acca803` 本文「4 構成 (POOL=0 / 既定 /
+    RESERVE_MB=0 / ARENA_RELEASE=1) x 3 枚」) は commit `8e2e48d` / `acca803` の本文と
+    `src/infer/diffusion.cu:199-208` のコメントでしか裏が取れない**
     (★**一次証拠の不整合に注意**: `8e2e48d` 本文は「UNet 6656MiB = S4 実測 live peak **6051MiB** +10%」
     と書くが、`88b3ae7` / `acca803` 本文と現物 `src/infer/diffusion.cu:202` は **5914**MiB。
     6051 は 5914 + persist live peak 137 の**合算とみられる** (推測の域を出ない)。
     **unet 単体の live peak として引くべきは 5914** で、6051 ではない。)
-    (保存してあるのは S4b の 7 本のみ)。解像度 / batch / step を変える改修時は、この定数を再測すること。
+    ★**ただし定数値そのものは repo 内の S4b 生ログで検証できる** (S5g で是正 — 従来ここは
+    「唯一の根拠」「保存してあるのは S4b の 7 本のみ」としていたが、前者は過小申告・後者は採用 7 走行
+    だけの数え方で、`.log` の現物は棄却 `DISCARDED_A2_overlap_risk.log` 込み **8 本**・ほか smi 2 本)。
+    `docs/logs/g8k-s4b/` の `.log` 8 本のうち **`arena=unet live_peak=5914MiB` は 8 本すべて**・
+    **`arena=unet_persist live_peak=137MiB` は 6 本** (POOL=0 の 2 本は persist アリーナ不使用で `0MiB`)
+    に印字 = **値と POOL / RESERVE_MB / steps 不変性は生ログで再検証可能**。生ログ無しのまま残るのは
+    **release 経路での不変性のみ** (S4b は 8 本すべてヘッダが `DOLLAMA_ARENA_RELEASE=(unset)`)。
+    解像度 / batch / step を変える改修時は、この定数を再測すること。
 - **S4b (2026-08-19 研究機実走・6 ハードゲート全 PASS)**: 出力不変 (18 枚すべて同一 `rgb_hash`) /
   step ループ内 malloc・free = 0 / 1 枚目から `chunk_alloc=0` /
   VRAM **delta +350MB (基準 max 13299 → 既定 max 13649MB) / +380MB (基準 min 13269 起点)** = **どちらでも ≤512MB で PASS** /
