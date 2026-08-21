@@ -74,7 +74,7 @@ OpenAI Images API 互換。
 
 ## Phase 4 — 自作タグ生成 LM (旧「BitNet b1.58 LLM」) — 進行中
 
-現 LLM stub (またはQwen2 Python) を自作モデルに置換。本線は「**dense で動くタグ生成 LM**」、
+現状の prompt 直入力 (LM 段なし・Qwen2 は Python probe 専用) を自作モデルで結線する。本線は「**dense で動くタグ生成 LM**」、
 その上に 拡張(A)・評価(B)・圧縮(#5 ternary) を積む。番号は実装 ID で不変。
 
 > **方向性 (2026-06 レビュー)**: 核は decoder-only 小型タグ生成 LM (`bitnet.hpp` 33M)。**ternary
