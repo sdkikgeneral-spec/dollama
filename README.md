@@ -49,8 +49,8 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | Phase 3 | OpenAI 互換 HTTP サーバ (cpp-httplib / nlohmann-json) | ✅ 完了 (PipelineGenerator を DI、フォールバック付き) |
 | Phase 4 | 自作タグ生成 LM (bitnet.hpp 33M) + 同一性条件付け/品質スコアラ。ternary は圧縮実験 | ⏳ 進行中 — dense LM が C++ で訓練・推論 (CPU/GPU・golden corr 1.0・GPU 87.5x・INT8 / AVX2 経路)、同一性条件付け (A) はクローズ (retention 0.975)、入力多様化 (B) は本線昇格、品質スコアラ (Model B) は解剖 8 軸で蒸留済 |
 
-> **次の本丸**: 研究の焦点は **自作タグ生成 LM (Phase 4)** — 暫定 Qwen2 段を 33M フルスクラッチモデル
-> (自然文 → danbooru タグ・同一性条件付き) に置き換え、Model B のアニメ品質フィードバックループを閉じる。
+> **次の本丸**: 研究の焦点は **自作タグ生成 LM (Phase 4)** — **未結線の LM 段**に 33M フルスクラッチモデル
+> (自然文 → danbooru タグ・同一性条件付き) を結線し、Model B のアニメ品質フィードバックループを閉じる。
 > 出力品質への最大レバーは、より新しいアニメ特化 SDXL checkpoint への差し替え (カーネル無改修)。
 > そのための土台として **拡散 backend をプラグイン化済み (2-6c)** — 芯を共有したまま最新モデルへ
 > 差し替えられる構造ができており、次に NoobAI-XL / Animagine XL 4.0 / Illustrious XL の
@@ -116,7 +116,7 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 | **NPU** | CLIP-L text encoder (77token 固定) | **7.85ms** ← CPU の 2.5倍速 |
 | **NPU** | WD14 SwinV2 tagger (448×448 固定) | 268ms (GPU 生成中に並列実行) |
 | **iGPU** | VAE encode — img2img 用 (入力画像→latent) | **79ms** ← CPU 117ms より速い |
-| **CPU** | LLM プロンプト生成 (暫定 Qwen2-1.5B → 将来 自作タグ生成 LM bitnet.hpp) | 64-71 tok/s |
+| **CPU** | LLM プロンプト段 = **未結線** (Qwen2 は Python probe 専用 64-71 tok/s・自作 LM bitnet.hpp の結線が残) | — |
 | **RTX5080** | SDXL UNet (20steps) + VAE decode | **3.80s** / 1024×1024 |
 
 ### NPU の得意 / 不得意
@@ -134,8 +134,8 @@ GPU が拡散処理に数秒かける間に、遊休している NPU/CPU で次�
 ### txt2img
 
 ```
-[CPU] Qwen2-1.5B (暫定) / 将来: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)
-  自然文 → danbooru タグ列 (~2s / 将来 <10ms)
+[GPU/CPU] 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可) — ★未結線
+  自然文 → danbooru タグ列 (GPU seq8 2.43ms 実測) / 現状はこの段を通さず prompt 直入力
     │
     ▼
 [NPU] CLIP-L text encoder (7.85ms)
@@ -218,7 +218,7 @@ RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。
 | system RAM → RTX5080 image (12MB) | 0.254ms / 49.6 GB/s | probe4 |
 | iGPU VAE decode stub | 995ms (CPU 比 8倍遅い ❌) | probe4 |
 | iGPU VAE encode (1024→128) | **79ms** (CPU 117ms より速い ✅) | probe5 |
-| Qwen2-1.5B INT4 CPU tok/s | 64-71 tok/s | probe7 |
+| Qwen2-1.5B INT4 CPU tok/s (probe 参考値・本実装非依存) | 64-71 tok/s | probe7 |
 | **WD14 SwinV2 (448×448)** | CPU 101ms / iGPU 104ms / **NPU 268ms** | probe8 |
 | **CLIP-L text encoder (77token)** | CPU 20ms / iGPU 14ms / **NPU 7.85ms** | probe9 |
 | **SDXL 20steps 1024×1024** | **3.80s** / 5.3 it/s / VRAM ピーク 10.49GB | probe10 |
@@ -227,11 +227,11 @@ RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。
 
 ## LLM の将来像 — 自作タグ生成 LM
 
-汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) を目的特化の超軽量モデルに置き換える。
+probe で参照した汎用 LLM (Qwen2-1.5B, 873MB, CPU ~2s) の代わりに、目的特化の超軽量モデルを自作して結線する。
 核は `src/models/bitnet.hpp` (decoder-only LLaMA 系 **33M**, モデル定義+ホスト参照は実装済)。
 語彙はタグ単位完全一致トークナイザ `src/io/tokenizer.hpp` (vocab.json 駆動・実装済, Phase 4-3) が担う。
 
-| | Qwen2-1.5B (現状) | 自作タグ生成 LM (目標) |
+| | Qwen2-1.5B (probe 参考) | 自作タグ生成 LM (本線) |
 |---|---|---|
 | パラメータ | 1.5B | 33M (30-100M) |
 | サイズ | 873MB | ~66MB (FP16) / ~20MB (ternary 実験時) |
@@ -239,7 +239,7 @@ RTX5080 の VRAM ピークは 1024×1024 / 20steps で **10.49GB** (16GB 中)。
 | レイテンシ | ~2s | 目標 <10ms |
 | タスク | 汎用 | user text → danbooru タグ特化 |
 
-訓練データ: Danbooru タグ共起 + Qwen2 / DanTagGen 蒸留 (先行実装 DanTagGen 400M / TIPO を教師・品質基準に)
+訓練データ: Danbooru タグ共起 + **Claude 著述の入力多様化 (施策 B・~2,000 件で飽和)**。蒸留は Qwen2 (D2/D4) / soft-label KL (D5) / TIPO-200M (D6) の 4 路線とも検証済みで **全て不採用** (過学習抑制のみ・F1 非寄与)。DanTagGen 400M / TIPO は品質基準として引き続き参照
 
 **ternary (b1.58) は圧縮の研究軸** (目的ではない): まず FP16/INT8 dense で品質を出し、
 重み W ∈ {-1,0,+1} (≈1.58bit, `y = x_pos − x_neg` で乗算不要) は後段の圧縮実験として
@@ -358,7 +358,7 @@ meson test -C build            # 全単体テスト + カーネルのゴール�
 
 - **CLIP-L text encoder** / **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU) に `scripts/` の probe スクリプト
   (`optimum-intel` / OpenVINO 経由) で変換。
-- 暫定 LLM の **Qwen2-1.5B (INT4)**。
+- **Qwen2-1.5B (INT4)** — Python probe (`scripts/archives/`) 専用。**C++ 実装は依存しない**ので取得は任意。
 - 拡散段の **SDXL** (自作 CUDA カーネルで画像生成可能。任意テキストからの本結線は 2-6b)。
 
 本リポジトリの **コードは Apache-2.0** だが、各モデルの **重みは配布元それぞれのライセンスに従う**。
@@ -371,7 +371,7 @@ meson test -C build            # 全単体テスト + カーネルのゴール�
 | SDXL | 拡散 (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (checkpoint による) |
 | CLIP-L / CLIP-bigG | テキストエンコーダ (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
 | WD14 SwinV2 tagger v3 | タグ抽出 (CPU) | Apache-2.0 |
-| Qwen2-1.5B | 暫定 LLM プロンプト段 | Apache-2.0 |
+| Qwen2-1.5B | Python probe 専用 (蒸留 D2 実験・本番不採用) | Apache-2.0 |
 | ISNet-anime (anime-segmentation) | マッティング / 透過 PNG (iGPU) | Apache-2.0 |
 | TIPO-200M (KBlueLeaf) | 蒸留教師の実験 (4-D6・本番不採用) | Apache-2.0 |
 | **Eugeoter/waifu-scorer-v4-beta** | **Model B 品質スコアラ — 美的教師 (既定・ラベル生成のみ)** | **Apache-2.0** |
@@ -412,7 +412,7 @@ dollama/
   src/                         # C++ 本実装 (構築中)
   models/                      # 変換済みモデル (Git 管理外)
     clip-l-text-encoder/       # OV IR (NPU 用)
-    qwen2-1.5b-int4-npu/       # 暫定 LLM
+    qwen2-1.5b-int4-npu/       # Python probe 専用 (C++ 非依存)
     wd14-swinv2-tagger-v3/     # OV IR (NPU 用)
   outputs/                     # 生成画像 (Git 管理外)
   logs/                        # probe 実行ログ

@@ -45,7 +45,7 @@ public sealed class TelemetryBroadcaster : BackgroundService
         // (デバイス, 役割, 位相, idle中央値, 生成中の上乗せ)
         (string dev, string role, double phase, double idle, double busy)[] specs =
         {
-            ("CPU",     "Qwen2 LLM", 0.0, 12, 35),
+            ("CPU",     "Tag LM",    0.0, 12, 35),
             ("NPU",     "CLIP enc",  1.6, 4,  55),
             ("iGPU",    "VAE enc",   3.1, 6,  40),
             ("RTX5080", "SDXL UNet", 4.7, 8,  88),

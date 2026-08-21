@@ -15,7 +15,7 @@ public sealed class DeviceLoad
     // "CPU" / "NPU" / "iGPU" / "RTX5080"
     public string Device { get; set; } = "";
 
-    // パイプライン上の役割 ("Qwen2 LLM" / "CLIP enc" / "VAE enc" / "SDXL UNet")
+    // パイプライン上の役割 ("Tag LM" / "CLIP enc" / "VAE enc" / "SDXL UNet")
     public string Role { get; set; } = "";
 
     // 使用率 0-100

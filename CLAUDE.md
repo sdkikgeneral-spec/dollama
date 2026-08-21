@@ -15,7 +15,7 @@
 
 | HW | 役割 | 状態 |
 |---|---|---|
-| CPU | Qwen2-1.5B LLM (プロンプト生成) | ✅ 64-71 tok/s 確認済み |
+| CPU | WD14 タグ抽出 105.3ms / **LM 段は未結線** (Qwen2 は Python probe 専用) | ⏳ 自作 LM の結線が残 |
 | NPU | **CLIP text encoder 7.85ms** / WD14 タグ抽出 268ms | ✅ CLIP が CPU の 2.5倍速 |
 | iGPU (Intel Xe) | VAE encode (img2img、79ms) + マッティング ISNet (99.96ms) | ✅ どちらも CPU より速い (matting_device=iGPU 確定 M-5) |
 | **RTX5080** | SDXL UNet + VAE decode | ✅ **3.80s/image** (1024×1024, 20steps, 5.3 it/s) |
@@ -24,8 +24,8 @@
 
 txt2img:
 ```
-CPU: Qwen2-1.5B (暫定) / 将来: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可)
-  自然文 → danbooru タグ列 (~2s / 将来 <10ms)
+GPU/CPU: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可) — ★未結線
+  自然文 → danbooru タグ列 (GPU seq8 2.43ms 実測) / 現状はこの段を通さず prompt 直入力
     │
     ▼
 NPU: CLIP-L text encoder (7.85ms)
@@ -43,13 +43,13 @@ img2img (追加パス):
 ```
 入力画像
   ├─→ iGPU: VAE encode (79ms)  → latent ─┐
-  └─→ CPU:  LLM (~2s)          ──────────┤ (並列)
+  └─→ CPU:  LM 段 (未結線)      ──────────┤ (並列)
                                           ▼
                                NPU: CLIP (7.85ms)
                                           ▼
                                RTX5080: SDXL UNet + VAE decode (3.80s)
 ```
-iGPU の VAE encode は CPU LLM と並列に走るため待ち時間ゼロ。
+iGPU の VAE encode は CPU 側の LM 段と並列に走る設計のため待ち時間ゼロ (LM 結線後)。
 
 **デバイス選定根拠 (probe 実測)**
 - CLIP: NPU 7.85ms < iGPU 14ms < CPU 20ms → **NPU 採用**
@@ -180,12 +180,12 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 
 ### LLM の将来像
 
-- 現在: Qwen2-1.5B (Python probe 用) — CPU 64-71 tok/s
+- Qwen2-1.5B は **Python probe 専用** (`scripts/archives/`・CPU 64-71 tok/s) — **C++ 実装には非搭載** (`docs/pipeline-spec.md` ‘LibTorch 不使用方針’)。現状の txt2img は `req.prompt` を素で dual encoder に渡す (`src/server/txt2img_generator.hpp`) = **LM 段は未結線**
 - 自作モデル: **小型タグ生成 LM** (`src/models/bitnet.hpp`, decoder-only LLaMA 系 33M, 実装済み・test 緑)
   - 30-100M params、user text → danbooru タグ生成特化
   - **置き場は GPU が第一** (速度 + **既存の自作 CUDA カーネル gemm/attention/layernorm/geglu をそのまま流用**)。LM は拡散の上流で逐次実行 → GPU 競合ほぼ無し・33M は VRAM も誤差。**CPU は代替** (複数フレームのパイプライン並列時に拡散の裏で先行生成する用)。**NPU は自己回帰不可で除外** (probe6 で Phi-3 がオンチップメモリ超過・investigation-log。NPU 化は非自己回帰版が要る・未確定)
   - **ternary (b1.58) は目的ではなく圧縮の研究軸**: まず FP16/INT8 dense で品質を出し、ternary は乗算削減の実験として後段で被せる (`ternary_gemm.cu`)。33M 規模では ternary の旨味は限定的
-  - **先行実装あり**: DanTagGen (400M LLaMA) / TIPO が「自然文+タグ → danbooru タグ」を既に実現 → 蒸留教師・品質基準として活用 (Qwen2 蒸留と同じ役割)
+  - **先行実装あり**: DanTagGen (400M LLaMA) / TIPO が「自然文+タグ → danbooru タグ」を既に実現 → 蒸留教師・品質基準として活用 (Qwen2 蒸留 D2 と同じ役割・ただし D2 自体は不採用)
   - **新規性の方向 (2D 特化・独自)**: ① キャラ**同一性条件付き**タグ生成 (character-bible を条件入力・DanTagGen に無い) ② アニメ**品質スコアラ** (NPU・固定形状, §11)。詳細・経緯は roadmap Phase 4
 
 ## 計測ベースライン
@@ -202,7 +202,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | iGPU VAE decode stub | 995ms (CPU 126ms → RTX5080 採用) | probe4 |
 | NPU→iGPU ゼロコピー差分 (231KB) | 0.158ms (誤差) | probe4 |
 | iGPU VAE encode (img2img) | **79ms** (CPU 117ms → iGPU 採用) | probe5 |
-| Qwen2-1.5B INT4 CPU | 64-71 tok/s / ロード 1.1s | probe7 |
+| Qwen2-1.5B INT4 CPU (probe 参考値・**本実装非依存**) | 64-71 tok/s / ロード 1.1s | probe7 |
 | WD14 SwinV2: CPU/iGPU/NPU | 101/104/268ms → **CPU 採用** | probe8 |
 | CLIP-L: CPU/iGPU/NPU | 20/14/**7.85**ms → **NPU 採用** | probe9 |
 | SDXL 20step 1024² | **3.80s** / 5.3 it/s / VRAM 10.49GB | probe10 |
