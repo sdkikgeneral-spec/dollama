@@ -19,7 +19,7 @@ S5d (2026-08-20) で、消える temp (セッション ID 付き scratchpad) か
 | `s4b_roundB_1_pool0.log` | B-1 | 基準 |
 | `s4b_roundC_steps2_default.log` | C | 既定・`PROF_STEPS=2` の補走 |
 | `smi_timeline.txt` | — | 各走行の前後で採った `nvidia-smi` の温度 / SM クロック / 常駐 / 電力 |
-| `smi_before_A2.txt` | — | 棄却走行 A-2 の直前に単発で採った同種サンプル (`smi_timeline.txt` の `pre-A2` と重複) |
+| `smi_before_A2.txt` | — | 棄却走行 A-2 の直前に単発で採った同種サンプル。★`smi_timeline.txt` 先頭行の `pre-A2` とは**別サンプル** (`41℃/232MHz/1229MiB/17.61W` vs `pre-A2` の `45℃/180MHz/1229MiB/21.21W`・一致は常駐 1229MiB のみ) = **A-2 直前の状態が 2 通り記録されている**。S5e はこれを「`pre-A2` と重複」と書いていたが誤り (S5f で是正) |
 | `DISCARDED_A2_overlap_risk.log` | A-2 (棄却) | **採用しない**。下記参照 |
 
 ## 読むときの注意 (誤読しやすい点)
