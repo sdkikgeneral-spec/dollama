@@ -539,6 +539,9 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 - **S3 の未達 (S4 実測)**: **VRAM 不合格**。PEAK 16302MB = **物理全量に張り付き** → WDDM のホストページングで
   2 枚目以降が 11s → 25s に劣化。根因は成長則ではなく **GB 級単発要求のチャンク跨ぎ** (刻み 256MiB に対し
   `max(刻み, 要求)` で 512MiB/1024MiB のチャンクが立ち、直前チャンクの残りを丸ごと捨てる。捨て分 **4637MiB**)。
+  (★S5h 注記: **この S4 実測の生ログは repo に無い** — `docs/logs/` に退避済なのは S4b 分 (`g8k-s4b/`) のみで、
+  PEAK 16302MB・11s→25s・捨て分 4637MiB は生ログでの再検証ができない。repo に無いことは物理確認済・
+  研究機 temp 原本の有無は本機から検証不能。生ログ不在の正典リストは `docs/measurements-log.md` 残債⑤)
 - **S3b (`8e2e48d`)**: `device_arena_reserve(id, bytes)` を新設し、重みロード後・最初の generate 前に
   **live peak を包む 1 本**を確保 → 跨ぎが原理的に消滅 (1 枚目から `chunk_alloc=0`・実 cudaMalloc は
   **アリーナ 1 本あたり reserve の 1 回のみ** = `unet` + `unet_persist` で **アリーナ由来は計 2 回**)。
