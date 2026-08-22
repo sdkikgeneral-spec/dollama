@@ -56,8 +56,8 @@ other's wait time.
 | Phase 3 | OpenAI-compatible HTTP server (cpp-httplib / nlohmann-json) | ✅ Done (PipelineGenerator wired via DI, with fallback) |
 | Phase 4 | Custom tag-generation LM (bitnet.hpp 33M) + identity conditioning / quality scorer; ternary as a compression experiment | ⏳ In progress — dense LM trains & infers in C++ (CPU/GPU, golden corr 1.0; GPU 87.5×, INT8 / AVX2 paths), identity conditioning (A) closed (retention 0.975), input-diversification (B) promoted to mainline, quality scorer (Model B) distilled over 8 anatomy axes |
 
-> **Next up:** the research focus is now the **custom tag-generation LM (Phase 4)** — replacing the interim
-> Qwen2 prompt stage with a 33M from-scratch model (text → danbooru tags, identity-conditioned) and closing
+> **Next up:** the research focus is now the **custom tag-generation LM (Phase 4)** — wiring a 33M
+> from-scratch model (text → danbooru tags, identity-conditioned) into the **still-unwired LM stage**, and closing
 > the Model B anime quality-feedback loop. Swapping in a more recent anime-specialized SDXL checkpoint
 > (no kernel changes needed) remains the single biggest lever on output quality.
 
@@ -125,7 +125,7 @@ generation window with NPU/CPU work.
 | **NPU** | CLIP-L text encoder (fixed 77 tokens) | **7.85 ms** — 2.5× faster than CPU |
 | **NPU** | WD14 SwinV2 tagger (448×448, fixed) | 268 ms (runs in parallel during GPU generation) |
 | **iGPU** | VAE encode — img2img only (image → latent) | **79 ms** — faster than CPU's 117 ms |
-| **CPU** | LLM prompt generation (Qwen2-1.5B for now → custom tag-generation LM bitnet.hpp later) | 64–71 tok/s |
+| **CPU** | LLM prompt stage — **not wired yet** (Qwen2 is Python-probe-only, 64–71 tok/s; what remains is wiring the custom LM bitnet.hpp) | — |
 | **RTX5080** | SDXL UNet (20 steps) + VAE decode | **3.80 s** / 1024×1024 |
 
 ### Device selection rationale
@@ -144,8 +144,8 @@ generation window with NPU/CPU work.
 ### txt2img
 
 ```
-[CPU] Qwen2-1.5B (interim) / later: custom tag-generation LM (bitnet.hpp 33M, GPU-first via custom CUDA kernels / CPU ok / NPU excluded)
-  natural language → danbooru tag list (~2s / future <10ms)
+[GPU/CPU] custom tag-generation LM (bitnet.hpp 33M, GPU-first via custom CUDA kernels / CPU ok / NPU excluded) — ★NOT WIRED
+  natural language → danbooru tag list (GPU seq8 2.43 ms measured) / today this stage is bypassed: the prompt goes in verbatim
     │
     ▼
 [NPU] CLIP-L text encoder (7.85ms)
@@ -187,7 +187,7 @@ The iGPU's VAE encode (79 ms) runs in parallel with the CPU's LLM generation (~2
 | NPU output → GPU | 0.031 ms (3.4%) | probe2 |
 | iGPU VAE decode stub | 995 ms (8× slower than CPU ❌) | probe4 |
 | iGPU VAE encode (1024→128) | **79 ms** (faster than CPU's 117 ms ✅) | probe5 |
-| Qwen2-1.5B INT4 CPU tok/s | 64–71 tok/s | probe7 |
+| Qwen2-1.5B INT4 CPU tok/s (probe reference; not a dependency of the C++ build) | 64–71 tok/s | probe7 |
 | **WD14 SwinV2 (448×448)** | CPU 101 ms / iGPU 104 ms / **NPU 268 ms** | probe8 |
 | **CLIP-L text encoder (77 tokens)** | CPU 20 ms / iGPU 14 ms / **NPU 7.85 ms** | probe9 |
 | **SDXL 20 steps 1024×1024** | **3.80 s** / 5.3 it/s / peak VRAM 10.49 GB | probe10 |
@@ -276,7 +276,7 @@ SDXL stages you must obtain and convert the models yourself:
 
 - **CLIP-L text encoder** and **WD14 SwinV2 tagger** → OpenVINO IR (NPU / CPU), converted via the scripts in
   `scripts/` (see the probe scripts) using `optimum-intel` / OpenVINO.
-- **Qwen2-1.5B (INT4)** for the interim LLM prompt stage.
+- **Qwen2-1.5B (INT4)** — Python probes only (`scripts/archives/`); the C++ build does not depend on it, so fetching it is optional.
 - **SDXL** for the diffusion stage (the custom CUDA kernels generate images from text end-to-end).
 - **ISNet-anime** (anime-segmentation) for matting → transparent PNG (iGPU; optional, falls back to opaque PNG).
 
@@ -290,7 +290,7 @@ licenses**. You are responsible for complying with those terms.
 | SDXL | Diffusion (UNet + VAE) | Stability AI Community / CreativeML OpenRAIL-M (per checkpoint) |
 | CLIP-L / CLIP-bigG | Text encoder (NPU) | MIT (OpenAI CLIP) / OpenCLIP |
 | WD14 SwinV2 tagger v3 | Tagging (CPU) | Apache-2.0 |
-| Qwen2-1.5B | Interim LLM prompt stage | Apache-2.0 |
+| Qwen2-1.5B | Python probes only (D2 distillation experiment; not adopted) | Apache-2.0 |
 | ISNet-anime (anime-segmentation) | Matting / transparent PNG (iGPU) | Apache-2.0 |
 | TIPO-200M (KBlueLeaf) | Distillation teacher experiments (4-D6, not in production) | Apache-2.0 |
 | **Eugeoter/waifu-scorer-v4-beta** | **Model B quality scorer — aesthetic teacher (default; label generation only)** | **Apache-2.0** |

@@ -36,6 +36,12 @@
                         <span class="tm-dev">@d.Device</span>
                         <span class="tm-bar"><span class="tm-fill" style="width:@d.Percent.ToString("0")%"></span></span>
                         <span class="tm-pct">@d.Percent.ToString("0")%</span>
+                        @* 役割ラベル (P3-3 / §4.4-3)。「NPU が CLIP を、RTX5080 が UNet を」という
+                           パイプライン理解を title 属性 (ホバー) 頼みにしない。
+                           出す/出さないは CSS だけで決まる (既定 display:none・幅に余裕がある時だけ表示) —
+                           razor に状態は増やさない (テレメトリの真実源は _sample のまま)。
+                           バーの開始位置が役割名の長さでずれないよう、必ず行の末尾に置く。 *@
+                        <span class="tm-role">@d.Role</span>
                     </div>
                 }
             }
@@ -43,9 +49,9 @@
 
         <!-- タグ表示言語トグル ([日本語|EN])。タグ値・生成 prompt は英語のまま不変で表示のみ切替。 -->
         <div class="lang-toggle" title="タグの表示言語 (内部値・生成は英語のまま)">
-            <button type="button" class="@(_tagLang == "ja" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "ja" ? "on" : "")"
                     @onclick="@(() => SetTagLang("ja"))">日本語</button>
-            <button type="button" class="@(_tagLang == "en" ? "on" : "")"
+            <button type="button" class="btn btn-ghost @(_tagLang == "en" ? "on" : "")"
                     @onclick="@(() => SetTagLang("en"))">EN</button>
         </div>
 
@@ -55,7 +61,7 @@
             <span class="dot"></span>@(_connected ? "C++ サーバー接続中" : "未接続")
             @if (!_connected)
             {
-                <button type="button" class="conn-retry" @onclick="ReconnectAsync"
+                <button type="button" class="btn btn-ghost" @onclick="ReconnectAsync"
                         disabled="@_reconnecting" title="GET /health を 1 回だけ再試行します">
                     @(_reconnecting ? "確認中…" : "再接続")
                 </button>
@@ -123,10 +129,10 @@
 
             <!-- 本番生成 / 下書き高速プレビューの 2 ボタン横並び -->
             <div class="gen-actions">
-                <button class="generate" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-primary" @onclick="@(() => GenerateAsync(false))" disabled="@(!gate.CanGenerate)">
                     @((_busy && !_runningDraft) ? "生成中…" : "生成")
                 </button>
-                <button class="generate secondary" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
+                <button class="btn btn-ghost" @onclick="@(() => GenerateAsync(true))" disabled="@(!gate.CanGenerate)">
                     @((_busy && _runningDraft) ? "生成中…" : "下書き(高速プレビュー)")
                 </button>
             </div>
@@ -155,7 +161,7 @@
                生成中は減光した前回画像の上にオーバーレイが載るので出さない。 *@
             @if (_imageData is not null && !_busy)
             {
-                <a class="preview-save" download="@_downloadName"
+                <a class="btn btn-ghost canvas-save" download="@_downloadName"
                    href="data:image/png;base64,@_imageData"
                    title="@_downloadName として保存します">PNG 保存</a>
             }
@@ -181,6 +187,33 @@
                     </div>
                 }
             </div>
+
+            @* 直近生成のミニ履歴 (P3-5)。**直近 4 枚を新しい順に並べる / クリックで再表示 /
+               選択中が分かる / 空なら出ない** の 4 つだけ。並び替え規則は純クラス
+               Services/PreviewHistory.cs が持ち、ここは器と結線だけを書く。
+
+               ★ 置き場所はプレビュー枠 (.preview) の **外**・右ペイン (.canvas) の中。
+                 枠の中に絶対配置で重ねる案は「生成物を隠す」ので不採用 (PL 裁定)。
+               ★ セッション内メモリのみ。永続化 (ファイル / localStorage / presets.json) はしない —
+                 「設定ごと復元」はプリセットの役割で、ここは「さっきの絵に戻る」だけ。
+                 タブを閉じる / 回線が切れて circuit が作り直されると履歴も消える (仕様)。
+               ★ 生成中はクリックさせない (disabled)。完了時に上書きされるだけの操作を
+                 受け付けると、P2-2 の減光対象 (見比べている前回画像) が入れ替わってしまう。 *@
+            @if (_history.Count > 0)
+            {
+                <div class="thumbs">
+                    @foreach (var item in _history)
+                    {
+                        <button type="button" @key="item.Id"
+                                class="thumb @(PreviewHistory.IsSelected(item, _selectedId) ? "on" : null)"
+                                disabled="@_busy"
+                                title="@item.Badge"
+                                @onclick="@(() => SelectHistory(item.Id))">
+                            <img src="data:image/png;base64,@item.Base64" alt="@item.Badge" />
+                        </button>
+                    }
+                </div>
+            }
         </section>
     </div>
     </CascadingValue>
@@ -223,6 +256,23 @@
     // 「PNG 保存」の download 属性に出すファイル名 (P2-3)。表示中の画像が生成された
     // 時刻と実送信サイズで決まるので、成功時に 1 回だけ組み立てて保持する。
     private string? _downloadName;
+
+    // ── 直近生成のミニ履歴 (P3-5) ──────────────────────────────
+    // 新しい順・最大 PreviewHistory.Capacity (4) 枚。並び替え規則は純クラス側が持ち、
+    // ここは「新しいリストを再代入する」だけ (その場 Mutate は再描画が走らない)。
+    //
+    // ★ 型は IReadOnlyList。List にすると _history.Add(...) と書けてしまい、
+    //   本プロジェクト頻出の「中身は変わったのに画面が更新されない」バグの入口になる。
+    // ★ 履歴が持つのは base64 文字列だけで byte[] は持たない (PL 裁定・実装メモ参照)。
+    //   生バイトが要るのは選択された 1 枚だけなので、ShowResult で 1 回 decode する。
+    // ★ circuit と一緒に消えるのが仕様。DisposeAsync での明示クリアは書かない。
+    private IReadOnlyList<PreviewItem> _history = Array.Empty<PreviewItem>();
+
+    // 今プレビューに出ている履歴 1 枚の Id。0 = 未選択 (起動直後 / 履歴が空)。
+    private int _selectedId;
+
+    // 履歴 Id の採番 (単調増加)。同じ Id が 2 枚並ばないので選択中は常に高々 1 枚。
+    private int _nextId;
 
     // 生成開始からの経過時間 (生成中オーバーレイの表示用・P2-2)。表示整形は ElapsedFormat。
     private TimeSpan _elapsed;
@@ -439,13 +489,24 @@
         try
         {
             var png = await Client.GenerateAsync(req);
-            _imageBytes = png; // 生バイトを保持 (プリセット保存時のサムネ元)
-            _imageData = Convert.ToBase64String(png);
             _connected = true;
-            // 成功後にモードバッジを記録 (例「下書き 768²」「本番 1024²」)。
-            _lastMode = $"{(draft ? "下書き" : "本番")} {ModeBadge(sendSize)}";
-            // 保存ファイル名も同時に確定する (表示中の画像と必ず対になる)。
-            _downloadName = DownloadName.ForPng(DateTime.Now, sendSize);
+
+            // 1 回の生成の成果を 1 つの値にまとめる (P3-5)。
+            // ・バッジ文言の組み立ては純クラス PreviewLabel が唯一の合流点
+            //   (例「下書き 768²」「本番 1024²」)
+            // ・保存ファイル名もここで確定する = 表示中の画像と必ず対になる
+            // ・持つのは base64 だけ。生バイトは ShowResult が 1 回だけ decode する
+            var item = new PreviewItem(
+                ++_nextId,
+                Convert.ToBase64String(png),
+                PreviewLabel.Build(draft, sendSize),
+                DownloadName.ForPng(DateTime.Now, sendSize),
+                DateTimeOffset.Now);
+
+            // ★ 履歴へ積むのは成功したときだけ (この try の成功経路 1 箇所のみ)。
+            //   catch / finally から積むと、失敗した生成がサムネ列に並ぶ。
+            _history = PreviewHistory.Add(_history, item);
+            ShowResult(item);
         }
         catch (GenerationException ex)
         {
@@ -471,6 +532,45 @@
         }
     }
 
+    // ★ 表示中の 1 枚を決める唯一の場所 (P3-5 の funnel)。
+    //
+    //   _imageData (絵) / _imageBytes (プリセット保存のサムネ元) / _lastMode (モードバッジ) /
+    //   _downloadName (PNG 保存のファイル名) の 4 つは **同じ 1 回の生成を指す 1 組**で、
+    //   バラバラに代入すると「古いサムネを押したら絵だけ戻ってバッジは本番のまま・
+    //   PNG 保存のファイル名が別の生成のもの」という混線が起きる。**この 4 つへの代入は
+    //   ここにしか書かない** (ui.Tests/PreviewHistoryRazorTests が構文レベルで縛る)。
+    //
+    //   base64 → 生バイトの decode もここ 1 箇所だけ。履歴は base64 しか持たないので、
+    //   選択された 1 枚だけを decode すれば足りる (毎描画でも毎生成でもなく、選択時に 1 回)。
+    private void ShowResult(PreviewItem item)
+    {
+        _imageData = item.Base64;
+        _imageBytes = Convert.FromBase64String(item.Base64);
+        _lastMode = item.Badge;
+        _downloadName = item.DownloadName;
+        _selectedId = item.Id;
+    }
+
+    // 履歴サムネのクリック (P3-5)。押せるのは生成していないときだけ —
+    // 生成中に選び直しても完了時に上書きされるだけで、その間 P2-2 の減光対象
+    // (今なにと見比べているのか) が入れ替わってしまう。markup 側でも disabled にしてある。
+    // 見つからない Id (履歴から落ちた直後など) は「何も起きない」で正しい。
+    private void SelectHistory(int id)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        var item = PreviewHistory.Find(_history, id);
+        if (item is null)
+        {
+            return;
+        }
+
+        ShowResult(item);
+    }
+
     // 生成中の経過秒を 1 秒刻みで更新する (P2-2)。
     // System.Timers.Timer ではなく PeriodicTimer を使い、UI 更新は InvokeAsync(StateHasChanged) で
     // レンダラのコンテキストへ戻す。ループは ct のキャンセルでのみ終わる。
@@ -494,17 +594,6 @@
         {
             // 離脱直後にレンダラが落ちた場合。もう表示更新は要らないので黙って抜ける。
         }
-    }
-
-    // "WxH" の幅を取り出して「768²」形式に整形する。パース不能ならそのまま返す。
-    private static string ModeBadge(string size)
-    {
-        var parts = size.Split('x', 'X');
-        if (parts.Length >= 1 && int.TryParse(parts[0].Trim(), out var w))
-        {
-            return $"{w}²";
-        }
-        return size;
     }
 
     public async ValueTask DisposeAsync()

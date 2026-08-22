@@ -59,7 +59,7 @@
                    placeholder="お気に入りタグを追加"
                    @onfocus="@(() => SetTarget("favorites"))"
                    @onkeydown="OnFavKeyDown" />
-            <button type="button" class="fav-plus" title="お気に入りに追加"
+            <button type="button" class="btn btn-ghost" title="お気に入りに追加"
                     @onclick="AddFavorite" disabled="@(string.IsNullOrWhiteSpace(_favDraft))">+</button>
         </div>
     </details>

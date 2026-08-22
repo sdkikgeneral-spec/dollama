@@ -22,7 +22,7 @@
     {
         <div class="presetbar">
             <input class="preset-name" @bind="_newName" placeholder="プリセット名で保存" />
-            <button type="button" class="preset-btn" @onclick="SaveCurrent"
+            <button type="button" class="btn btn-ghost" @onclick="SaveCurrent"
                     disabled="@(string.IsNullOrWhiteSpace(_newName))">保存</button>
         </div>
         @if (_msg is not null)
