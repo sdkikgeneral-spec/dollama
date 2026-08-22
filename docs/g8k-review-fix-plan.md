@@ -1,7 +1,11 @@
 # G-8k S2〜S3c レビュー是正プラン (研究機で実施)
 
 **使い方**: 研究機の Claude Code に「`docs/g8k-review-fix-plan.md` の通りに進めて」と渡す。
-ステータス: **未着手**。着手時は CLAUDE.md ルール1 (プランモード承認) → ルール2 (`project-leader` 経由) に従う。
+ステータス: ✅ **クローズ (2026-08-22 = G-8k S6)**。決裁スコープ (**F1 / F3 / F4 / F2 は dtor try/catch のみ / F5 / F7**) を**見送りゼロで全件実施**し、研究機で **53/53 緑**。F6 は S5f〜S5h で解消済。
+**本ファイルは「当時の計画」の原本として残す** — 実施結果・当初案との差・プランの記述誤りは
+**§5 (末尾) に加算**した。実測値の正本は `docs/measurements-log.md` の「G-8k S6」計測行と
+「G-8k S6 (T2)」節、コード側の実装記録は `docs/fast-mode-plan.md` の G-8k 実装記録「S6」項。
+★**本文中の記述には後から誤りと判明したものが 2 点ある** (F1 の 2 箇所・★訂正を各所に入れた)。
 
 - 対象ブランチ: `feat/fast-mode-g0b-g3k` (G-8k S2〜S3c = `device_arena` 移行)
 - 由来: 2026-08-20 に**開発機**で実施した静的コードレビュー (ビルド・実走なし)。
@@ -19,6 +23,8 @@ git switch feat/fast-mode-g0b-g3k
 git fetch origin
 git merge origin/main      # レビュー時点でブランチは main から 11 コミット遅れ
 ```
+
+(★**実績 (2026-08-22)**: 実際の merge は `5da3bfb` で **13 コミット** (起草時の見込み 11 から増えた)。`src/` と `meson.build` は **1 行も触られていない**ことを `git diff --name-only` で確認済 = 実体は UI/Blazor + docs のみ。時系列は **① 着手前に merge → ② その後に PL が「被験変数を増やさないため merge は後回し」と決裁 → ③ 既に済んでいたので、影響が無いことを確かめて続行** の順 (一次証拠で日付が取れるのは merge commit `5da3bfb` 自体だけで、②③ の順序は作業報告による)。merge 後のベースラインが `meson test` 53/53 緑であることを確認したうえで続行した。)
 
 `origin/main` の 11 コミットは UI (Blazor) 中心で CUDA 側との衝突はほぼ無い見込みだが、
 `src/meson.build` は両方が触るので衝突したら手で解決する。**merge 後にまずビルドを通し、
@@ -53,8 +59,17 @@ F6 は merge 前に必ず終わらせる (理由は当該節)。
 「生成そのものは逐次ゆえ同時 2 本は元々成立しない」を前提に書かれているが、**コード上その
 前提は成立していない**。
 
-しかも埋め込み・latent・出力は per-call の raw `cudaMalloc` なので、**アリーナ化以前は
-同時 2 リクエストがメモリ安全に成立していた**。今回の変更で以下が新規に生じている:
+~~しかも埋め込み・latent・出力は per-call の raw `cudaMalloc` なので、**アリーナ化以前は
+同時 2 リクエストがメモリ安全に成立していた**。今回の変更で以下が新規に生じている:~~
+★**訂正 (S6・相互レビューで反証)**: この一文は**誤り**。生成経路が握るプロセス共有の無ロック
+可変状態は **3 つ**あり、アリーナはそのうち最も新しい 1 つにすぎない —
+`src/kernels/gemm.cu:363` の `g_cublas_handle` (**遅延生成が非アトミック**・導入 `fc97b76` /
+2026-06-22 / 2-6 S3-B。`cublasSetStream` の呼び出しは repo に 0 箇所 = 全部デフォルトストリーム) と、
+`src/kernels/groupnorm.cu:223-238` の `g_mb_buf` (**grow-only 再確保**・導入 `42ec1be` /
+2026-07-11 / G-4k S1a。出荷 `--fast` は epilogue を含意するので実運用経路)。
+→ **HTTP 並行生成は G-8k の退行ではなく、少なくとも 2-6 から一貫して不成立**であり、
+**ファネル mutex を外せるのは 3 つすべてが個別にスレッド安全化されたとき**である。
+以下の 2 点は「G-8k で新規に生じた」ではなく「G-8k が 3 つ目として足した」と読むこと:
 
 - 検出できた場合: 生成 T1 の step 間 (アリーナ静止の瞬間) に T2 が正規の所有権移譲で入り、
   T1 の次 forward の `check_thread` が throw → **T1 が途中 step で 500**、かつ
@@ -65,8 +80,12 @@ F6 は merge 前に必ず終わらせる (理由は当該節)。
 「落ちる契約」がレースフリーでないので保証になっていない、という指摘。
 
 **修正**: `src/server/api.cpp:179` の `result = gen.generate(gr);` が **HTTP 側の唯一の
-生成ファネル** (`/v1/images/generations` と `/v1/images/edits` は同じハンドラを通る)。
+生成ファネル** ~~(`/v1/images/generations` と `/v1/images/edits` は同じハンドラを通る)~~。
 ここをファイルスコープの `std::mutex` + `std::lock_guard` で囲む。
+★**訂正 (S6)**: 括弧内は**誤り**。`/v1/images/edits` は別ハンドラ (`src/server/api.cpp:406-411`) で
+`write_error(res, 501, ...)` を返すだけで、**生成には一切到達しない**。したがって
+「唯一の生成ファネル」という結論そのものは正しいが、その根拠は「edits も同じハンドラだから」ではなく
+「**edits が 501 で生成へ行かないから**」である。
 
 - 生成器の実装 (`BackendImageGenerator` / `PipelineGenerator` / `Txt2ImgGenerator`) 側に
   入れると 3 箇所になるので**採らない**。CLI 経路 (`cli_generate.hpp`) は単一スレッドゆえ不要。
@@ -241,3 +260,89 @@ S3b / S3c の是正内容と §2 の再走実測を 1 行追記して決着さ�
 4. §2 の V1〜V6 の実測値 (PEAK_USED / rgb_hash / 秒。**秒は characterization で、機体クロック
    ドリフトを併記**する)
 5. F6 で台帳に書いた行の内容
+
+---
+
+## 5. 実施結果 (2026-08-22 = G-8k S6・本ファイルはここでクローズ)
+
+**どの機械で**: 実装・実走とも研究機 `KIK-WIN-RTX58` (SAC OFF)。負のコントロールのみ開発機
+(MinGW g++ `-O3`・**スクラッチ配下でビルドし repo は未変更**)。
+**プロセス**: F1 を `cpp-implementer`、F2〜F7 を `cuda-kernel-dev` が実装 → **相互 read-only レビュー**
+(書き手と検査者を分ける) → 指摘 12 件を是正 → 研究機で 53/53 緑 → `gpu-benchmarker` が §2 の V1〜V6 を
+是正前ツリーで実走 → 最終ツリーで再確認。
+
+### 5.1 F1〜F7 の実施可否
+
+| # | 決裁 | 実施 | 当初案との差 |
+|---|---|---|---|
+| F1 | 実施 | ✅ | 差なし (ファイルスコープ mutex で `gen.generate(gr)` 1 文のみ)。ただし**症状記述に誤りが 2 点**あった (上記 ★訂正) |
+| F2 | **dtor try/catch のみ**採用。(a) 参照カウント化 / (b) 所有移動は**不採用** | ✅ | 決裁どおり。`device_arena_release_noexcept` を**新設**して dtor 経路に使い、`~DiffusionPipeline` は `destroy_resources() noexcept` へ集約。**`maybe_release_arenas()` は noexcept 化していない** (generate 経路であって dtor ではない) |
+| F3 | 実施 | ✅ | 差なし (`arena_profile_enabled()` 撤去・無条件 stderr 1 回)。ただし**警告文言が変わった** (§5.3) |
+| F4 | 実施 | ✅ | ★**当初案 (`reserve_arenas()` だけを try で覆う) より範囲を広げた** — レビューで「1 行上の `vae_weights_create` が throw すると同じ 5.1GB リークが残る」と指摘され、**device 確保区間全体**を覆う形にした。F4b (統計汚染・「任意」扱いだった分) も実施 |
+| F5 | 実施 | ✅ | ★**S6 で 4 ゲートを新設** (`git show HEAD:src/tests/test_device_arena.cu` に `release_noexcept` は 0 件 = **差分としては 4 本すべて新規**。作業過程で「3 本で着手 → レビュー指摘で不正 id (`arena_of` 経路) を追加」となったのは**未コミットの中間状態**で、S6 以前に 3 本あったわけではない)。**POOL 枠 / POOL OFF 枠の両方**に登録。**新規 meson test は 0 本** (`src/meson.build` 未接触・既存 exe 内の test 関数として増える) |
+| F6 | 対象外 (S5f〜S5h で解消済) | — | 台帳の G-8k 行は S5 系の 7 ラウンドで決着済み |
+| F7 | 実施 | ✅ | 差なし。`prof_arena_e2e.cu` の Allman 整形は 9 箇所。`device_arena.cuh` の単行 Allman 1 箇所は**据え置き** (プランのスコープ外) |
+
+### 5.2 F2 の決裁根拠 ((a)/(b) を不採用にした理由)
+
+production の `unet_weights_create` 呼び出し元は `src/infer/diffusion.cu` の 1 箇所だけで、
+**パイプライン同居は現状発生しない**。ただし「同居しない」を担保しているのは値保持ではなく
+`src/server/cli_generate.hpp` の**排他フォールバック梯子** (段1 が非 null なら段2 を作らない) という
+不変条件である (`DiffusionPipeline` を値で持つラッパは `src/server/diffusion_runner.cu` と
+`src/server/pipeline_generator.hpp` の 2 つ)。**梯子を「両方作って良い方を選ぶ」形に書き換えた瞬間に
+同居が成立する**ので、そのときは所有権設計をやり直すこと。着手時期は **2-6d (SDXL 3 preset で
+複数バックエンド常駐が現実になる)** と決裁済み。
+
+なお `unet_weights_destroy` の呼び出し元は **9 箇所**で、dtor 経路は**そのうち 1 つだけ**
+(直呼び 8 = `prof_unet_fast_warm` 1 / `test_unet` 1 / `test_unet_fast` 1 / `test_lora_runtime` 5)。
+そのため noexcept 化の狙いは「terminate をここで初めて防ぐこと」ではなく、①dtor 経路の二重防御
+②**UNet 側が拒否されても UNetPersist の解放へ進めること** (素の release だと 1 本目の throw で
+2 本目に到達せず persist 176MiB が残る) の 2 点である。直呼び 8 箇所では release 失敗が throw から
+「stderr 1 行 + 続行」に変わるが、throw が起きるのは「foreign thread + 生存確保あり」だけで
+8 箇所はその状況を作らないため実質の契約緩和は無い。
+
+### 5.3 F3 で変わった警告文言 (旧文言を引用している手順書があれば更新すること)
+
+- **旧 (S3b 以来・`5da3bfb` 時点)**: stdout・`DOLLAMA_PROFILE=1` 配下・
+  `... > reserve %zu MiB (falling back to chunk growth)`
+- **新 (S6 確定)**: **stderr・無条件 1 回**・
+  `... (falling back to chunk growth; reserve is undersized -- see reserve_arenas() in src/infer/diffusion.cu)`
+- **接頭辞 `[ALLOC] reserve shortage: arena=…` は不変**。
+- 文面を arena 非依存にしたのは相互レビュー指摘による: persist 側の予約量は
+  `arena_reserve_persist_mb()` の**固定 176MiB** で、`DOLLAMA_ARENA_RESERVE_MB` は persist に対して
+  「0 か否か」のキルスイッチとしてしか効かない → `arena=unet_persist` で「env を上げろ」と誘導すると嘘になる。
+
+### 5.4 §2 の V1〜V6 の結果 (要旨・数値の正本は measurements-log)
+
+H4 (step ループ内 malloc 0) / H5 (出力不変) / H6 (VRAM) は**是正前ツリー・最終ツリーとも全 PASS**。
+
+- **V1**: 順序依存なし。★**S3c/S4b の絶対値 13620/13649MB は再現せず 13397MB** (同居量の差)。
+  **delta は +380MB → +340MB でほぼ不変** = §2 の「S3c 主張の 13620MB / +310MB を再現するか」という
+  問いの立て方が**絶対値寄りで不適切**だった。**判定は同一セッションの `POOL=0` 比 delta で行うこと**。
+- **V2**: 同居 2048MiB の hog を上乗せしても **delta +340MB で清浄時と完全同値** → 絶対値は同居量ぶん
+  平行移動するが delta は同居に不変。§2 が懸念した「WDDM 下で同居プロセスに揺れる」は delta では起きない。
+- **V3**: ★**F4 の異常系は再現しなかった**。同居 hog を idle 2560〜10240MiB / active 8192・11264MiB まで
+  振っても 8 条件すべてで reserve 成功 (WDDM の eviction による)。**「F4 を実走で確認した」と書かないこと** —
+  確定したのは拡大した try が正常系で無害であることまでで、異常系の正しさはコード上の推論に依拠する。
+- **V4**: 1 枚目から `chunk_alloc=0`・step ループ内 実 malloc/free 0 を merge 後ツリーでも維持 (= H4)。
+- **V5**: `DOLLAMA_POOL=0` と既定の外部 cmp が **6/6 BIT-EXACT**、最終ツリーでは **sha256 全 10 本一致**。
+- **V6**: poison 歩行の `over = 245MiB` が **18 サンプル全部で固定** (ゲート 512MiB / 余白 267MiB)。
+  §2 が懸念した「~440MiB まで接近し得る」は**出なかった**・フレークなし。
+- 対照 `DOLLAMA_ARENA_RESERVE_MB=0` で **S4 の病態 (11.0s → 27.1 / 24.3s) を再現** = reserve が何を
+  防いでいるかの現地証拠。
+
+### 5.5 §3「触らない」に足す一次証拠
+
+§3 の「レビューで問題なしと確認済み」は S6 でも覆っていない。加えて S6 で新たに現物確認した点:
+
+- **再入経路なし**: `IImageGenerator::generate` の production override は 4 実装
+  (`backend_image_generator` / `pipeline_generator` / `txt2img_generator` / `stub_generator`) で、
+  どれも他の `IImageGenerator` を保持しない。production の呼び出し元は `api.cpp` と `main.cpp` の 2 箇所のみで、
+  `--http` と CLI は 1 プロセス内で排他 → **非再帰の `std::mutex` で足りる**。
+- **`conv2d.cu:374 / 704 / 783` の `DeviceArenaId::UNet` ハードコードは現存** (F7 の revert 手順是正の根拠)。
+
+### 5.6 本ファイルの行番号について
+
+**§1〜§3 の行番号はすべて `acca803` (2026-08-19) 基準**で、S6 の変更で多くがずれている。
+例: F1 が指す `src/server/api.cpp:179` は `5da3bfb` までは正しかったが、S6 で mutex の定義コメントを
+足したため現在は `:225`。**参照するときは必ず grep で再特定すること** (§0 の指示と同じ)。

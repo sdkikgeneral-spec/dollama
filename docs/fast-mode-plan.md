@@ -458,7 +458,7 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 | **G-13k** | マルチ stream 独立枝並列 (QKV / conv_shortcut / time_emb_proj) | launch 谷・依存直列 | 見積り不能 (**nsys で谷を直接観測してから**・G-1k 再判定と同一前提) | 中〜高 (stream/event 配線・検証コスト) | ✅ |
 | micro | time_ids 毎 step D2H 同期 / up ループ free→malloc→memcpy / push_skip D2D コピー | 微小 | 各 ~ms 級 | 低 | ✅ |
 
-### G-8k: step ループ内 cudaMalloc/cudaFree 撲滅 (✅ S1〜S3c 実装済・S4b 全緑でクローズ 2026-08-19 → 下記「実装記録」)
+### G-8k: step ループ内 cudaMalloc/cudaFree 撲滅 (✅ S1〜S3c 実装済・S4b 全緑でクローズ 2026-08-19 / **S6 = 静的レビュー是正 2026-08-22** → 下記「実装記録」)
 
 **現状 (裏取り)** — ★**以下は起草時 (2026-07-11・S1 着手前) のコード状態であり、S1〜S3c で全て解消済み。
 現行コードは `DeviceArenaScope` による bump 確保 (例: `src/kernels/conv2d.cu:374`) になっている。
@@ -549,7 +549,9 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   重みロードで別途 GB 級の cudaMalloc がある (出典: `docs/logs/g8k-s4b/s4b_roundA_1_pool0.log:4`
   `used_after_weight_load=7067MB` = ctx 1317MB からの差分 5750MB)。
   既存の「跨いだら新チャンク」経路はフォールバックとして残してあり、**reserve が足りなくても壊れず遅くなるだけ**
-  (`DOLLAMA_PROFILE=1` のとき `[ALLOC] reserve shortage: ...` を 1 回だけ警告し、黙って太らせない)。
+  (`[ALLOC] reserve shortage: ...` を 1 回だけ警告し、黙って太らせない)。★**S6 (T2 / F3) で無条件 stderr へ変更済 (2026-08-22)** — S3b 期は `DOLLAMA_PROFILE=1` のとき **stdout** へ出す実装だったが (`git show 5da3bfb:src/kernels/device_arena.cu` の 350-356 行)、S6 で **env に関係なく stderr へ無条件 1 回**になった。文言も
+  `(falling back to chunk growth)` → `(falling back to chunk growth; reserve is undersized -- see reserve_arenas() in src/infer/diffusion.cu)`
+  へ変わっている (**接頭辞 `[ALLOC] reserve shortage: arena=…` は不変**)。詳細は下記「S6」項。
   env **`DOLLAMA_ARENA_RESERVE_MB`** で上書き・**`0` で reserve 無効 (= S3 挙動)**。
 - **S3c (`acca803`)**: ヘッドルームを **「live peak +10%」比例 → +128MiB 固定へ是正**。
   **算出は 64MiB 境界への切り上げ込み** (`round_up_64mib()`・`src/infer/diffusion.cu:210-223`) である:
@@ -596,6 +598,62 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   **S3c + S4b 全緑 (2026-08-19) をもって解除済み = 現在は無効**である。merge をブロックしていた
   VRAM 未達は S3b/S3c で是正され S4b で全ゲート PASS した。git 履歴は書き換えない方針のため
   当該文面は remote に残る — **履歴を読む側は本節 (と measurements-log の S4b 行) を正本とすること**。
+
+**S6 (T2): S2〜S3c 静的レビューの是正 (2026-08-22・研究機で 53/53 緑)**
+
+由来は `docs/g8k-review-fix-plan.md` (2026-08-20 に開発機で実施した静的レビュー・**行番号は当時の HEAD `acca803` 基準**)。
+ユーザー決裁のスコープ = **F1 / F3 / F4 / F2 は dtor try/catch のみ / F5 / F7**、**見送りゼロ**。
+F6 (台帳) は S5f〜S5h で解消済。実測値・ゲート合否・残債の正本は `docs/measurements-log.md` の
+「G-8k S6」計測行と「G-8k S6 (T2)」節。**S6 は数値を動かしていない** — 最終ツリーの外部 cmp で
+sha256 が全 10 本一致・`rgb_hash` が S4b と同一 (`0x8a96690109d2b253`)。
+
+- **F1 生成の直列化 (`src/server/api.cpp`)**: 無名 namespace の `std::mutex g_generate_mutex` で
+  `result = gen.generate(gr);` **1 文だけ**を `lock_guard` で覆う。**ファイルスコープにしたのは
+  アリーナがプロセス共有だから** (生成器インスタンス単位のロックでは足りない)。
+  ★**「アリーナ化以前は同時 2 リクエストが安全だった」は誤り**: 生成経路のプロセス共有・無ロック状態は
+  `gemm.cu` の `g_cublas_handle` (`fc97b76` / 2-6 S3-B) と `groupnorm.cu` の `g_mb_buf`
+  (`42ec1be` / G-4k S1a) を含めて **3 つ**あり、**このロックを外せるのは 3 つすべてが個別に
+  スレッド安全化されたとき**である (経緯と一次証拠は measurements-log の S6 節)。
+  `device_arena.cuh` のスレッド契約コメントも「直列化は呼び出し側の責務」→
+  「**api.cpp のファネル mutex で担保**」へ更新した。
+- **F2 dtor から例外を出さない**: **新公開 API `bool device_arena_release_noexcept(DeviceArenaId) noexcept`**
+  を追加した (`src/kernels/device_arena.cuh` に宣言 1 本・`src/kernels/device_arena.cu` に実体 1 TU。
+  **ヘッダに実装を書かない** = C0 の ODR 事故の再演防止)。戻り値 `false` = **1 バイトも解放していない**
+  (release が投げうるのは `arena_of` の不正 id と `check_thread` の 2 つだけで、どちらも最初の
+  `cudaFree` より前に throw するため「途中まで解放して false」は起きない)。使うのは
+  `unet_weights_destroy` の release 2 本だけで、`~DiffusionPipeline` は `destroy_resources() noexcept`
+  へ集約した。★**`maybe_release_arenas()` は noexcept 化していない** — generate 経路 (画像境界) であって
+  dtor ではなく、握り潰すと壊れた状態のまま生成が続くため。「release → 直後に必ず reserve」の対も維持。
+  ★**参照カウント化 (a) / 所有移動 (b) はユーザー決裁で不採用**、所有権設計は **2-6d (SDXL 3 preset)**
+  着手時に改めて行う。
+- **F3 reserve 不足を本番で可視化**: 上記のとおり **無条件 stderr 1 回**へ (1 回ガードは維持)。
+  唯一の利用者だった `arena_profile_enabled()` は撤去。文面は **arena 非依存**にした —
+  `arena=unet_persist` で出たときに `DOLLAMA_ARENA_RESERVE_MB` を上げろと誘導すると嘘になる
+  (persist の予約量は `arena_reserve_persist_mb()` の**固定 176MiB** で、この env は persist に対しては
+  「0 か否か」のキルスイッチとしてしか効かない)。
+- **F4 / F4b ctor の例外安全**: try を **device 確保区間全体** (`load_f16`×3 → `cudaMalloc`×3 →
+  `cudaMemcpy`×3 → `unet_weights_create` 5.1GB → `vae_weights_create` 92MB → `reserve_arenas()`) へ拡大し、
+  catch で `destroy_resources(); throw;`。**当初案は `reserve_arenas()` だけを覆う形**だったが、
+  相互レビューで「1 行上の `vae_weights_create` が throw すると同じ 5.1GB リークが残る」と指摘されて広げた。
+  F4b = `device_arena_reserve` の `chunks.clear()` 直後に `reserved_bytes = 0` と `reserve_warned = false` を追加。
+  ★**F4 の異常系は実走で発火していない** (V3 で idle 10GB / active 11.3GB の同居 VRAM を作っても
+  WDDM の eviction で reserve は成功した)。**「F4 を実走で確認した」と書かないこと** — 確定したのは
+  拡大した try が正常系で無害であることまでで、異常系の正しさはコード上の推論に依拠する。
+- **F5 破棄経路のゲート (`src/tests/test_device_arena.cu`)**: **4 ゲートを新設**し (`git show HEAD:src/tests/test_device_arena.cu` の `release_noexcept` は **0 件** = 差分としては 4 本すべて新規。作業過程で 3 本→4 本になったのは**未コミットの中間状態**であって、S6 以前に 3 本あったわけではない)
+  **POOL 枠 / POOL OFF 枠の両方**に登録。①素の release は foreign thread + 生存確保ありで throw する
+  (落ちる契約の維持) ②`release_noexcept` は投げず `false` かつアリーナ状態不変 ③静止状態なら `true`
+  ④不正 id でも `false` (`arena_of` 経路も固定)。**新規 meson test は 0 本** — `src/meson.build` は未接触で、
+  既存 `test_device_arena` 内の test 関数として増える。
+- **F7 コメント・スタイル**: `device_arena.cuh` の「C++14 前提」を meson の一次記述に揃えて是正
+  (**MSVC ホストのときだけ** `-Xcompiler /std:c++14` に落としている) / revert 手順の是正
+  (`conv2d.cu:374/704/783` が `DeviceArenaId::UNet` をハードコードしているので `vae_decode.cu` の
+  1 行 revert では戻り切らない) / `prof_arena_e2e.cu` の Allman 整形 9 箇所 (挙動不変)。
+
+★**ログのストリームが 2 系統に割れた (採取時の注意)**: F3 と F2 の追加出力は **stderr**
+(`device_arena.cu` の reserve shortage と `device_arena_release_noexcept` の release skipped)、
+従来からの `[ALLOC]` は **stdout** (`diffusion.cu` の reserve 行・`unet.cu` の終了時サマリ)。
+**stdout だけをリダイレクトする採取では、最も拾いたい shortage の 1 行が落ちる** → `2>&1` を付けること
+(`docs/testing.md` の「テスト実行コマンド」節にも注記済)。
 
 **既知のトレードオフ・引き継ぎ (S4b で判明・要注意)**
 
