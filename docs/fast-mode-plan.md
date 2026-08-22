@@ -210,6 +210,9 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
   (パス数削減・bit-exact) は達成済だが、**バケット秒数を落とすレバーは conv 側**にある:
   **G-10k (conv2d 真 batch2・~0.5-1.0s 見込み)** / **G-8k (im2col の per-conv malloc/free 撲滅・~1,600 ペア/画像)**。
   → **resnet ≤0.95s ゲートは G-4k のスコープ外と確定。合否は G-10k/G-8k 完了後の再 profile へ再割当**。
+  → **追記 (2026-08-19)**: **G-8k は S1〜S4b でクローズ済**なので、再割当先の前提条件のうち片方は充足された。
+  ただし **G-8k は秒数レバーではない** (価値は G-1k の前提条件充足と cudaFree の暗黙同期点除去・下記「実装記録」)
+  ため、**resnet バケット秒を動かす見込みは G-10k (conv 真 batch2) 側にある**。再 profile は G-10k 完了後に行う。
   G-6k 出荷判定の resnet 分母は暫定 **1.212s** (fast+epilogue) を採用 (baseline 1.225s から実質不変)。
   再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の [RESNET-BUCKET] 行で恒久化済。
 
@@ -317,7 +320,9 @@ epilogue vs default: MAE=6.57082e-05 max_abs=0.000488281 bad=0 SSIM=0.999999
 **G-4k のスコープ外と確定**。resnet バケットは **conv2d (im2col+GEMM) が質量**で、GN 帯域 4.2x (S1a) は
 バケット秒数に寄与しない。合否は **G-10k (conv2d 真 batch2) / G-8k (im2col の per-conv cudaMalloc/cudaFree 撲滅)**
 完了後の再 profile へ**再割当済み**。再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の
-[RESNET-BUCKET] 行で恒久化されている。G-4k 自身の達成は **(A)(B) のパス数削減 + カーネル単体 bit-exact +
+[RESNET-BUCKET] 行で恒久化されている。**追記 (2026-08-19)**: G-8k は S4b 全緑でクローズしたが、
+G-8k は秒数レバーではない (前提条件の充足) ため、**再 profile は G-10k 完了後**に回す。
+G-4k 自身の達成は **(A)(B) のパス数削減 + カーネル単体 bit-exact +
 出荷経路への結線 + parity ゲート 4/4 PASS** をもって満たしたものとする。
 
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
@@ -402,7 +407,10 @@ G-0/G-0b (profile+枠) ──► G-3k ✅ (attention) ──► G-2k ✅ (CFG ba
 残る精度ゼロコストの現実的な着地は ~~**#5 (G-4k) で ~15.1-15.5s** (面積 ~15%・#5 節の見積り)~~
 → **さらに下方修正 (2026-07-28・G-4k S3 実測)**: **#5 の e2e 上乗せは +0.4% = ノイズ床内**で、`--fast` は
 x1.32898 → **x1.33439** にしか動かなかった (resnet バケットも −1.1%)。原因は resnet の質量が conv2d 側にあり、
-epilogue 融合 (パス数削減) では動かないこと (S2/S3 の診断) → 秒数レバーは **G-10k (conv 真 batch2) / G-8k (malloc 撲滅)** へ移った。
+epilogue 融合 (パス数削減) では動かないこと (S2/S3 の診断) → 秒数レバーは **G-10k (conv 真 batch2)** へ移った。
+**是正 (2026-08-19)**: 初版はここに G-8k (malloc 撲滅) も秒数レバーとして併記していたが、**誤り**。
+G-8k は **G-1k (CUDA Graphs) の前提条件充足 + cudaFree の暗黙同期点除去**であって秒数レバーではない
+(S4b でクローズ済・下記「実装記録」)。**秒数の本命は G-10k 単独**である。
 #1 (G-1k) は上界 ~0.8s の条件付き。
 つまり **精度ゼロコスト4手の合計は ~15s 帯 (~1.33x) が現実線**で、**diffusers 級 (~3.8s) への主レバーは FP8 (G-5k) と
 G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どおり別立ての gated 実験 (絵の等価性はゲートで担保)。
@@ -442,7 +450,7 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 
 | Pkg | 内容 | 対象バケット | 効果見積り | 難度/リスク | 裏取り |
 |---|---|---|---|---|---|
-| **G-8k** | step ループ内 cudaMalloc/cudaFree 撲滅 (スクラッチプール / VAE ワークスペース常駐) | 全バケットに分散混入 | **要 nsys 実測** (数百 ms 級の可能性・下記) | 低 (数値不変・配管のみ) | ✅ |
+| **G-8k** | step ループ内 cudaMalloc/cudaFree 撲滅 — 採用形は **UNet アリーナ共有の bump アリーナ + 事前 reserve** (起草時の「スクラッチプール / VAE ワークスペース常駐」案はいずれも不採用・下記「実装記録」)。✅ **S1〜S3c 実装済・S4b 全緑でクローズ (2026-08-19)** | 全バケットに分散混入 | **秒数レバーではない** (価値は G-1k 前提条件 + cudaFree 同期点除去。秒は characterization のみ) | 低 (数値不変・配管のみ) | ✅ |
 | **G-9k** | VAE decode 高速化パック (mid attn GEMM 化 / GN f32 占有率 / FP32 重み変換キャッシュ / BF16 gated) | VAE 1.197s | **1.197s → ~0.4-0.6s** (概算・内訳推定は下記) | 低〜中 (BF16 のみ gated) | ✅ |
 | **G-10k** | conv2d 真の batch2 (im2col N 込み + cublasGemmStridedBatchedEx) | CFG e2e の resnet ~2.45s | **~0.5-1.0s** (batch2 恩恵ゼロ領域の解消) | 中 (パリティ ~1 ULP・G-2k S2 と同種) | ✅ |
 | **G-11k** | GroupNorm multi-block 化 (G-4k(A) 補強・grid=32 block の占有率是正) — **G-4k S1a に吸収・実装完了** (帯域 105→444.6 GB/s = 4.2x・#5 節「S1a 実測」参照) | resnet 1.225s の GN 面積 | GN 実効帯域 73→数百 GB/s (面積は G-4k 再 profile で確定) | 低〜中 (2 段 reduction・数値は蓄積順変化) | ✅ |
@@ -450,16 +458,221 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 | **G-13k** | マルチ stream 独立枝並列 (QKV / conv_shortcut / time_emb_proj) | launch 谷・依存直列 | 見積り不能 (**nsys で谷を直接観測してから**・G-1k 再判定と同一前提) | 中〜高 (stream/event 配線・検証コスト) | ✅ |
 | micro | time_ids 毎 step D2H 同期 / up ループ free→malloc→memcpy / push_skip D2D コピー | 微小 | 各 ~ms 級 | 低 | ✅ |
 
-### G-8k: step ループ内 cudaMalloc/cudaFree 撲滅
+### G-8k: step ループ内 cudaMalloc/cudaFree 撲滅 (✅ S1〜S3c 実装済・S4b 全緑でクローズ 2026-08-19 / **S6 = 静的レビュー是正 2026-08-22** → 下記「実装記録」)
 
-**現状 (裏取り)**:
+**現状 (裏取り)** — ★**以下は起草時 (2026-07-11・S1 着手前) のコード状態であり、S1〜S3c で全て解消済み。
+現行コードは `DeviceArenaScope` による bump 確保 (例: `src/kernels/conv2d.cu:374`) になっている。
+現状を知りたい読者は下記「実装記録」を読むこと** (行番号ごと当時の記述を残すのは経緯の履歴としてであって、
+再度撲滅しに行く対象ではない):
 - `src/kernels/conv2d.cu:370/420` — im2col 経路は **conv 1 回ごとに** `d_col` を cudaMalloc/cudaFree する (conv2d.cuh:34 に明記どおり)。UNet 1 forward の 3x3 conv は resnet 17 個×2 + conv_in/out + sampler 4 ≈ **~40 回** → CFG 20step で **~1,600 ペア/画像**。up_blocks.2 の conv1 (Cin=640, 128²) は col が **189MB/回** で malloc 単価も大きい。
 - `src/infer/unet.cu:351-379` — `Scratch` が段スコープごとに cudaMalloc し、スコープ脱出で cudaFree。transformer_block 1 回で 9-13 本 (unet.cu:490-498, 542-547, 587-590)。1 forward で 100 本超。
 - `src/infer/unet.cu:934-937, 972-975, 1007-1010` — up ループ毎反復で `cudaFree(d_cur) → cudaMalloc → cudaMemcpy D2D`。**ポインタ swap にすれば malloc/free/コピーとも消える**。
 - `src/kernels/vae_decode.cu:684-685, 775-776` — decode ごとにキャリー 512MB×2 (FP16) + **1GB×2 (FP32)** を malloc/free。加えて `Scratch`/`Scratch32` (243-289) が段ごとに GB 級を確保・解放。
 - cudaFree は暗黙のデバイス同期点。電力 43% / 帯域 11% の「occupancy/latency 律速」診断と整合する阻害要因であり、G-1k (CUDA Graphs) の前提条件でもある (Graph は capture 中の cudaMalloc/Free を許さないため、**G-1k を再浮上させるなら本 Pkg が先行必須**)。
 - **効果は nsys で要実測**: ScopedSyncTimer profile では malloc 時間が各バケットに混入して単独で見えない。概算 (~1,600 ペア × 20-100µs + VAE GB 級 malloc) で数百 ms 級はあり得るが、根拠のある秒数は出せない。
-- **実装**: サイズクラス別の再利用プール (ハンドルに持たせる) or `cudaMallocAsync`/メモリプール。数値完全不変。default に触れるか `--fast` 側に隔離するかは PL 決裁 (数値不変なので default 適用も筋は通るが、無改変原則との整合を要判断)。
+- **実装**: サイズクラス別の再利用プール (ハンドルに持たせる) or `cudaMallocAsync`/メモリプール。数値完全不変。~~default に触れるか `--fast` 側に隔離するかは PL 決裁 (数値不変なので default 適用も筋は通るが、無改変原則との整合を要判断)。~~
+  → **決裁済 (S1 時点・実装で確定)**: **default も含めて既定 ON**。キルスイッチ `DOLLAMA_POOL=0` で
+  素の cudaMalloc/cudaFree の旧経路へ完全フォールバックできる (`device_arena_pool_enabled()`・
+  未設定は有効。`src/kernels/device_arena.cu:209-226`)。出力ビット一致を S4b の G0 で担保しているため
+  「default 無改変」原則とは整合する (数値が変わらないので回帰アンカーは壊れない)。
+
+**実装記録 (S1〜S4b・2026-08-19 に S3 系クローズ)**
+
+> **G-8k は秒数レバーではない。** 価値は ① **G-1k (CUDA Graphs) の前提条件充足** (capture 中は
+> cudaMalloc/cudaFree を許さない) ② **cudaFree の暗黙同期点の除去** の 2 点。よって本節では
+> **「速くなった」とは主張しない** — 秒は characterization としてのみ記す (秒数の本命は
+> **G-10k = conv 真 batch2**)。実測値・ゲート合否の完全版は `docs/measurements-log.md` の
+> 「G-8k S4」「G-8k S4b」行。
+>
+> ★**ただし「秒に効いていない」という意味ではない** (要約を実データと逆向きに読まないこと):
+> S4b の **A/B (同一バイナリ・env だけを変えた構成間比較)** は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%**
+> (★**「同一プロセス内の A/B」ではない** — S4b は**独立プロセス 7 本**・走行間 68-85s。さらに
+> **−34% の基準側 = 走行 A-1 は開始時状態 (温度/クロック) が未記録** (`docs/logs/g8k-s4b/smi_timeline.txt`
+> に `pre-A1` エントリが無い) なので、熱条件まで揃えた統制比較として引用しないこと。
+> ★**S5f で再訂正**: S5e はここに「同一プロセス内で構成を切り替えたのは S4 の方」と書いたが**誤り** —
+> **S4 も 1 走行 1 プロセス**で、構成は起動時 env で固定される (S4/S4b は同一ハーネス
+> `src/tests/prof_arena_e2e.cu` = git 履歴上 `88b3ae7` の 1 版のみ。冒頭コメント `:8`「走行間で変える
+> のは DOLLAMA_POOL / DOLLAMA_ARENA_RELEASE のみ」・env 読みは `:150-158` の 1 度だけ・`main()` に
+> 構成ループ無し。★S4 の生ログは残っておらず実行形態はハーネス構造からの演繹)。measurements-log の
+> S4 計測行の「同一プロセスで」は「1 プロセスで 3 枚連続生成」の意味 (枚数に掛かる) であって構成切替ではない)
+> (独立の傍証: `4dee0b7` 本文の 1step warm **479.3ms(POOL=0) / 329.0ms(プール)**)。
+> これは**旧 malloc 経路との比較**であって、正典ハーネス (`test_diffusion_batch2` の DB2_BENCH) での
+> 再測を経ていないため**出荷性能値としては使わない**。禁止しているのは出荷性能の主張であり、
+> 実測の記述ではない — **この効きを「ゼロ」と読んで reserve 縮小やアリーナ廃止を提案しないこと**
+> (既定構成の +6.5GB 定常 residency は、見返りゼロのコストではない)。
+
+- **S1a (`3541457`)**: `src/kernels/device_arena.{cuh,cu}` を新設 = **チャンク連結型 bump アリーナ** (mark/rewind の 2 API・
+  `DeviceArenaScope` で RAII)。急所は**既存チャンクを解放しない**こと — `unet.cu` の `Scratch` は
+  transformer_block 1 回で 9-13 本が同時生存するため、`groupnorm.cu` の grow-only 単一バッファ方式は一般化できない。
+  named arena・所有スレッド検査・キルスイッチ `DOLLAMA_POOL=0`・統計カウンタもここで入った。
+  既存ファイルは無改変 (`meson.build` への追加のみ)。
+- **S1b (`7941562`)**: `conv2d.cu` の **FP16 im2col 経路** (`d_col` / `d_out_band`) をアリーナへ。
+  ★この時点で **im2col は `DeviceArenaId::UNet` を共有**しており (S3 節の「元から共有」はこれが出典)、
+  FP32 経路は S3・`d_weight_f32` は G-9k の担当として意図的に**スコープ外**に残した。
+- **S2 (`4dee0b7`)**: `src/infer/unet.cu` の `Scratch` と forward 寿命バッファを bump 確保へ移設。
+  forward 寿命の常駐 (temb / skip スタック / 段間キャリー `d_cur`) は**専用アリーナ `UNetPersist` に隔離** —
+  `Scratch` と同居させると「skip を積んだ後に段の Scratch が rewind して skip の領域が再利用される」形で
+  確実に壊れる (**アリーナ分離は整理ではなく正しさの条件**)。`d_cur` の free→別サイズ malloc 連鎖 8 箇所は
+  `reshape_cur()` に集約。あわせて所有スレッド契約を「静止状態なら移譲可」へ格上げ (HTTP の ThreadPool は
+  リクエストごとに別ワーカーで回るため、S1a の即 throw のままだと 2 本目で落ちる)。
+- **S2b (`0a7ca97`)**: アリーナ VRAM 収支の是正。**チャンク成長則から倍々成長を撤去**し
+  「新チャンク = max(刻み幅, 要求サイズ)」へ。刻み幅は**単発の最大要求以上**でなければ逆に太ることが実測で確定
+  (64MiB=1876 / 128MiB=1722 / **256MiB=1280MiB** を採用 = im2col タイル上限と同値)。
+  あわせて **`unet_weights_destroy` で `device_arena_release` を呼ぶ**ようにした = **長寿命 HTTP で
+  ハンドル破棄後も GB 級が残る**問題への対処であって、step ループ内の trim ではない
+  (★**env `DOLLAMA_ARENA_RELEASE` = 画像境界での release はこれとは別物で、初出は S3 `88b3ae7`**。
+  出典: `git log -S DOLLAMA_ARENA_RELEASE -- src/` が `88b3ae7` 1 本のみを返す。混同しないこと)。
+  収支計測用に `peak_request_bytes` を追加 (従来の `bytes_in_use` はカーソル基準で捨て分も数えるため
+  VRAM ゲートに使えない)。
+- **S3 (`88b3ae7`)**: VAE decode の `Scratch`/`Scratch32`/段間キャリー 4 本 (FP16 512MiB×2 + FP32 1024MiB×2) と
+  conv2d の FP32 経路 (`d_col`/`d_out_band`/`d_weight_f32`) を同じく bump 確保へ。
+  → **VAE decode 1 回あたり 96 対の実 cudaMalloc/cudaFree が消滅** (アリーナ確保 102 本のうち S3 前から
+  アリーナ済みだったのは im2col の 6 本のみ)。**出典**: commit `88b3ae7` 本文の「回数」節
+  (`DOLLAMA_POOL=0` 走行でアリーナ確保本数を数えたもの)。**この計測の生ログは保存していない**ため、
+  再検証するなら `DOLLAMA_POOL=0 DOLLAMA_PROFILE=1` で decode 1 回の `[ALLOC]` を取り直すこと。
+  - ★**起草時の「VAE 専用アリーナ (`DeviceArenaId::VAE`) を切る」案は不採用に是正した。** 理由は 2 つ:
+    ① `src/kernels/conv2d.cu` の im2col は**元から UNet アリーナを共有**しており、VAE 経路だけ別アリーナに
+    分けると同一 conv の置き場が呼び元で割れる ② VAE の同時生存ピーク **~5.5-6.0GiB** を専用アリーナで抱えると、
+    それが**次画像の UNet step 中もずっと常駐**して VRAM を二重に食う。
+  - **採用形 = UNet アリーナ共有 + 事前 reserve** (`vae_decode.cu` の `kVaeArena` 1 行で revert 可)。
+    VAE decode 時点で UNet アリーナは静止状態なので LIFO 契約は破れない。
+- **S3 の未達 (S4 実測)**: **VRAM 不合格**。PEAK 16302MB = **物理全量に張り付き** → WDDM のホストページングで
+  2 枚目以降が 11s → 25s に劣化。根因は成長則ではなく **GB 級単発要求のチャンク跨ぎ** (刻み 256MiB に対し
+  `max(刻み, 要求)` で 512MiB/1024MiB のチャンクが立ち、直前チャンクの残りを丸ごと捨てる。捨て分 **4637MiB**)。
+  (★S5h 注記: **この S4 実測の生ログは repo に無い** — `docs/logs/` に退避済なのは S4b 分 (`g8k-s4b/`) のみで、
+  PEAK 16302MB・11s→25s・捨て分 4637MiB は生ログでの再検証ができない。repo に無いことは物理確認済・
+  研究機 temp 原本の有無は本機から検証不能。生ログ不在の正典リストは `docs/measurements-log.md` 残債⑤)
+- **S3b (`8e2e48d`)**: `device_arena_reserve(id, bytes)` を新設し、重みロード後・最初の generate 前に
+  **live peak を包む 1 本**を確保 → 跨ぎが原理的に消滅 (1 枚目から `chunk_alloc=0`・実 cudaMalloc は
+  **アリーナ 1 本あたり reserve の 1 回のみ** = `unet` + `unet_persist` で **アリーナ由来は計 2 回**)。
+  ★**「プロセス全体で 2 回」ではない** (S5e で是正・S5d は measurements-log 側だけ直して本行を取りこぼしていた) —
+  重みロードで別途 GB 級の cudaMalloc がある (出典: `docs/logs/g8k-s4b/s4b_roundA_1_pool0.log:4`
+  `used_after_weight_load=7067MB` = ctx 1317MB からの差分 5750MB)。
+  既存の「跨いだら新チャンク」経路はフォールバックとして残してあり、**reserve が足りなくても壊れず遅くなるだけ**
+  (`[ALLOC] reserve shortage: ...` を 1 回だけ警告し、黙って太らせない)。★**S6 (T2 / F3) で無条件 stderr へ変更済 (2026-08-22)** — S3b 期は `DOLLAMA_PROFILE=1` のとき **stdout** へ出す実装だったが (`git show 5da3bfb:src/kernels/device_arena.cu` の 350-356 行)、S6 で **env に関係なく stderr へ無条件 1 回**になった。文言も
+  `(falling back to chunk growth)` → `(falling back to chunk growth; reserve is undersized -- see reserve_arenas() in src/infer/diffusion.cu)`
+  へ変わっている (**接頭辞 `[ALLOC] reserve shortage: arena=…` は不変**)。詳細は下記「S6」項。
+  env **`DOLLAMA_ARENA_RESERVE_MB`** で上書き・**`0` で reserve 無効 (= S3 挙動)**。
+- **S3c (`acca803`)**: ヘッドルームを **「live peak +10%」比例 → +128MiB 固定へ是正**。
+  **算出は境界への切り上げ込み**である (★**刻みはアリーナで違う** — 2026-08-23 の監査で是正。`round_up_64mib()` (`src/infer/diffusion.cu:213-223`) を使うのは **unet 側だけ** (`:225`)。unet_persist は `arena_reserve_persist_mb()` (`:252-260`) の `(mib + 15) & ~15` = **16MiB 境界**で、ソース側コメント `:249` も「16MiB 境界へ切り上げ」と書いている。64MiB 境界なら 169 → 192MiB になるはずだが実際は 176MiB であることからも確かめられる):
+  - unet: `kArenaLivePeakUnetMiB=5914` + `kArenaHeadroomUnetMiB=128` = 6042 → **切り上げ 6080MiB**
+  - unet_persist: `kArenaLivePeakPersistMiB=137` + `kArenaHeadroomPersistMiB=32` = 169 → **切り上げ 176MiB**
+
+  (単純な加算では 6042 / 169 にしかならない。**チャンクの刻みに揃えるための切り上げ**が入る — unet は 64MiB 刻み・unet_persist は 16MiB 刻み。)
+  live peak は S3b の 12 枚実測 (4 構成 × 3 枚) で **変動ゼロ** (確保列は形状で決まり乱数や実行順に依存しない) ゆえ、
+  比例マージンは「何の分散に備えているのか」を答えられない根拠のない数字だった。**ゲート合わせではなく設計の是正**である。
+  - ★**この 12 枚実測は reserve 定数 5914/137 の設計時の出典**であり、崩れれば reserve 不足 (= 警告 +
+    チャンク成長へフォールバック) に直結する。**S3b 期の生ログは保存しておらず、S3b だけが持つ
+    `DOLLAMA_ARENA_RELEASE=1` 構成込みの不変性 (出典: `acca803` 本文「4 構成 (POOL=0 / 既定 /
+    RESERVE_MB=0 / ARENA_RELEASE=1) x 3 枚」) は commit `8e2e48d` / `acca803` の本文と
+    `src/infer/diffusion.cu:199-208` のコメントでしか裏が取れない**
+    (★**一次証拠の不整合に注意**: `8e2e48d` 本文は「UNet 6656MiB = S4 実測 live peak **6051MiB** +10%」
+    と書くが、`88b3ae7` / `acca803` 本文と現物 `src/infer/diffusion.cu:202` は **5914**MiB。
+    6051 は 5914 + persist live peak 137 の**合算とみられる** (推測の域を出ない)。
+    **unet 単体の live peak として引くべきは 5914** で、6051 ではない。)
+    ★**ただし定数値そのものは repo 内の S4b 生ログで検証できる** (S5g で是正 — 従来ここは
+    「唯一の根拠」「保存してあるのは S4b の 7 本のみ」としていたが、前者は過小申告・後者は採用 7 走行
+    だけの数え方で、`.log` の現物は棄却 `DISCARDED_A2_overlap_risk.log` 込み **8 本**・ほか smi 2 本)。
+    `docs/logs/g8k-s4b/` の `.log` 8 本のうち **`arena=unet live_peak=5914MiB` は 8 本すべて**・
+    **`arena=unet_persist live_peak=137MiB` は 6 本** (POOL=0 の 2 本は persist アリーナ不使用で `0MiB`)
+    に印字 = **値と POOL / RESERVE_MB / steps 不変性は生ログで再検証可能**。生ログ無しのまま残るのは
+    **release 経路での不変性のみ** (S4b は 8 本すべてヘッダが `DOLLAMA_ARENA_RELEASE=(unset)`)。
+    解像度 / batch / step を変える改修時は、この定数を再測すること。
+- **S4b (2026-08-19 研究機実走・6 ハードゲート全 PASS)**: 出力不変 (18 枚すべて同一 `rgb_hash`) /
+  step ループ内 malloc・free = 0 / 1 枚目から `chunk_alloc=0` /
+  VRAM **delta +350MB (基準 max 13299 → 既定 max 13649MB) / +380MB (基準 min 13269 起点)** = **どちらでも ≤512MB で PASS** /
+  peak 時 free **2653MB** / 秒の実害なし (POOL=0 比 +5% 以内・S4 のページング事故は**再現せず**)。
+  → **G-8k S3 系はクローズ**。数値・計測手順の正本は measurements-log の S4b 行。
+- ★**S4b のゲート集合から G3 が外れている**: S4 は 3 構成目に `DOLLAMA_POOL=1 + DOLLAMA_ARENA_RELEASE=1` を置いて
+  **G3 (release ON で step ループ内 malloc/free 0 維持) PASS** を記録したが、S4b は 3 構成目を
+  対照 `DOLLAMA_ARENA_RESERVE_MB=0` (= S3 挙動) に差し替えたため、**7 走行すべて
+  `DOLLAMA_ARENA_RELEASE` は未設定 (既定 OFF)** である。つまり **S3c 以後、release 経路の e2e / VRAM 検証は
+  行っていない**。
+  → **release は既定 OFF の debug スイッチであり、VRAM 節約目的で有効化しないこと。**
+  S3b 期には reserve と併用すると **PEAK_USED が 14250MB → 16302MB (物理張り付き) へ最悪化した実測**があり
+  (`src/infer/diffusion.cu:415-419` のコメントに記録)、現在は release 直後に reserve をやり直すことで
+  回避しているが、**その組合せは S4b で計測されていない**。
+
+- ★**merge 禁止の解除**: `88b3ae7` (S3 checkpoint) のコミット本文には
+  **「S3b が緑になるまで merge 禁止」** と書かれており、これは既に remote へ push 済みだが、
+  **S3c + S4b 全緑 (2026-08-19) をもって解除済み = 現在は無効**である。merge をブロックしていた
+  VRAM 未達は S3b/S3c で是正され S4b で全ゲート PASS した。git 履歴は書き換えない方針のため
+  当該文面は remote に残る — **履歴を読む側は本節 (と measurements-log の S4b 行) を正本とすること**。
+
+**S6 (T2): S2〜S3c 静的レビューの是正 (2026-08-22・研究機で 53/53 緑)**
+
+由来は `docs/g8k-review-fix-plan.md` (2026-08-20 に開発機で実施した静的レビュー・**行番号は当時の HEAD `acca803` 基準**)。
+ユーザー決裁のスコープ = **F1 / F3 / F4 / F2 は dtor try/catch のみ / F5 / F7**、**見送りゼロ**。
+F6 (台帳) は S5f〜S5h で解消済。実測値・ゲート合否・残債の正本は `docs/measurements-log.md` の
+「G-8k S6」計測行と「G-8k S6 (T2)」節。**S6 は数値を動かしていない** — 最終ツリーの外部 cmp で
+sha256 が全 10 本一致・`rgb_hash` が S4b と同一 (`0x8a96690109d2b253`)。
+
+- **F1 生成の直列化 (`src/server/api.cpp`)**: 無名 namespace の `std::mutex g_generate_mutex` で
+  `result = gen.generate(gr);` **1 文だけ**を `lock_guard` で覆う。**ファイルスコープにしたのは
+  アリーナがプロセス共有だから** (生成器インスタンス単位のロックでは足りない)。
+  ★**「アリーナ化以前は同時 2 リクエストが安全だった」は誤り**: 生成経路のプロセス共有・無ロック状態は
+  `gemm.cu` の `g_cublas_handle` (`fc97b76` / 2-6 S3-B) と `groupnorm.cu` の `g_mb_buf`
+  (`42ec1be` / G-4k S1a) を含めて **3 つ**あり、**このロックを外せるのは 3 つすべてが個別に
+  スレッド安全化されたとき**である (経緯と一次証拠は measurements-log の S6 節)。
+  `device_arena.cuh` のスレッド契約コメントも「直列化は呼び出し側の責務」→
+  「**api.cpp のファネル mutex で担保**」へ更新した。
+- **F2 dtor から例外を出さない**: **新公開 API `bool device_arena_release_noexcept(DeviceArenaId) noexcept`**
+  を追加した (`src/kernels/device_arena.cuh` に宣言 1 本・`src/kernels/device_arena.cu` に実体 1 TU。
+  **ヘッダに実装を書かない** = C0 の ODR 事故の再演防止)。戻り値 `false` = **1 バイトも解放していない**
+  (release が投げうるのは `arena_of` の不正 id と `check_thread` の 2 つだけで、どちらも最初の
+  `cudaFree` より前に throw するため「途中まで解放して false」は起きない)。使うのは
+  `unet_weights_destroy` の release 2 本だけで、`~DiffusionPipeline` は `destroy_resources() noexcept`
+  へ集約した。★**`maybe_release_arenas()` は noexcept 化していない** — generate 経路 (画像境界) であって
+  dtor ではなく、握り潰すと壊れた状態のまま生成が続くため。「release → 直後に必ず reserve」の対も維持。
+  ★**参照カウント化 (a) / 所有移動 (b) はユーザー決裁で不採用**、所有権設計は **2-6d (SDXL 3 preset)**
+  着手時に改めて行う。
+- **F3 reserve 不足を本番で可視化**: 上記のとおり **無条件 stderr 1 回**へ (1 回ガードは維持)。
+  唯一の利用者だった `arena_profile_enabled()` は撤去。文面は **arena 非依存**にした —
+  `arena=unet_persist` で出たときに `DOLLAMA_ARENA_RESERVE_MB` を上げろと誘導すると嘘になる
+  (persist の予約量は `arena_reserve_persist_mb()` の**固定 176MiB** で、この env は persist に対しては
+  「0 か否か」のキルスイッチとしてしか効かない)。
+- **F4 / F4b ctor の例外安全**: try を **device 確保区間全体** (`load_f16`×3 → `cudaMalloc`×3 →
+  `cudaMemcpy`×3 → `unet_weights_create` 5.1GB → `vae_weights_create` 92MB → `reserve_arenas()`) へ拡大し、
+  catch で `destroy_resources(); throw;`。**当初案は `reserve_arenas()` だけを覆う形**だったが、
+  相互レビューで「1 行上の `vae_weights_create` が throw すると同じ 5.1GB リークが残る」と指摘されて広げた。
+  F4b = `device_arena_reserve` の `chunks.clear()` 直後に `reserved_bytes = 0` と `reserve_warned = false` を追加。
+  ★**F4 の異常系は実走で発火していない** (V3 で idle 10GB / active 11.3GB の同居 VRAM を作っても
+  WDDM の eviction で reserve は成功した)。**「F4 を実走で確認した」と書かないこと** — 確定したのは
+  拡大した try が正常系で無害であることまでで、異常系の正しさはコード上の推論に依拠する。
+- **F5 破棄経路のゲート (`src/tests/test_device_arena.cu`)**: **4 ゲートを新設**し (`git show HEAD:src/tests/test_device_arena.cu` の `release_noexcept` は **0 件** = 差分としては 4 本すべて新規。作業過程で 3 本→4 本になったのは**未コミットの中間状態**であって、S6 以前に 3 本あったわけではない)
+  **POOL 枠 / POOL OFF 枠の両方**に登録。①素の release は foreign thread + 生存確保ありで throw する
+  (落ちる契約の維持) ②`release_noexcept` は投げず `false` かつアリーナ状態不変 ③静止状態なら `true`
+  ④不正 id でも `false` (`arena_of` 経路も固定)。**新規 meson test は 0 本** — `src/meson.build` は未接触で、
+  既存 `test_device_arena` 内の test 関数として増える。
+- **F7 コメント・スタイル**: `device_arena.cuh` の「C++14 前提」を meson の一次記述に揃えて是正
+  (**MSVC ホストのときだけ** `-Xcompiler /std:c++14` に落としている) / revert 手順の是正
+  (`conv2d.cu:374/704/783` が `DeviceArenaId::UNet` をハードコードしているので `vae_decode.cu` の
+  1 行 revert では戻り切らない) / `prof_arena_e2e.cu` の Allman 整形 9 箇所 (挙動不変)。
+
+★**ログのストリームが 2 系統に割れた (採取時の注意)**: F3 と F2 の追加出力は **stderr**
+(`device_arena.cu` の reserve shortage と `device_arena_release_noexcept` の release skipped)、
+従来からの `[ALLOC]` は **stdout** (`diffusion.cu` の reserve 行・`unet.cu` の終了時サマリ)。
+**stdout だけをリダイレクトする採取では、最も拾いたい shortage の 1 行が落ちる** → `2>&1` を付けること
+(`docs/testing.md` の「テスト実行コマンド」節にも注記済)。
+
+**既知のトレードオフ・引き継ぎ (S4b で判明・要注意)**
+
+- **定常 residency が +6.5GB 増える**: peak の増分は +350MB で収まるが、reserve を保持し続けるため
+  定常の VRAM 常駐が **7135 → 13599MB**。peak ゲート (G4/G5') は通る一方、**他プロセスと VRAM を分け合う運用では
+  空きが常時 ~2.7GB** になる = 既知のトレードオフとして受容している (今回はデスクトップ系が 1.2GB 常駐した
+  状態でも全ゲート通過)。
+- **ログの落とし穴 (誤読注意)**: **`DOLLAMA_POOL=0` の走行でも**
+  `[ALLOC] reserve: unet=6080MiB unet_persist=176MiB` の行が出る (**理由は下記「直す場所」参照** —
+  「printf が pool 判定より手前にあるため」という初版の説明はコードの実態と違うので S5b で是正した)。
+  実体は **no-op** で、終了時は `[ALLOC] arena=unet cap=0MiB reserved=0MiB chunks=0`。
+  **このログ行だけを見て「reserve された」と誤読しないこと** — 判定は終了時の `cap`/`reserved`/`chunks` で行う。
+  - **直す場所 (宿題の引き継ぎ・現物確認済)**: `reserve_arenas()` (`src/infer/diffusion.cu:262-281`) 自身に
+    pool 判定は無く、printf (274-280) は `device_arena_reserve()` 呼出 (270-271) の**後**にある。
+    no-op になる判定は **callee 側の早期 return** (`src/kernels/device_arena.cu:436-440`
+    `if (!device_arena_pool_enabled()) return;`) なので、caller からは成否が見えず printf だけが出る。
+    是正は「`device_arena_reserve()` に成否を返させて caller が見る」か
+    「`reserve_arenas()` 側でも `device_arena_pool_enabled()` を見る」のいずれか。
+    G-8k のスコープ外として手を付けていない = **別タスクの宿題**。
 
 ### G-9k: VAE decode 高速化パック (1.197s / 10.4%)
 
@@ -504,7 +717,13 @@ G-0 以降未着手のバケット。内訳の直接 profile は無いが、コ�
 ### micro (単独 Pkg にしない小物)
 
 - `src/infer/unet.cu:761-763` — time_ids を **毎 forward D2H 同期読み** (cudaMemcpy DeviceToHost)。step 間で不変なのでハンドル or 呼び出し側キャッシュで除去 (CFG 20step で 40 回の同期点)。
-- `src/infer/unet.cu:934-937` 等 — 上記 G-8k の swap 化に含める。
+- ~~`src/infer/unet.cu:934-937` 等 — 上記 G-8k の swap 化に含める。~~ **解決済 (G-8k S2 `4dee0b7`)**。
+  `d_cur` の「cudaFree → 別サイズ cudaMalloc」連鎖 (8 箇所) は `reshape_cur()` に集約され、
+  プール経路では**全段の最大サイズ `[B,640,128,128]` を 1 本**確保してポインタを固定するため
+  **swap すら不要**になった (出典: `4dee0b7` 本文)。現物は `src/infer/unet.cu:1045-1068`
+  (起草時に引いていた `:934-937` は現物とズレており、その位置は現在プロファイル用コード)。
+  旧経路 (free→malloc) は `DOLLAMA_POOL=0` 用に**意図的に温存**されているので、grep で
+  `cudaFree(d_cur)` を見つけても撲滅対象ではない。
 - `src/infer/unet.cu:799-807` — push_skip が全 skip を D2D コピー (~40MB/forward)。所有権移動で削減可。~ms 級。
 - `src/kernels/vae_decode.cu:382-438` — `k_conv2d_f32`/`launch_conv2d_f32` は resnet_block_f32 が GEMM 版へ移行済みで**未使用の死コード** (性能でなく保守の話)。
 

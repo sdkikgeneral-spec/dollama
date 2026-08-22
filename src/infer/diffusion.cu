@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -26,6 +27,7 @@
 #include "infer/profile.cuh"
 #include "infer/scheduler.hpp"
 #include "kernels/vae_decode.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/utils.cuh"
 #include "io/safetensors.hpp"
 
@@ -169,6 +171,118 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 } // namespace
 
 // ----------------------------------------------------------------
+// G-8k S3b/S3c: アリーナの事前 reserve (VRAM 収支の本線)。
+//
+//   捨て分の唯一の発生源はチャンク跨ぎなので、live peak を包む 1 本を初期化時に
+//   確保してしまえば跨ぎは原理的に起きず capacity ≒ live peak になる。
+//
+//   **ヘッドルームは比例 (%) ではなく固定バイトを積む (S3c で是正)**:
+//     実測 live peak (= peak_request_bytes) は
+//       UNet 5914MiB / UNetPersist 137MiB
+//     で、出典は S3b (commit 8e2e48d) の e2e 実測 —— 1024^2 / 20step / CFG g=7.5 /
+//     --fast 相当を 4 構成 (POOL=0 / 既定 / RESERVE_MB=0 / ARENA_RELEASE=1) x 3 枚、
+//     計 12 枚回して **変動ゼロ (完全に決定的)** だった値である。
+//     確保列は形状で決まり乱数や実行順に依存しないので、live peak は分散を持たない。
+//     したがって「+10%」のような比例マージンは **何の分散に備えているのか答えられない
+//     根拠のない数字** であり、S3c で固定ヘッドルーム (下記 kArenaHeadroom*) に置き換えた。
+//     予約した VRAM は他プロセス・iGPU/OV 側から見て実際に取り上げられており
+//     (free VRAM を削る実害があり、G-8k のページング事故の直接原因がこれ) 、
+//     使わない予約を比例で膨らませる正当化は無い。**「% に戻す」提案は却下済み。**
+//
+//   解像度・batch・step 構成が変わって live peak がこの値を超えた場合は、
+//   device_arena 側の **reserve 不足警告** が出たうえで従来のチャンク追加へ
+//   フォールバックする。正しさは不変で、静かに壊れる経路は無い。
+//   G-8k T2 (F3) でこの警告は **DOLLAMA_PROFILE に依存せず stderr へ無条件 1 回**
+//   になった ("[ALLOC] reserve shortage: ...")。プロファイル無効の本番走行で
+//   静かに 2 倍遅くなる (S4 実測 11s -> 25s) のを見逃さないため。
+//
+//   env DOLLAMA_ARENA_RESERVE_MB で UNet 側を上書きできる。**0 指定で reserve 無効
+//   = S3 と同じ挙動** (S4b の A/B に必須)。getenv は初回のみ・以後キャッシュ。
+// ----------------------------------------------------------------
+
+// 実測 live peak (S3b 8e2e48d の 4 構成 x 3 枚・変動ゼロ)。
+static const size_t kArenaLivePeakUnetMiB    = 5914;
+static const size_t kArenaLivePeakPersistMiB = 137;
+
+// 固定ヘッドルーム。live peak が決定的なので、比例ではなくこの固定分だけ積む。
+// (端数と将来の小さな配線差を吸収する分。超えたら reserve 不足警告 + フォールバック)
+static const size_t kArenaHeadroomUnetMiB    = 128;
+static const size_t kArenaHeadroomPersistMiB = 32;
+
+// 64MiB 境界へ切り上げ (チャンクの刻みに揃える)。
+static size_t round_up_64mib(size_t mib)
+{
+    return (mib + 63) & ~(size_t)63;
+}
+
+static size_t arena_reserve_unet_mb()
+{
+    static long long v = -1;
+    if (v < 0)
+    {
+        // 5914 + 128 = 6042 -> 64MiB 境界へ切り上げ = 6080MiB
+        v = static_cast<long long>(
+            round_up_64mib(kArenaLivePeakUnetMiB + kArenaHeadroomUnetMiB));
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* e = std::getenv("DOLLAMA_ARENA_RESERVE_MB");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (e != nullptr && e[0] != '\0')
+        {
+            char*           end = nullptr;
+            const long long got = std::strtoll(e, &end, 10);
+            if (end != e && got >= 0)
+            {
+                v = got;  // 0 = reserve 無効 (device_arena_reserve は bytes==0 で no-op)
+            }
+        }
+    }
+    return static_cast<size_t>(v);
+}
+
+// UNetPersist 側の reserve (MiB)。UNet 側が 0 (無効) のときは道連れで無効にする
+// (A/B の被験変数を 1 本に保つため)。
+// 137 + 32 = 169 -> 16MiB 境界へ切り上げ = 176MiB。
+// (UNetPersist は総量が小さいので刻みは 16MiB で足りる。reserve は要求サイズ
+//  ちょうどで 1 本取るため、176MiB がそのまま capacity になる)
+static size_t arena_reserve_persist_mb()
+{
+    if (arena_reserve_unet_mb() == 0)
+    {
+        return 0;
+    }
+    const size_t mib = kArenaLivePeakPersistMiB + kArenaHeadroomPersistMiB;  // 169
+    return (mib + 15) & ~(size_t)15;                                        // 176
+}
+
+// 初期化時と、release 直後の復元に呼ぶ。静止状態でしか呼べない契約
+// (device_arena_reserve が検査する)。
+static void reserve_arenas()
+{
+    const size_t unet_mb    = arena_reserve_unet_mb();
+    const size_t persist_mb = arena_reserve_persist_mb();
+    if (unet_mb == 0)
+    {
+        return;  // reserve 無効 (S3 挙動)
+    }
+    device_arena_reserve(DeviceArenaId::UNet,        unet_mb    << 20);
+    device_arena_reserve(DeviceArenaId::UNetPersist, persist_mb << 20);
+    // 告知は初回のみ (release 併用時は画像ごとに呼ばれるため)。
+    static bool announced = false;
+    if (profile_enabled() && !announced)
+    {
+        announced = true;
+        std::printf("[ALLOC] reserve: unet=%zuMiB unet_persist=%zuMiB"
+                    " (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)\n", unet_mb, persist_mb);
+        std::fflush(stdout);
+    }
+}
+
+// ----------------------------------------------------------------
 // コンストラクタ: 重み 2 つと golden 埋め込みをロードし、埋め込みをデバイス常駐させる。
 // ----------------------------------------------------------------
 DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
@@ -192,39 +306,130 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
         fast_cfg_.epilogue = true;
     }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
+    //   SafeTensors 自体は host 側 (mmap) なので try の外でよい。メンバ
+    //   (unet_weights_ / vae_weights_) も含め、ctor 本体が throw してもメンバの
+    //   デストラクタは正常に走る。始末されないのは下の **生ポインタ / 生ハンドル** だけ。
     SafeTensors embeds(embeds_path);
-    std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
-    std::vector<__half> h_txt  = load_f16(embeds, "input_text_embeds_f16",           kTxtN);
-    std::vector<__half> h_tids = load_f16(embeds, "input_time_ids_f16",              kTidsN);
 
-    CUDA_CHECK(cudaMalloc(&d_encoder_hidden_states_, kEhsN  * sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&d_text_embeds_,           kTxtN  * sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&d_time_ids_,              kTidsN * sizeof(__half)));
+    // ----------------------------------------------------------------
+    // G-8k T2 (F4): ここから下は **デバイス資源を握る区間** なので丸ごと try で覆う。
+    //   コンストラクタが throw するとデストラクタは走らないため、raw な d_* ポインタと
+    //   unet/vae ハンドルは誰も解放しない = そのままリークする。
+    //   覆うのは reserve_arenas() だけでは足りない (T2 相互レビュー 中6 の指摘):
+    //     - 埋め込み 3 本の cudaMalloc / cudaMemcpy (~320KB・実害は小さいが同じ形)
+    //     - unet_weights_create (**5.1GB**)
+    //     - vae_weights_create (~92MB) ← **5.1GB を確保しきった直後にここが落ちる**のは、
+    //       reserve 6080MiB が落ちるより起こりやすい局面ですらある。ここで throw されると
+    //       直前の 5.1GB が丸ごと宙に浮く。
+    //     - reserve_arenas() (UNet 6080MiB -> UNetPersist 176MiB の単発 cudaMalloc。
+    //       UNet だけ通って Persist で落ちると 6080MiB が宙に浮く)
+    //   16GB 板で UI / OpenVINO / ブラウザが VRAM を握っていると、いずれも現実に起こりうる。
+    //   fail-fast の挙動は変えない (rethrow する)。投げる前に自分で後始末するだけ。
+    //   後始末は destroy_resources() 1 本に委ねる: 破棄順 (埋め込み -> unet -> vae) を
+    //   デストラクタと共有し、**部分構築でも安全** (全ポインタメンバが NSDMI で nullptr
+    //   初期化されており、破棄済みは nullptr に落とすので冪等)。
+    //   **生ハンドルを cudaFree するだけの実装にしてはならない** — アリーナを返すのは
+    //   unet_weights_destroy の側なので、そこを通さないと 6GB 級が残る。
+    // ----------------------------------------------------------------
+    try
+    {
+        std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
+        std::vector<__half> h_txt  = load_f16(embeds, "input_text_embeds_f16",           kTxtN);
+        std::vector<__half> h_tids = load_f16(embeds, "input_time_ids_f16",              kTidsN);
 
-    CUDA_CHECK(cudaMemcpy(d_encoder_hidden_states_, h_ehs.data(),
-                          kEhsN * sizeof(__half), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_text_embeds_, h_txt.data(),
-                          kTxtN * sizeof(__half), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_time_ids_, h_tids.data(),
-                          kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMalloc(&d_encoder_hidden_states_, kEhsN  * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_text_embeds_,           kTxtN  * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_time_ids_,              kTidsN * sizeof(__half)));
 
-    // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
-    //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
-    unet_weights_handle_ = unet_weights_create(unet_weights_);
+        CUDA_CHECK(cudaMemcpy(d_encoder_hidden_states_, h_ehs.data(),
+                              kEhsN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_text_embeds_, h_txt.data(),
+                              kTxtN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_time_ids_, h_tids.data(),
+                              kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
 
-    // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
-    //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
-    vae_weights_handle_ = vae_weights_create(vae_weights_);
+        // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
+        //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
+        unet_weights_handle_ = unet_weights_create(unet_weights_);
+
+        // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
+        //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
+        vae_weights_handle_ = vae_weights_create(vae_weights_);
+
+        // G-8k S3b: 重みロード後・最初の generate 前に 1 回だけアリーナを reserve する。
+        //   ここはアリーナが静止状態であることが保証される唯一の安全地帯。
+        reserve_arenas();
+    }
+    catch (...)
+    {
+        destroy_resources();
+        throw;
+    }
+}
+
+// ----------------------------------------------------------------
+// G-8k T2 (F2/F4): デバイス資源の後始末を 1 本に括る。
+//   呼ばれるのは 2 箇所だけ: デストラクタと、**コンストラクタの device 確保区間**
+//   (埋め込み malloc/memcpy + unet_weights_create + vae_weights_create +
+//   reserve_arenas をまとめて覆う try) の catch。
+//   両者で破棄順が食い違うと「ctor 失敗時だけ 5-6GB リーク」のような差分バグに
+//   なるため、順序 (埋め込み -> unet -> vae) をここ 1 箇所で持つ。
+//   **部分構築でも安全であること**が ctor catch から呼ぶ前提: 全ポインタメンバは
+//   NSDMI で nullptr 初期化されており、どこで throw しても「作れた分だけ」畳む。
+//   例外は一切外へ出さない (dtor から出ると std::terminate)。unet_weights_destroy の
+//   アリーナ解放は既に device_arena_release_noexcept 化されている (unet.cu) が、
+//   ここでも try/catch で二重に止める。
+//   冪等: 破棄したメンバは nullptr に落とすので、2 回呼んでも安全。
+// ----------------------------------------------------------------
+void DiffusionPipeline::destroy_resources() noexcept
+{
+    // 埋め込み 3 本 (CUDA_CHECK は使わず素の free = 投げない)。
+    if (d_encoder_hidden_states_ != nullptr)
+    {
+        cudaFree(d_encoder_hidden_states_);
+        d_encoder_hidden_states_ = nullptr;
+    }
+    if (d_text_embeds_ != nullptr)
+    {
+        cudaFree(d_text_embeds_);
+        d_text_embeds_ = nullptr;
+    }
+    if (d_time_ids_ != nullptr)
+    {
+        cudaFree(d_time_ids_);
+        d_time_ids_ = nullptr;
+    }
+
+    // 常駐重み。unet 側は内部で UNet / UNetPersist アリーナも返す。
+    if (unet_weights_handle_ != nullptr)
+    {
+        UnetWeightsHandle h  = unet_weights_handle_;
+        unet_weights_handle_ = nullptr;
+        try
+        {
+            unet_weights_destroy(h);
+        }
+        catch (...)
+        {
+        }
+    }
+    if (vae_weights_handle_ != nullptr)
+    {
+        VaeWeightsHandle h  = vae_weights_handle_;
+        vae_weights_handle_ = nullptr;
+        try
+        {
+            vae_weights_destroy(h);
+        }
+        catch (...)
+        {
+        }
+    }
 }
 
 DiffusionPipeline::~DiffusionPipeline()
 {
-    // デストラクタでは例外を投げない (CUDA_CHECK は使わず素の free)。
-    if (d_encoder_hidden_states_ != nullptr) { cudaFree(d_encoder_hidden_states_); }
-    if (d_text_embeds_ != nullptr)           { cudaFree(d_text_embeds_); }
-    if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
-    if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
-    if (vae_weights_handle_ != nullptr)      { vae_weights_destroy(vae_weights_handle_); }
+    destroy_resources();
 }
 
 // ----------------------------------------------------------------
@@ -258,6 +463,58 @@ void DiffusionPipeline::clear_loras()
     unet_clear_loras(unet_weights_handle_);
 }
 
+// ----------------------------------------------------------------
+// G-8k S3: 画像 1 枚を出し終えた境界でアリーナのチャンクを返すかどうか。
+//   既定 OFF。env DOLLAMA_ARENA_RELEASE=1 のときだけ有効。
+//   位置づけ: S4 の VRAM 主ゲートが落ちたときの救済策 (VRAM を返す代わりに次画像の
+//   初回チャンク確保が復活する) を、同一走行で A/B 比較できるようにするためのスイッチ。
+//   **これは device_arena.cuh が禁じている「定期 trim / step 間 trim」ではない**:
+//   呼ばれるのは画像境界 (step ループの完全な外側) だけで、step ループ内の
+//   cudaMalloc/cudaFree 0 という目的は一切損なわない。
+//   env 読みの作法は fast_config.hpp の fast_env_true に倣い初回のみ getenv (以後キャッシュ)。
+// ----------------------------------------------------------------
+static bool arena_release_enabled()
+{
+    static int e = -1;
+    if (e < 0)
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* v = std::getenv("DOLLAMA_ARENA_RELEASE");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        e = (v != nullptr && std::strcmp(v, "1") == 0) ? 1 : 0;
+    }
+    return e == 1;
+}
+
+// 画像境界でのアリーナ解放 (既定 OFF)。
+static void maybe_release_arenas()
+{
+    if (!arena_release_enabled())
+    {
+        return;
+    }
+    // G-8k T2 (F2): **ここは noexcept 化しない**。generate 経路 (画像境界) であって
+    //   デストラクタではない。release が throw する状況で黙って false を返し、直後の
+    //   reserve_arenas() だけやり直すと、壊れた状態のまま生成が続いてしまう。
+    //   落ちる契約を維持するのが正しい。noexcept 版の用途は unet_weights_destroy
+    //   (デストラクタ経路) の 1 点だけ。
+    device_arena_release(DeviceArenaId::UNet);
+    device_arena_release(DeviceArenaId::UNetPersist);
+
+    // G-8k S3b: release は reserve した 1 本も返してしまう。復元しないと次画像が
+    // チャンク成長へ逆戻りし、**reserve 分と成長分が重なって VRAM peak が最悪化する**
+    // (実測: reserve+release 併用で PEAK_USED が 14250MB -> 16302MB = 物理張り付き)。
+    // よって release 直後に必ず reserve をやり直す。reserve 無効時 (RESERVE_MB=0) は
+    // no-op なので、S3 の release 挙動はそのまま残る。
+    reserve_arenas();
+}
+
+// ----------------------------------------------------------------
 // ----------------------------------------------------------------
 // guidance_scale=1.0 の簡略オーバーロード。
 // ----------------------------------------------------------------
@@ -461,6 +718,9 @@ void DiffusionPipeline::generate(int                   steps,
     CUDA_CHECK(cudaFree(d_latent));
     CUDA_CHECK(cudaFree(d_noise_pred));
     CUDA_CHECK(cudaFree(d_image));
+
+    // G-8k S3: 画像境界での明示解放 (既定 OFF / DOLLAMA_ARENA_RELEASE=1 のみ)。
+    maybe_release_arenas();
 }
 
 // ----------------------------------------------------------------
@@ -712,6 +972,10 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
         CUDA_CHECK(cudaFree(d_latent2));
         CUDA_CHECK(cudaFree(d_noise2));
     }
+
+    // G-8k S3: 画像境界での明示解放 (既定 OFF / DOLLAMA_ARENA_RELEASE=1 のみ)。
+    // 出荷経路 (txt2img) も同一走行で A/B できるよう generate と同じ位置に置く。
+    maybe_release_arenas();
 }
 
 } // namespace dollama

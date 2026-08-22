@@ -22,7 +22,22 @@ meson test -C build --verbose spsc_queue
 
 # テスト結果ログ確認
 cat build/meson-logs/testlog.txt
+
+# 単体 exe を直接走らせてログを採る場合は 2>&1 を必ず付ける (下記の注意)
+DOLLAMA_PROFILE=1 ./build/src/prof_arena_e2e.exe > run.log 2>&1
 ```
+
+★**`[ALLOC]` ログのストリームは 2 系統に割れている (G-8k S6 / F1〜F7 以降)** — 採取時は必ず `2>&1`。
+
+| 出力 | ストリーム | 出所 |
+|---|---|---|
+| `[ALLOC] reserve shortage: arena=…` | **stderr** (`DOLLAMA_PROFILE` に関係なく無条件 1 回) | `src/kernels/device_arena.cu:351` |
+| `[ALLOC] device_arena_release_noexcept: release skipped; …` | **stderr** | `src/kernels/device_arena.cu:560` (unknown 例外側は `:569`) |
+| `[ALLOC] reserve: unet=…MiB unet_persist=…MiB` | stdout (`DOLLAMA_PROFILE=1` 配下) | `src/infer/diffusion.cu:279` |
+| `[ALLOC] arena=… cap=… reserved=… live_peak=… cursor_peak=…` (破棄時サマリ) | stdout (`DOLLAMA_PROFILE=1` 配下) | `src/infer/unet.cu:1360` |
+
+**stdout だけをリダイレクトする採取では、いちばん拾いたい `reserve shortage` の 1 行が落ちる。**
+経緯は `docs/measurements-log.md` の「G-8k S6 (T2)」節 / `docs/fast-mode-plan.md` の G-8k 実装記録「S6」項。
 
 ---
 
@@ -449,7 +464,7 @@ endif
 
 | コンポーネント | テストファイル | 状態 | 主な検証内容 |
 |---|---|---|---|
-| HTTP サーバー (OpenAI 互換) | `test_http.cpp` | ✅ 完了 | 自己リクエストで生成→PNG base64 往復・health/models・往復 2.11ms |
+| HTTP サーバー (OpenAI 互換) | `test_http.cpp` | ✅ 完了 | 自己リクエストで生成→PNG base64 往復・health/models・往復 2.11ms。**G-8k F1 直列化ゲート**: 計装スタブ (generate 内で 120ms スリープ+同時実行数を計測) に**別 prompt** (gate-A/gate-B) を 2 本同時 POST し、①生成器内の同時実行 max==1 (直列化)・②**遅い側の個別レイテンシ ≥ 競合なし実測基準+0.8×busy** (= 窓が実際に開いた正の証拠。①は否定形ゆえ「そもそも重ならなかった」でも通るため必須。総経過時間は直列化時も非重複時も等しく ~2×busy なので判別に使えない。しきい値を素朴に `1.5×busy` の絶対値にすると **HTTP オーバーヘッドが busy に対して大きい設定で偽 PASS する** — 負のコントロールで busy=1ms + ロック削除が 8 回中 2 回緑になったため、単発実測を差し引く形へ是正。あわせて `static_assert(kBusyMs >= 50)` で窓幅の silent な縮小をコンパイル時に封止)・③各応答 PNG が**その prompt の**単発参照とバイト一致 (別 prompt ゆえ応答のクロス配送も検出。同一 prompt だと StubGenerator が決定的・無状態なのでトートロジーになる) をハードゲート。負のコントロール検算済 (repo 外コピーでビルド: `lock_guard` 行のみ削除 → busy=120/50 とも **8/8 FAIL** `同時実行 max=2`・現行構成は 8/8 PASS・busy=1ms は static_assert で**コンパイル停止**)。「200 が 2 本返った」では直列化を証明しない |
 | PNG メタ往復 (character-bible §7) | `test_png_meta.cpp` | ✅ 完了 | 構造体⇔§7 JSON⇔tEXt の往復・日本語 name・enum 全網羅 (Sex×Matting×ColorMode)・破損/欠落の前方互換・ベンチ |
 
 ### Phase 4 (自作タグ生成 LM, 旧 BitNet b1.58)

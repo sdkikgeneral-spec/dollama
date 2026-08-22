@@ -30,9 +30,11 @@
 #include <vector>
 
 #ifdef HAVE_CUDA
+#include <cstdlib>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include "infer/unet.cuh"
+#include "kernels/device_arena.cuh"
 #include "kernels/utils.cuh"
 #include "io/safetensors.hpp"
 #endif
@@ -128,6 +130,78 @@ static std::vector<float> gather_np(const __half* d_np, size_t n, long& bad)
         out[i] = v;
     }
     return out;
+}
+
+// ----------------------------------------------------------------
+// G-8k S2: unet.cu の Scratch / 常駐バッファ (temb / skip / d_cur) をアリーナ化した
+//   ことに対する回帰ゲート。**配管のみ**の変更なので出力は完全不変であるべきで、
+//   ハードゲートは SSIM ではなく memcmp のビット一致とする。
+//
+//   S1b と同じ思想で「単なる 3 連走」では不足とみなす:
+//     run 間にアリーナ領域を 0xFF / 0x00 で汚染してから rewind し、次の run が
+//     同じ領域を再利用するよう仕向ける。ここで出力が変われば「未初期化領域を
+//     読んでいた既存バグ」の発覚であり、ゼロ埋め等で通してはならない (即報告)。
+//
+//   さらに forward あたりの実 cudaMalloc / cudaFree が 0 に収束することも見る
+//   (定常状態の最終ゲートは S4 で e2e 実バイナリで取る)。
+// ----------------------------------------------------------------
+
+// アリーナ領域を bump 順にたどって汚染し、rewind で戻す (次の確保が同じ領域を再利用)。
+static void poison_arena(DeviceArenaId id, size_t bytes, int pattern)
+{
+    if (bytes == 0)
+    {
+        return;
+    }
+    DeviceArenaScope sc(id);
+    const size_t     block = (size_t)16 << 20;
+    size_t           done  = 0;
+    while (done < bytes)
+    {
+        const size_t n = (bytes - done < block) ? (bytes - done) : block;
+        void*        p = sc.alloc_bytes(n);
+        if (p == nullptr)
+        {
+            break;
+        }
+        CUDA_CHECK(cudaMemset(p, pattern, n));
+        done += n;
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+// noise_pred の生バイト列を回収 (FP16 のまま = memcmp 用)。
+static std::vector<__half> gather_raw(const __half* d_np, size_t n)
+{
+    std::vector<__half> h(n);
+    CUDA_CHECK(cudaMemcpy(h.data(), d_np, n * sizeof(__half), cudaMemcpyDeviceToHost));
+    return h;
+}
+
+// バイト列をファイルへダンプ (DOLLAMA_G8K_DUMP 接頭辞が設定されているときのみ)。
+//   DOLLAMA_POOL=0 との突合はプロセス単位のキルスイッチのため外部 cmp で行う。
+static void dump_bytes(const char* label, const void* data, size_t bytes)
+{
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+    const char* prefix = std::getenv("DOLLAMA_G8K_DUMP");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+    if (prefix == nullptr || prefix[0] == '\0')
+    {
+        return;
+    }
+    const std::string path = std::string(prefix) + "_" + label + ".bin";
+    std::ofstream     ofs(path.c_str(), std::ios::binary);
+    if (!ofs)
+    {
+        std::cerr << "[g8k] ダンプ失敗: " << path << "\n";
+        return;
+    }
+    ofs.write(static_cast<const char*>(data), static_cast<std::streamsize>(bytes));
 }
 
 static int run_test()
@@ -252,6 +326,110 @@ static int run_test()
     if (bad_ep != 0)      { std::cerr << "[test_unet_fast] FAIL: epilogue Inf/NaN\n"; ok = false; }
     if (ssim_ep < 0.9999) { std::cerr << "[test_unet_fast] FAIL: epilogue vs default SSIM "
                                       << ssim_ep << " < 0.9999\n"; ok = false; }
+
+    // --- (2c) G-8k S2: アリーナ再利用に対する memcmp ビット一致ゲート ---
+    //     default / fast の両方で、汚染 → rewind → 再走 を 3 回まわしてビット一致を取る。
+    {
+        __half* d_np_g8k = nullptr;
+        CUDA_CHECK(cudaMalloc(&d_np_g8k, latent_n * sizeof(__half)));
+
+        struct Cfg { const char* label; bool attn_fast; bool epilogue; };
+        const Cfg cfgs[3] = {
+            {"default",  false, false},
+            {"fast",     true,  false},
+            {"epilogue", true,  true },
+        };
+
+        for (int ci = 0; ci < 3; ++ci)
+        {
+            const Cfg& cfg = cfgs[ci];
+            std::vector<std::vector<__half>> runs(3);
+            const int patterns[3] = {-1, 0xFF, 0x00};  // -1 = 汚染なし
+            uint64_t  last_malloc = 0, last_free = 0;
+            size_t    cap_unet = 0, cap_persist = 0;
+
+            for (int r = 0; r < 3; ++r)
+            {
+                if (patterns[r] >= 0)
+                {
+                    // 直前 run のピーク使用量ぶんを、両アリーナとも bump 順になぞって汚す。
+                    const DeviceArenaStats su = device_arena_stats(DeviceArenaId::UNet);
+                    const DeviceArenaStats sp = device_arena_stats(DeviceArenaId::UNetPersist);
+                    poison_arena(DeviceArenaId::UNet,        su.peak_bytes_in_use, patterns[r]);
+                    poison_arena(DeviceArenaId::UNetPersist, sp.peak_bytes_in_use, patterns[r]);
+                }
+                // 出力バッファも毎回汚す (書き残しがあれば検出できる)。
+                CUDA_CHECK(cudaMemset(d_np_g8k, 0xCD, latent_n * sizeof(__half)));
+
+                // カウンタとピークを毎 run リセットする。peak_request_bytes は
+                // 「この forward だけの真の同時生存量」になり、poison (アリーナ経由で
+                // 大量に確保する) の混入を排除できる。
+                device_arena_reset_counters(DeviceArenaId::UNet);
+                device_arena_reset_counters(DeviceArenaId::UNetPersist);
+                launch_unet(uh, d_latent, timestep, d_ehs, d_txt, d_tids, d_np_g8k,
+                            cfg.attn_fast, cfg.epilogue);
+                CUDA_CHECK(cudaDeviceSynchronize());
+                const DeviceArenaStats u1 = device_arena_stats(DeviceArenaId::UNet);
+                const DeviceArenaStats p1 = device_arena_stats(DeviceArenaId::UNetPersist);
+
+                last_malloc = u1.cuda_malloc_calls + p1.cuda_malloc_calls;
+                last_free   = u1.cuda_free_calls + p1.cuda_free_calls;
+                cap_unet    = u1.total_capacity;
+                cap_persist = p1.total_capacity;
+
+                // G-8k S2b VRAM ゲート: 総容量 − 真の同時生存ピーク <= 512MB。
+                //   live (peak_request_bytes) は捨て分を含まない値で、POOL=0 の
+                //   bytes_in_use と直接比較できる (実測で default 1095MiB が一致)。
+                const size_t cap_sum  = u1.total_capacity + p1.total_capacity;
+                const size_t live_pk  = u1.peak_request_bytes + p1.peak_request_bytes;
+                const long long over  = (long long)(cap_sum >> 20) - (long long)(live_pk >> 20);
+                std::cout << "[g8k_s2] " << cfg.label << " r" << r << " footprint: unet cap="
+                          << (u1.total_capacity >> 20) << "MiB live_peak="
+                          << (u1.peak_request_bytes >> 20) << "MiB (cursor="
+                          << (u1.peak_bytes_in_use >> 20) << "MiB) / persist cap="
+                          << (p1.total_capacity >> 20) << "MiB live_peak="
+                          << (p1.peak_request_bytes >> 20) << "MiB | overhead = "
+                          << (cap_sum >> 20) << " - " << (live_pk >> 20) << " = " << over << "MiB\n";
+                if (device_arena_pool_enabled() && over > 512)
+                {
+                    std::cerr << "[g8k_s2] FAIL: VRAM overhead " << over
+                              << "MiB > 512MiB (" << cfg.label << " r" << r << ")\n";
+                    ok = false;
+                }
+
+                runs[r] = gather_raw(d_np_g8k, latent_n);
+            }
+
+            const size_t nbytes = latent_n * sizeof(__half);
+            const bool eq01 = (std::memcmp(runs[0].data(), runs[1].data(), nbytes) == 0);
+            const bool eq02 = (std::memcmp(runs[0].data(), runs[2].data(), nbytes) == 0);
+            std::cout << "[g8k_s2] " << cfg.label
+                      << " run0==run1(0xFF poisoned): " << (eq01 ? "BIT-EXACT" : "DIFF")
+                      << " / run0==run2(0x00 poisoned): " << (eq02 ? "BIT-EXACT" : "DIFF")
+                      << " | pool=" << (device_arena_pool_enabled() ? "on" : "off")
+                      << " last-run cudaMalloc +" << last_malloc
+                      << " cudaFree +" << last_free
+                      << " cap(unet/persist)=" << (cap_unet >> 20) << "/"
+                      << (cap_persist >> 20) << "MiB\n";
+            if (!eq01 || !eq02)
+            {
+                // 未初期化領域の読み出し疑い。ゼロ埋めで通してはならない (即エスカレーション)。
+                std::cerr << "[g8k_s2] FAIL: arena reuse changed the output (" << cfg.label << ")\n";
+                ok = false;
+            }
+            // 定常状態 (3 run 目) では forward あたりの実 cudaMalloc/cudaFree が 0 であること。
+            if (device_arena_pool_enabled() && (last_malloc != 0 || last_free != 0))
+            {
+                std::cerr << "[g8k_s2] FAIL: steady-state alloc not zero (" << cfg.label
+                          << ") malloc=" << last_malloc << " free=" << last_free << "\n";
+                ok = false;
+            }
+            // default 経路の出力は golden 相当のアンカー。POOL=0 との外部 cmp 用にダンプ。
+            dump_bytes(cfg.label, runs[0].data(), nbytes);
+        }
+
+        CUDA_CHECK(cudaFree(d_np_g8k));
+    }
 
     // --- (3) 速度: default / fast の 1step レイテンシ (cudaEvent 中央値, warmup2/iters5) ---
     //     warm ハンドル経路 (重み再転送なし) で計測するため attention の律速比率が実態のまま

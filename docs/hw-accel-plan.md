@@ -114,7 +114,7 @@ e2e を動かす投資は **fast-mode-plan.md の G 系が唯一の主線**。�
 
 ```
 [e2e を動かす道 = GPU 側のみ]
-  G-4k (epilogue 融合・着手中) ──► G-8k (step ループ内 cudaMalloc 撲滅・未起票中の最有力)
+  G-4k (epilogue 融合・✅完了) ──► G-8k (step ループ内 cudaMalloc 撲滅・✅完了 2026-08-19)
       ──► G-9k (VAE decode) / G-10k (conv2d 真 batch2) ──► G-5k (FP8) ──► G-6k (出荷判定)
 
 [非 GPU 側 (本 doc)]
@@ -123,10 +123,14 @@ e2e を動かす投資は **fast-mode-plan.md の G 系が唯一の主線**。�
   条件 C: パイプライン並列で新ワークを足す ──► 速度でなく品質施策として roadmap 側で起票 (解剖検査等)
 ```
 
-- **G-8k (step ループ内 cudaMalloc/cudaFree 撲滅)** が未起票バックログ中の GPU 側最有力
-  (CFG 20step で ~1,600 malloc/free ペア・cudaFree は暗黙同期点・G-1k CUDA Graphs の前提条件。
-  効果は要 nsys 実測)。非 GPU 側の検討はこれら G 系と**競合させない** — 同じ工数を非 GPU に割く
-  期待値は §1 の通りゼロだからである。
+- **G-8k (step ループ内 cudaMalloc/cudaFree 撲滅)** は ✅ **完了・クローズ済 (S1〜S4b・2026-08-19)**。
+  起票時は「未起票バックログ中の GPU 側最有力」と書いていたが、**もう着手前の候補ではない — 重複起票しないこと**。
+  実装記録・ゲート実数値の正本は `docs/fast-mode-plan.md` の「G-8k: … 実装記録」節と
+  `docs/measurements-log.md` の G-8k S4/S4b 行。
+  なお **G-8k は秒数レバーではなかった**: 価値は ① G-1k (CUDA Graphs) の前提条件充足
+  (capture 中は malloc/free 不可) ② cudaFree の暗黙同期点除去 の 2 点で、秒は characterization に留めている
+  (秒数の本命は **G-10k = conv 真 batch2**)。GPU 側で次に残っているのは G-9k / G-10k → G-5k (FP8) → G-6k。
+  非 GPU 側の検討はこれら G 系と**競合させない** — 同じ工数を非 GPU に割く期待値は §1 の通りゼロだからである。
 - **非 GPU 施策の起票条件 (本 doc の既定)**: 「GPU 律速が解けた後 (条件 A/B)」または
   「パイプライン並列局面で新ワークを載せる (条件 C・ただし速度でなく品質目的)」のいずれかを満たすこと。
   満たさない速度施策の起票は却下を既定とする。
@@ -138,7 +142,7 @@ e2e を動かす投資は **fast-mode-plan.md の G 系が唯一の主線**。�
 | # | 計測 | 目的 | 状態 |
 |---|---|---|---|
 | P-1 | **単発レイテンシの全体分解** (prompt→透過 PNG の cold/warm 別内訳: OV encoder 構築・CLIP・LM・拡散・matting・PNG encode) | §1.2 の直列表は各段の単体実測の寄せ集めで、**一気通貫の実測分解は未取得** (warm 20.93s は UNet+VAE のみ・OV encode 等は付帯外)。cold 初回の OV compile / 重み転送が単発レイテンシの主犯かを確定させる | 要 probe (研究機・SAC OFF 実 exe) |
-| P-2 | nsys 非侵襲 profile で launch 谷・malloc 同期点の直接観測 | G-1k 再判定 / G-8k 効果見積り (GPU 側だが P-1 と同走可能) | 要 nsys (fast-mode-plan 記載済) |
+| P-2 | nsys 非侵襲 profile で launch 谷・malloc 同期点の直接観測 | **G-1k 再判定**が目的。~~G-8k 効果見積り~~ は前提が古い — **G-8k は実装・クローズ済 (2026-08-19)** で、malloc/free の撲滅自体は済み (step ループ内 0 を S4b の G1 で確認)。残る用途は 「同期点が消えた後の launch 谷が Graphs で埋まるか」の判定のみ | 要 nsys (fast-mode-plan 記載済) |
 | P-3 | 実 SDXL + 実 LM でのマルチフレーム queue 待ち再確認 | 0.258 fps / queue 待ち ≈0 は**実寸 sleep スタブ**での確定。実デバイス (OV/CUDA 競合・メモリ帯域共有) で崩れないことの裏取り | 要実走 (優先度低 — スタブ比率は実測値由来で崩れる要因は限定的) |
 | P-4 | G-6k 出荷判定の同条件比較 (dollama vs diffusers を cold+OV 込みで揃える) | 現分母 warm 20.93s vs diffusers 3.8s (cold 込み) は条件不一致 (fast-mode-plan 明記) | G-6k 側で実施 |
 

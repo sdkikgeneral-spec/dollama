@@ -131,6 +131,11 @@ public:
                           int&                  h);
 
 private:
+    // G-8k T2 (F2/F4): デバイス資源の後始末。デストラクタと、コンストラクタ末尾の
+    //   reserve 失敗時 catch の 2 箇所から呼ぶ (破棄順を 1 箇所に持つため)。
+    //   例外は外へ出さない・冪等 (破棄したメンバは nullptr に落とす)。
+    void destroy_resources() noexcept;
+
     SafeTensors unet_weights_;
     SafeTensors vae_weights_;
 

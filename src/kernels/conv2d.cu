@@ -695,15 +695,22 @@ static void launch_conv2d_f32_im2col_gemm(const float* d_in, const float* d_weig
 
     const bool banded = (tile_rows < Hout);
 
+    // G-8k S3: FP16 版 (launch_conv2d_im2col_gemm, S1b) と同型に、中間バッファの
+    // cudaMalloc/cudaFree をデバイスアリーナの bump 確保へ置換する (配管のみ・数値は不変)。
+    //   - RAII: 関数スコープ脱出 (早期 return / 例外) で必ず rewind される。
+    //   - 呼び出し元 launch_conv2d_f32_gemm の d_weight_f32 スコープの内側 = LIFO 合法。
+    // 数値的な正当性: d_col は帯ごとに im2col が K*Ncol 要素を全書き、d_out_band は
+    // GEMM が beta=0 で Cout*Ncol 要素を全書きするため、再利用領域の残留値は読まれない。
+    DeviceArenaScope arena(DeviceArenaId::UNet);
+
     const long col_elems = static_cast<long>(K) * tile_rows * Wout;
-    float* d_col = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_col, static_cast<size_t>(col_elems) * sizeof(float)));
+    float* d_col = arena.alloc<float>(static_cast<size_t>(col_elems));
 
     float* d_out_band = nullptr;
     if (banded)
     {
         const long band_out_elems = static_cast<long>(Cout) * tile_rows * Wout;
-        CUDA_CHECK(cudaMalloc(&d_out_band, static_cast<size_t>(band_out_elems) * sizeof(float)));
+        d_out_band = arena.alloc<float>(static_cast<size_t>(band_out_elems));
     }
 
     for (int ho_base = 0; ho_base < Hout; ho_base += tile_rows)
@@ -738,12 +745,6 @@ static void launch_conv2d_f32_im2col_gemm(const float* d_in, const float* d_weig
         conv_bias_add_rows_f32<<<blocks, CONV_THREADS>>>(d_out, d_bias, Cout, full_ncol);
         CUDA_CHECK_KERNEL();
     }
-
-    CUDA_CHECK(cudaFree(d_col));
-    if (d_out_band != nullptr)
-    {
-        CUDA_CHECK(cudaFree(d_out_band));
-    }
 }
 
 // ----------------------------------------------------------------
@@ -776,9 +777,11 @@ void launch_conv2d_f32_gemm(const float* d_in, const __half* d_weight, const __h
     }
 
     // 重み (FP16) を FP32 へ変換 (A 行列 = weight[Cout, Cin*KH*KW])。
+    // G-8k S3: 重み FP32 スクラッチもアリーナから切る。**キャッシュ化はしない**
+    // (S3 スコープ外・数値不変を最優先。毎回 weight_h2f で作り直す挙動は据え置き)。
     const long wcount = static_cast<long>(Cout) * Cin * KH * KW;
-    float* d_weight_f32 = nullptr;
-    CUDA_CHECK(cudaMalloc(&d_weight_f32, static_cast<size_t>(wcount) * sizeof(float)));
+    DeviceArenaScope warena(DeviceArenaId::UNet);
+    float* d_weight_f32 = warena.alloc<float>(static_cast<size_t>(wcount));
     {
         const int blocks = grid_blocks_for(wcount);
         weight_h2f<<<blocks, CONV_THREADS>>>(d_weight, d_weight_f32, wcount);
@@ -799,8 +802,6 @@ void launch_conv2d_f32_gemm(const float* d_in, const __half* d_weight, const __h
                                       KH, KW, Hout, Wout, stride_h, stride_w,
                                       pad_h, pad_w, dilation_h, dilation_w);
     }
-
-    CUDA_CHECK(cudaFree(d_weight_f32));
 }
 
 } // namespace dollama

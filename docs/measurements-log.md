@@ -71,6 +71,343 @@ CLAUDE.md から退避した完全版。CLAUDE.md には要点のみ残し、各
 | 自作 同一性条件付き実ペア増 (Phase 4-A Phase1, scripts/dollma_make_identity_pairs.py `--out-tag`/`--exclude-post-ids`, danbooru タグメタのみ・画像非取得, seed 20260620・B 多様化非適用で A 単体) | 5k→**12k/25k** 生成。**a12k** train 10,800/val 1,200・**a25k** train 22,500/val 2,500、両者 teacher_retention **1.0**・vocab retention **1.0** (OOV 0)・tokenizer 往復 UNK 0 完全一致。**リーク 0 証跡** (frozen eval 1000 post_id 直読との train/all 交差 0・excluded 交差 0・train/val post_id&text disjoint)。**identity 重複率 (val基準)** 5k 0.253 → 12k 0.2871 → 25k 0.3003 と件数増で漸増 (val の ~70% は train 未見 identity)。25k は cache を 38000→55200 posts へ過去方向延伸 (fetch-factor 2.2)・12k は cache 充足で API 取得なし。本番重み/golden/A1 5k/凍結 eval/#1 本線 train/val 無改変・cache 着手前を `.preA` に退避。成果物は別名 a12k/a25k (gitignore)。dataset-spec §17 | dollma_make_identity_pairs |
 | 自作 同一性条件付き実ペア増 評価クローズ (Phase 4-A Phase2, scripts/dollma_a_seedsweep.py + dollma_a_seedsweep_analyze.py, base(#1 plain) vs a(A2 `--identity` 混合) を a12k で 4 seed (20260620/20260621/42/7) 6ep paired・凍結 diverse-val 生成 set-F1 + identity retention の二物差し, GTX1080Ti FP32) | **A の効果は二分・diverse-val F1 ではなく retention と確定 (A クローズ)**。**① diverse-val 生成 F1/Jaccard = seed ノイズ (頑健でない)**: 4 set/metric (diverse_a/b × F1/Jaccard) すべて判定 NO — diverse_a F1 per-seed delta(a−base) = [−0.0118, −0.0358, **+0.0286 (seed42 反転)**, −0.0405]・across **−0.0149±0.0316** < #1 帯 sd 0.0221 (b NO)・符号不一貫 (a NO)・各 seed CI は 0 除外 (c YES) → **D6 と同型の seed ノイズ**・施策 B ~2,000 飽和とも整合。**② identity retention = 全 seed 頑健に 0.975**: a arm across-seed **0.9748±0.0010** (base ~0.576–0.631・n_cases=1200) = **identity 条件付けの機能基盤**。in-dist pairs.val F1 ≈ base・recall@10 0.78→0.84・a の val_loss < base。**a25k は回さず未使用保持** (12k が seed ノイズである以上 25k 反転安定化は見込み薄)。本番 #1/identity/golden/凍結 eval 無改変・出力は `_seedsweep_a12k/` のみ (gitignore)。**本番即時差し替えなし・`[B-merge-at-A]` で B(b2000)+A(identity) を出荷リトレイン 1 回でまとめ焼き**。training-spec §9.10 / dataset-spec §17.7 / roadmap Phase 4 | dollma_a_seedsweep |
 | 自作 容量増 seed sweep (Phase 4-D, scripts/dollma_d_seedsweep.py + dollma_d_seedsweep_analyze.py, c33(33M) vs d80(80M `DOLLAMA_BITNET_ARCH=d80m`・N_LAYERS 8→16/FFN 1792→2464=79,908,864) を**両アーム同一レシピ** (b2000 多様化 ∧ a12k identity)・`--arch` だけ差で 4 seed (20260620/20260621/42/7) 6ep paired・凍結 diverse-val 生成 set-F1 主指標 + retention/in-dist ガードレール, GTX1080Ti FP32) | **陰性確定・80M 不採用・勝者 = c33(33M)**。**① diverse-val F1/Jaccard = seed ノイズ (全 4 set/metric 判定 NO)**: delta(d80−c33) diverse_a F1 per-seed = [−0.0240, −0.0047, −0.0008, **+0.0133 (seed7 反転)**]・across **−0.0040±0.0154** < c33 帯 sd 0.0114 (b NO)・seed 20260620 負/seed 7 正で符号反転 (a NO)・各 seed CI は 0 除外がバラける (c 一部のみ) → **A12k/D6 と同型の seed ノイズ**・施策 B ~2,000 飽和と整合。diverse_b F1 across −0.0021±0.0181 も同様。**② ガードレール側も 80M 不利**: retention c33 across 0.9778 (全 seed ≥0.975 ✅) vs d80 0.9741 (**3/4 seed 床割れ** 0.9744/0.9739/0.9711)・in-dist pairs.val F1 c33 0.4599 > d80 0.4564 (微退行)。**容量 (33M→80M) では diverse-val F1 は取れない (データ律速)** — 打ち切り基準どおり 80M 不出荷。forward ~2x の対価に見合う実利なし。**施策 B (~2,000 飽和) のみが diverse-val F1 を頑健に押し上げ、A(retention 専)/D(陰性)/蒸留4路線(非寄与) は F1 非寄与**と確定。残低帯域 (diverse_a ~0.31/diverse_b ~0.36) は容量/件数でなく別軸 (多様性の質・アーキ・損失・本命 F) で取る。正典化は `[B-merge-at-A]` で勝者 33M を 1 回まとめ焼き。本番重み/golden/凍結 eval 無改変・出力 `_seedsweep_d80m/` のみ (gitignore)・test 8/8 緑。training-spec §16 / dataset-spec §18 / roadmap Phase 4 | dollma_d_seedsweep |
+| **G-8k S4 e2e アリーナ A/B (2026-08-19 研究機実走・SAC OFF, `src/tests/prof_arena_e2e.cu` 計測専用ハーネス, 同一プロセスで 1024² 20step CFG g=7.5 `--fast` 相当 (attn_fast+batch2+epilogue) を 3 枚連続 (★S5h 注記: 「同一プロセスで」は直前の**「3 枚連続」に掛かる** — 1 走行 = 1 プロセス = 1 構成 (env は起動時固定・構成切替ループ無し) であり、**1 プロセス内で 3 構成を切り替えた統制比較ではない**。熱・常駐が揃った基準線として G-9k/G-10k の効果見積りに流用しないこと。出典: `src/tests/prof_arena_e2e.cu:4` 「同一プロセスで 1024x1024 / 20step の CFG 生成を N 枚 (既定 3) 連続実行し」・`:8` 「走行間で変えるのは DOLLAMA_POOL / DOLLAMA_ARENA_RELEASE のみ」。S4 の生ログは残っていないため、この実行形態はハーネス構造からの演繹 (生ログ不在の詳細は同セル末尾の S5h 注記と残債⑤)) × 3 構成 × 2 ラウンド (順序 1→2→3 / 3→2→1), seed/prompt 固定, プロセス GPU peak = cudaMemGetInfo(total−free) を 5ms 周期サンプラで最大取り, 被験コード (S3 作業ツリー) は無改変)** (★S5h 注記: **本 S4 の生ログは repo に無い** — `docs/logs/` に退避済なのは S4b 分 (`g8k-s4b/`) のみで、本行の数値 (peak 13309/13310・16302MB / 捨て分 4637MiB / 秒 11s→25s 等) は生ログでの再検証ができない。repo に無いことは物理確認済みだが、研究機 temp 原本の有無は本機から検証不能。生ログ不在の正典リストは残債⑤) | **G4 (VRAM 主ゲート) FAIL = ハード停止**。プロセス GPU peak: **POOL=0 13309/13310MB** vs **POOL=1 既定 16302MB** vs **POOL=1+ARENA_RELEASE=1 16302MB** (2 ラウンド完全再現) → 許容 POOL=0+512MB=13821MB に対し **+2993MB 超過**・かつ 16302MB = **物理 total と同値 (free=0 に張り付き)** ゆえ真の要求量は計測不能な上振れ (weights 常駐 7067MB + arena cap 10688MiB ≈ 17.7GB) = **WDDM のホストページングで賄われている**。**G5 (絶対 peak ≤15.0GB) も FAIL** (15.92GB・cudaErrorMemoryAllocation は 0)。捨て分 (`total_capacity − peak_request_bytes`): **unet 10496MiB − 5914MiB = 4582MiB** (収束前の 1 枚目でも 9472−5914 = 3558MiB) / **unet_persist 192MiB − 137MiB = 55MiB** → 合計 **4637MiB**。原因は成長則でなく **GB 級単発要求のチャンク跨ぎ** (VAE decode の FP16 キャリー 512MiB×2・FP32 キャリー 1024MiB×2・up2/up3 の Scratch32 512MiB–1024MiB 級が並ぶ。刻み 256MiB に対し `max(刻み, 要求)` で 512MiB/1024MiB のチャンクが立ち、直前チャンクの残りが丸ごと捨てられる)。**G1 (2 枚目 step 2..20 の実 cudaMalloc/cudaFree = 0) PASS** (POOL=1 両構成): チャンク確保数が **step 数に不変** (steps=2 でも steps=20 でも 1 枚目 18 本・2 枚目 +1 本) = 成長は step1 と VAE decode に限局し step2..20 は 0。POOL=0 は構造上 **25,082 malloc + 25,082 free/枚 (≈1,254/step)** でこれがベースライン。**G2 (既定・2 枚目で chunk_alloc=0 かつ cuda_free=0) FAIL**: 2 枚目に **chunk_alloc=1 本 (+1024MiB, cap 9472→10496MiB)**・cuda_free=0。**収束は 3 枚目** (3 枚目 chunk_alloc=0/cuda_free=0) で S3 申し送り「収束は decode#3」と一致。**G3 (release ON で step ループ内 0 維持) PASS**: step 内 0 は維持。画像境界の malloc/free は **21/21 per image** (unet 18 + persist 3) で毎枚フル再構築 (characterization)。秒 (**characterization のみ・速くなったとは主張しない**): POOL=0 15.71/15.77/15.85/16.12/16.38/16.42 (中央値 **15.98s**) / POOL=1 既定 **1 枚目 10.96–11.44s だが 2 枚目以降 24.25–26.07s へ悪化** (VRAM 飽和後のページング) / POOL=1+release **10.95–11.70s で 3 枚とも安定**。機体は各走行開始時 SM 232–607MHz/40–47℃ の idle から入り終了時 2857–2880MHz/46–52℃・178W 以下で、ラウンド間ドリフトは POOL=0 中央値 15.77→16.12s = **+2.2%** に収まる (G-4k S3 の +9.9% ドリフトのような比較不能状態ではない)。**出力は 3 構成 6 走行 18 枚すべて同一 FNV-1a ハッシュ = ビット一致** (steps=2 の smoke も一致)。**結論: S3 の共有アリーナは既定でも release ON でも VRAM ゲートを通らない。VAE の GB 級キャリーを bump アリーナに載せる方式そのものの再設計 (専用固定バッファ / チャンク跨ぎの解消) が要る** — PL 決裁待ち | prof_arena_e2e |
+| **G-8k S4b e2e アリーナ A/B 再走 (2026-08-19 研究機実走・SAC OFF・HEAD `acca803` ソース無改変, `build/src/prof_arena_e2e.exe` を再ビルドなしで使用, 7 走行すべて独立プロセス・フォアグラウンド・走行間クールダウンは **時刻の取れた 5 区間で実測 68-85s** (`smi_timeline.txt` の post→pre 間隔 = 71/71/68/70/85s。★`pre-A2`/`post-A2` には時刻が無く、**A-1→A-2(棄却)→A-2b の 2 区間は未検証**。再現時もこの帯を守ること — 起草時の「45-60s」は宣言値で一次証拠と食い違っていたため S5b で是正)、走行開始時の状態は **SM 180-1252MHz / 41-46℃** (★**S5d 追記: この 7 値は採用 7 走行と 1:1 対応しない**。`smi_timeline.txt` の pre エントリの内訳は **A-2(棄却)・A-2b・A-3・B-3・B-2・B-1・C** であり、**基準走行 A-1 の開始時状態は記録が存在しない**。VRAM の結論は熱に依存しないが**G6 の秒の議論は依存する**ので、基準側の条件は未記録と理解して読むこと) (**S5c 是正**: 「全走行が SM 180-555MHz の idle から入った」は誤り。`pre-B1` のみ **1252MHz** で他は 180/225/180/532/555/255MHz。**B ラウンドは A より遅い走行** (基準 16.41→17.06s) であり、その中の B-1 が唯一高いクロックから入っている = 条件は完全に均一ではない。丸めて隠さないこと), 共通 env `PROF_IMAGES=3 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 PROF_SAMPLE_MS=5 DOLLAMA_PROFILE=1`, ラウンド A は順序 1→2→3 / ラウンド B は逆順 3→2→1 で熱ドリフトの向きを打ち消し, 補走 C は steps=2)** | **6 ハードゲート全 PASS = S3b/S3c の是正で S4 の FAIL を解消・G-8k S3 系クローズ**。構成別 (PEAK_USED / sec 1-3 枚目): 基準 `DOLLAMA_POOL=0` **13269 / 13299MB**・16.7/16.2/16.3 (A) ・17.1/17.0/17.0 (B) / **既定 (reserve ON) 13649 / 13638MB**・10.9/10.8/10.8 (A)・11.3/11.3/11.2 (B) / 対照 `DOLLAMA_ARENA_RESERVE_MB=0` (= S3 挙動) **16302MB (物理全量)**・12.0/**38.0**/**35.7** (A)・11.8/34.3/34.3 (B) / 補走 C (既定 steps=2) 13644MB・2.35/2.23/2.16。基準 peak・既定 peak の採り方 (**S5b で是正**): **基準に max (13299) を採ると許容枠が 13781 → 13811MB へ広がる = 被験側に有利**であり、「被験側に不利な方を採用した」という当初の記述は**誤り**。**真に保守的な組合せは 基準 min 13269 × 既定 max 13649 = delta +380MB / 余裕 132MB**(max 基準では +350MB / 余裕 162MB)。**どちらでも ≤512MB で G4 PASS = 結論は不変**。なお**余裕 132-162MB は同一構成の走行間ばらつき (基準 13269↔13299 = 30MB) の 4-5 倍しかない** — 枠が潤沢なわけではなく、以後の改修で数百 MB 級を積めばこのゲートは容易に落ちる。**ゲート**: **G0 出力不変 PASS** = 6 走行 18 枚すべて `rgb_hash=0x8a96690109d2b253` の 1 値 (補走 C は steps 違いで別値 `0xbfa9db2aab196421`・C 内 3 枚は一致) / **G1 step ループ内 malloc 撲滅 PASS** = 既定の 2/3 枚目で `d_cudaMalloc=d_cudaFree=0` (unet/persist とも)、補走 C(steps=2) の `cum_cudaMalloc` が A-2(steps=20) と同値 = **チャンク確保が step 数に不変** / **G2' 強化 PASS** = 既定は **1 枚目から `d_chunkAlloc=0`**・実 cudaMalloc は初期化 reserve のみ (**アリーナ 1 本あたり 1 回** = `unet`+`unet_persist` で **アリーナ由来は計 2 回**。★**「プロセス全体で 2 回」ではない** — 重みロードで別途 GB 級の cudaMalloc がある。出典: `docs/logs/g8k-s4b/s4b_roundA_1_pool0.log:4` の `used_after_weight_load=7067MB` (ctx 1317MB からの差分 **5750MB** が重み。★**S5e で出典を訂正**: S5d は既定走行の 13323MB を引いていたが、この値は reserve 6256MiB を含むため「重みの質量」の証拠にならない)) / **G4 VRAM 主ゲート PASS** = 13649 ≤ 13269+512 = 13781MB → **保守側 delta +380MB (余裕 132MB)**・max 基準なら +350MB (余裕 162MB) / **G5' 実害 PASS** = 13649MB ≤ 15360MB かつ peak 時 free **2653MB** ≥ 512MB / **G6 秒の実害 PASS** = 既定 2/3 枚目が POOL=0 比 **+5% 以内** (A/B 両ラウンド)・**S4 のページング事故 (11→25s) は再現せず**。★**G3 (`DOLLAMA_ARENA_RELEASE=1` 経路で step ループ内 0 維持) は S4b のゲート集合から外れている**: S4 は 3 構成目に `POOL=1+ARENA_RELEASE=1` を置いて G3 PASS を記録したが、S4b は 3 構成目を対照 `RESERVE_MB=0` に差し替えたため **7 走行すべて `DOLLAMA_ARENA_RELEASE` は未設定 (既定 OFF)**。つまり **S3c 以後、release 経路の e2e/VRAM 検証は行っていない**。**release は既定 OFF の debug スイッチであり、VRAM 節約目的で有効化しないこと** — S3b 期に reserve と併用したとき **PEAK_USED が 14250MB → 16302MB (物理張り付き) へ最悪化した実測**がある (出典: `src/infer/diffusion.cu:415-419` のコメント。現在は release 直後に reserve をやり直して回避しているが、その組合せは S4b で計測していない)。捨て分 (cap − live_peak): 既定 **205MiB** (unet 166 + persist 39) vs `RESERVE_MB=0` **4637MiB**。★**reserve 定数の一次証拠に不整合 (S5c で注記)**: `8e2e48d` (S3b) 本文は「UNet 6656MiB = S4 実測 live peak **6051MiB** +10%」と書くが、`88b3ae7` / `acca803` 本文および現物 `src/infer/diffusion.cu:202` (`kArenaLivePeakUnetMiB`) は live peak **5914**MiB である。6051 は 5914 + persist live peak 137 の**合算とみられる** (推測)。**再測時に参照すべきは 5914 (unet 単体)** で、6051 を unet の live peak として引かないこと。reserve 不足警告 **0 件**・全 7 本 exit=0・例外なし。**信頼性の担保**: ① 対照 A-3/B-3 で **S4 の病理 (peak 物理張り付き・peak 時 free 0MB・2 枚目以降が既定の約 3.2 倍) が同一バイナリで完全再現** → 基準側に疑義なし・reserve が効いている差分だと分離できた ② 熱ドリフトは A→B で基準 +4.0% / 既定 +3.6% と**同方向** ゆえ順序効果では説明できず G6 の結論は堅い ③ **metric の定義と、それが構成間比較に使える実証 (S5b で書き分け)**: `PEAK_USED` は `cudaMemGetInfo` の total−free = **デバイス全体 (device-wide) の使用量**で他プロセス分を含む = 厳密には「プロセス GPU peak」ではなく、プロセス分は分離できていない。**7 走行すべて `used_after_ctx=1317MB` で完全一致** (`total=16302MB` も一致) してはいるが、**これを「非プロセス分が一定」の証拠として読まないこと (S5c で後退)**: 同じ `smi_timeline.txt` の常駐値は走行途中で **1229-1235MiB → 1139MiB (~95MB 減)** と実際に動いており、device-wide の metric なら `used_after_ctx` も動くはずである。動いていない = **metric が鈍いだけの可能性**があり、**非プロセス分の変動は分離できていない**。★ただし **G4 の結論自体は変わらない** — 対照 A-3/B-3 で S4 の病理が同一バイナリで完全再現している (下記 ①) ことが構成間比較を別途支えている。秒は **characterization のみ (G-8k は秒数レバーではない・「速くなった」とは主張しない。秒数の本命は G-10k = conv 真 batch2)**、かつ熱ドリフトがあるため**絶対秒を性能主張の根拠にしない**。★**ただしこれを「秒に効いていない」と読まないこと (S5d で是正)**: 上表の **A/B (同一バイナリ・env だけを変えた構成間比較)** は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%** (★**S5e で訂正: S5d はこれを「同一プロセス A/B」と書いていたが誤り** — S4b は本行冒頭のとおり**独立プロセス 7 本**・走行間 68-85s であり、**基準走行 A-1 の開始時状態は未記録**。★**S5f で再訂正**: S5e はここに「同一プロセス内で構成を切り替えたのは S4 の方」と書いたが**誤り** — **S4 も 1 走行 1 プロセス**で、構成は起動時 env で固定される。S4/S4b のハーネスは同一の `src/tests/prof_arena_e2e.cu` (git 履歴上 `88b3ae7` の 1 版のみ) で、冒頭コメント `:8` に「走行間で変えるのは DOLLAMA_POOL / DOLLAMA_ARENA_RELEASE のみ」、env は `:150-158` で `run_prof()` 冒頭に 1 度だけ読み `main()` に構成ループは無い (`DOLLAMA_POOL` の実効判定 `src/kernels/device_arena.cu:209-226` も static キャッシュで getenv は初回のみ)。★S4 の生ログは残っていないため、S4 の実行形態はこのハーネス構造からの演繹である。直前の S4 行の「同一プロセスで」は「**1 プロセスで 3 枚連続生成**」の意味 (「同一プロセス」は**枚数**に掛かる) であって構成切替ではない。「同一プロセス」と書くと熱・常駐が揃った実際より強い統制下の値と誤認され、G-9k/G-10k の効果見積りの基準線に流用されうる。なお結論自体は A/B 両ラウンドで再現し熱ドリフト +3.6〜4.0% の桁を大きく超えるため堅い) であり、G6 の「+5% 以内」は**片側ゲート**ゆえ嘘ではないが、要約文言だけを読むと実データと逆向きの結論に至る (独立の傍証: `4dee0b7` 本文の 1step warm **479.3ms(POOL=0) / 329.0ms(プール)**)。これは**旧 malloc 経路との比較**であって正典ハーネス (`test_diffusion_batch2` の DB2_BENCH) での再測を経ていないため**出荷性能値としては使わない** — 禁止しているのは出荷性能の主張であり実測の記述ではない。**この効きをゼロと見なして reserve 縮小やアリーナ廃止を提案しないこと** (下記「既知のトレードオフ」の +6.5GB は見返りゼロのコストではない)。**既知のトレードオフ**: 既定構成は peak が +350MB でも **定常 residency が 7135 → 13599MB (+6.5GB)** に増える (reserve を保持し続けるため) → peak ゲートは通るが**他プロセスと VRAM を分け合う運用では空きが常時 ~2.7GB**。**ログの誤読注意**: `DOLLAMA_POOL=0` の走行でも `[ALLOC] reserve: unet=6080MiB unet_persist=176MiB` の行が出る (**是正 (S5b・現物確認)**: `reserve_arenas()` (`src/infer/diffusion.cu:262-281`) 自身に pool 判定は無く、printf (274-280) は `device_arena_reserve()` 呼出 (270-271) の**後**にある。no-op 判定は callee 側の早期 return (`src/kernels/device_arena.cu:436-440`) で、caller からは成否が見えないため printf だけが出る、が正しい説明)。実体は no-op で終了時は `[ALLOC] arena=unet cap=0MiB reserved=0MiB chunks=0` → **判定は終了時の cap/reserved/chunks で行う** (printf 位置の是正は G-8k スコープ外・別タスクの宿題)。★**`88b3ae7` (S3 checkpoint) のコミット本文にある「S3b が緑になるまで merge 禁止」は、S3c + 本 S4b 全緑 (2026-08-19) をもって解除済み = 現在は無効**。git 履歴は書き換えないため当該文面は remote に残るが、正本は本行と `docs/fast-mode-plan.md` の G-8k 実装記録。**VRAM 計測手順 (S4 で恒久化決裁済・以後の VRAM 計測はこの手順のみ)**: GPU peak = `cudaMemGetInfo` の total−free を **5ms 周期の別スレッドでサンプリングして最大取り** (★**この値は device-wide** = 他プロセス分を含む。「プロセス GPU peak」と呼ばないこと。構成間比較に使う前提として、走行ごとに `used_after_ctx` が一致していることを必ず確認する)、ハーネスは `src/tests/prof_arena_e2e.cu` (**meson test には登録せず build ターゲットのまま**・`prof_unet_fast_warm` の前例に倣う)。★**生ログ全文は `docs/logs/g8k-s4b/` に repo 退避済 (S5d)** — `s4b_roundA_{1_pool0,2_default,3_reserve0}.log` / `s4b_roundB_{3_reserve0,2_default,1_pool0}.log` / `s4b_roundC_steps2_default.log` / `smi_timeline.txt` / `smi_before_A2.txt` の 9 本と、採用しない隔離分 `DISCARDED_A2_overlap_risk.log` の**計 10 本 = 原本ディレクトリの全量** (★S5d は `smi_before_A2.txt` を取りこぼしており S5e で追加。退避分は全 10 本とも原本と byte-identical)。読み方の注意は同ディレクトリの `README.md`。原本の所在は temp (`.../Temp/claude/e--Develop-Projects-dollama/a052f05e-4438-4868-9235-e41ffd700a76/scratchpad/`) だが**セッション ID 付きなので消える** — 以後の参照は repo 内パスを使うこと (S5c までは temp しか指しておらず、消えた時点で S4b 全緑が検証不能な自己申告に降格する状態だった) | prof_arena_e2e |
+| **G-8k S6 (T2) 静的レビュー是正 F1〜F7 の実走再確認 (2026-08-22 研究機 `KIK-WIN-RTX58` 実走・SAC OFF。**是正前ツリー**で V1〜V6 を 2 ラウンド → 書き手と検査者を分けた相互 read-only レビューの指摘 12 件を是正した**最終ツリー**で V1 1 ラウンド + V5 を再確認。e2e ハーネスは S4b と同一の `src/tests/prof_arena_e2e.cu` = **1 走行 1 プロセス 1 構成** (構成切替ループは無い。S4/S4b 行の同名注記と同じ読み方をすること)。★**本行の数値の出典は研究機での実走報告であり、生ログは研究機ローカル `E:\Develop\logs\g8k-t2-verify\` (是正前・再現スクリプト `v1.sh`/`v5.sh`/`v2v3.sh`/`v3b.sh`/`v3c.sh`/`hog.py`/`hog_active.py` 同梱) と `E:\Develop\logs\g8k-t2-verify-final\` (最終ツリー・`v1f.sh`/`v5f.sh`) にしか無い = **repo へ未退避・本機 (開発機) からは検証不能** (S4b と同型の残債。下記⑤に追加)。是正内容そのものの正本は `docs/fast-mode-plan.md` G-8k 実装記録の「S6」項、当初プランと実施差は `docs/g8k-review-fix-plan.md`)** | **meson test**: merge (`5da3bfb`) 直後の**是正前ベースライン 53/53 緑** / **最終ツリー compile rc=0・test rc=0・Ok 53 / Fail 0 / Timeout 0 / Skipped 0**。**新規 meson test は 0 本** (`src/meson.build` 未接触・F5 の 4 ゲートは既存 `test_device_arena` 内の test 関数として増えるため)。**ハードゲート (呼称 H4/H5/H6 は実走側が付けたもの・是正前ツリー / 最終ツリーの双方で全 PASS)**: **H4 (step ループ内 malloc 撲滅)** = image=1 から `d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0` (unet / unet_persist とも)。3 枚後の累計は**アリーナ別に 1 行**で出る (`print_stats` が `arena=` ごとに 1 行を出す・出典 `src/tests/prof_arena_e2e.cu`) → **unet / unet_persist それぞれ `cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1`** = **プロセス合計では実 cudaMalloc 2 回** (アリーナ 1 本あたり 1 回。S4b 行の「プロセス全体で 2 回ではない」注意と同型)、`cap` と `chunks` は累計ではなく**その時点の値**で、`chunks` は両アリーナとも **1**・`cap` は unet **6080MiB** / unet_persist **176MiB**。★**`cap=6080/176MiB` のような「/」連結はログに存在しない合成表記**なので引用しないこと / **H5 (出力不変)** = `rgb_hash` **18/18 枚が `0x8a96690109d2b253`** (= **S4b と同一値**) + 外部 cmp **6/6 BIT-EXACT** / **H6 (VRAM)** = 既定 13397MB − `DOLLAMA_POOL=0` 13057MB = **delta +340MB** ≤ 512MB。★**VRAM は絶対値で書かないこと (今回 V2 で実証)** — 判定は必ず**同一セッションの `POOL=0` 比 delta**で行う。**V1 (順序 1→2→3 / 3→2→1)**: 順序依存なし (A1==B1 13057 / A2==B2 13397 が MB 単位一致)。★**S4b の絶対値 13620/13649MB は再現せず 13397MB。この 252MB 差は未説明である** (★**起草時の「同居量の差 (S4b 待機 1229MiB / 今回 616MiB) による」という帰属は 2026-08-23 の監査で撤回した**: `used_after_ctx=1317MB` は常駐 **1229 / 616 / 123 MiB** のいずれでも不変で、常駐差では説明できない (repo 内 S4b 生ログ 8 本すべてが `used_after_ctx=1317MB total=16302MB` で一致 — 出典 `docs/logs/g8k-s4b/*.log`)。算術も合わない: 常駐差 1229−616 = 613MiB ≒ 643MB に対し、実測差は 13649−13397 = **252MB** (POOL=0 側も 13269−13057 = **212MB**)。しかも**本 doc の S4b 行は S5c で既に**「`used_after_ctx` が動いていない = metric が鈍いだけの可能性があり**非プロセス分の変動は分離できていない**」と後退させており、S6 起草はその後退を無視して同じ因果を再導入していた)。**判定は同一セッションの `POOL=0` 比 delta なので合否には影響しない**。★**将来 200〜300MB 級の絶対値上振れを「同居量の差だろう」で却下しないこと** (G4 の余白は S4b 時点で 132〜162MB しかない = 実退行を見逃す)。**delta は S4b +380MB → 今回 +340MB でほぼ不変**。**V2 (同居 2048MiB の hog を上乗せ)**: POOL=0 15376MB / 既定 15716MB = **delta +340MB で清浄時と完全同値** → **絶対値は同居量ぶん平行移動するが delta は同居に不変**。S4b がゲートを「POOL=0 比 delta」で切った判断の実証。★**V2 が動かしたのは 2048MiB の「アクティブな CUDA 同居プロセス」**であって、**デスクトップ常駐 (`nvidia-smi memory.used`) の差ではない**。V2 は「常駐量の差で絶対値が動く」ことを示していないので、直前の S4b↔S6 の 252MB へ当てはめないこと。**V3 (ctor の 6080MiB 単発 cudaMalloc)**: 同居 hog を idle 2560〜10240MiB / **active (常時触り続ける) 8192・11264MiB** まで振っても **9 条件すべてで reserve 成功** (内訳: idle hog 2560/3072/3584/4096 の 4 本 + 6144/8192/10240 の 3 本 + active 8192/11264 の 2 本 = **9 本**で、9 本とも `reserved=6080MiB`。★起草時の「8 条件」は誤りで 2026-08-23 の監査で是正 — 再現する人が「1 条件が落ちた/除外された」と誤解するため)。★**F4 の異常系は再現しなかった** (WDDM の eviction による) = **F4 / F2 の異常系は一度も発火していない**。実走で確定したのは「**拡大した try が正常系の確保・破棄収支を動かさない**」ことまでで、**異常系の正しさはコード上の推論に依拠する。「F4 を実走で確認した」と書かないこと**。**対照 `DOLLAMA_ARENA_RESERVE_MB=0`**: 1 枚目 11.0s → 2 枚目以降が **A ラウンド 27.1s / B ラウンド 24.3s** = **S4 の病態を再現** (★**1 走行の中で 27.1 → 24.3 と回復したのではない**。実測は `A3_reserve0` = 11.0411 / 27.1192 / 27.185s・`B3_reserve0` = 10.9766 / 24.3435 / 24.314s で、**各ラウンド内では 2 枚目・3 枚目とも悪化したまま**。ラウンド間の 27.1 vs 24.3 の差を「収束」と読まないこと)。reserve が何を防いでいるかの現地証拠。**V6 (`test_unet_fast` の poison 歩行)**: `over = 245MiB` が **18 サンプル全部で固定** (ゲート 512MiB / 余白 267MiB)。S2〜S3c レビューが懸念した ~440MiB 接近は出ずフレークなし。新挙動 (F2 の `release skipped` / F3 の `reserve shortage`) の発火は **0 件** — **是正前ツリー走行の `.log` 24 本すべて**と、**最終ツリー走行の `.log` 4 本**の双方で 0 件。★**起草時の「全 21 ログ」はどちらの本数とも一致しない誤り** (2026-08-23 の監査で是正)。★また **24 本は是正前ツリーの走行**であって、最終ツリーで走らせたのは V1 1 ラウンド + V5 だけである — 「最終ツリーで 21 本走らせて新経路が一度も出なかった」とは読まないこと。**最終ツリーでの再確認 (V1 1 ラウンド + V5)**: H4/H5/H6 全 PASS・**delta +340MB を保持** (絶対値も今回はたまたま 13397 / 13057 で一致)。`rgb_hash 0x8a96690109d2b253` が是正前・S4b と同一。外部 cmp の **sha256 が全 10 本一致** (`uf_*_default` / `uf_*_fast` = `f887962883aa339b…` / `uf_*_epilogue` = `2fe3b4f57cb0983a…` / `vae_*` 4 本 = `5ef9f2d5beb67329…`) = **相互レビュー是正 12 件が数値経路に触れていない直接証拠**。数値パリティも桁まで同一: `default vs golden MAE=7.83832e-05 max_abs=0.000465386 bad=0 SSIM=0.999996` / `fast vs default bit-exact` / `epilogue vs default MAE=6.57082e-05 SSIM=0.999999`。★**「try 拡大が数値経路に触れていない」の主証拠は上の sha256 全 10 本一致と `rgb_hash` 一致**であり、`used_after_weight_load 13323MB` / `used_after_destroy 1391MB` の一致は**補助証拠**として読むこと。とくに `used_after_destroy` は**構成にほぼ感度が無い**指標である — repo 内の S4b 生ログ 8 本すべてで POOL=0 / 既定 / RESERVE_MB=0 / steps=2 の別なく `1391MB` (出典 `docs/logs/g8k-s4b/*.log`) → 一致しても情報量は小さい (**リークが出れば増える**ので片側の検査としては有効)。`used_after_weight_load` の方は構成に感度があり (同ログで既定 **13323MB** vs POOL=0 / RESERVE_MB=0 **7067MB**)、既定同士で一致したことは **reserve + 重みの常駐量が変わっていない**傍証になるが、これも数値経路の証明ではない。**F1 直列化ゲートの実走出力 (`test_http`)**: `[serial] 直列化 OK 同時実行 max=1 calls=2 / 個別レイテンシ 263.61+138.996 ms (max 263.61 >= 236.899 = 競合なし 140.899 +0.8*busy → 窓 OK) / PNG 9332,9332 bytes 各参照と一致 / 総 264.271 ms (busy 120 ms/回)`。**負のコントロール (開発機 MinGW g++ `-O3`・スクラッチ配下でビルドし repo は未変更)**: 現行 **8/8 PASS** / `lock_guard` 行のみ削除 + busy=120 → **8/8 FAIL (`同時実行 max=2`)** / ロック削除 + busy=50 (下限) → **8/8 FAIL** / ロック削除 + busy=1 → **コンパイル停止 (`static_assert(kBusyMs >= 50)`)** = 「ロックを外すと落ちる」ことと「窓を狭めると空撃ちになる」ことの両方を実証。**秒 (characterization のみ・合否にしない・主張は倍率で行う)**: 既定 20step 1024² CFG `--fast` 相当 **10.82 s/枚** vs `DOLLAMA_POOL=0` **16.09 s/枚** (★**この 2 つの絶対秒は同居 VRAM・熱条件付き。見積りや合否の分母に使わないこと**) = **1.487x** (是正前ツリー 1.495x・S4b と 1% 内)。`test_unet_fast` 1step warm (pool on) default **322.058** / fast **251.702** / fast+epi **247.241** ms。**ドリフト併記**: 走行前 40℃ → 後 57℃・終了時 SM 2827/2820MHz・電力 179.9/191.0W・走行間クールダウン 60s・走行内ばらつき ≤1.2%。**G-4k S3 のような同一走行内 ~18% ドリフトは未発生**。★**ただしこれを「ドリフトしていない」と読まないこと** — 走行前後で 40→57℃ 動いており、**絶対秒 (10.82 / 16.09 s/枚・322.058 / 251.702 / 247.241 ms) はいずれも同居・熱条件付き値**である。合否と見積りには**倍率だけ**を使う。★**本行の主張のうち一次証拠に当たれなかったもの** (merge 直後の「是正前ベースライン 53/53 緑」の testlog / 負のコントロール 8/8 の内訳 / 是正前ツリーのソース / 相互レビュー「12 件」の合計) **は下記「G-8k S6 (T2)」節の「★出所を格付けした主張」に列挙してある。そちらを読まずに本行の数値だけを引かないこと。**| prof_arena_e2e / test_device_arena / test_http / test_unet_fast |
+
+### G-8k S5b / S5c / S5d / S5e — 記録監査の是正と残債 (2026-08-19 〜 2026-08-20。S5f/S5g の追記は各項と⑦に明記)
+
+S5 (commit `25772bd`) の記録に対する監査で見つかった食い違いを是正した際の、**残っている宿題**。
+コードは 1 行も触っていない (docs / CLAUDE.md のみ)。
+
+**① VAE SSIM の旧値 0.999992 が 7 箇所残存 (未修正)**
+
+正典 (CLAUDE.md) は **0.999988** へ訂正済みだが、下記は旧値のまま:
+
+| 箇所 | 種別 |
+|---|---|
+| `docs/measurements-log.md:39` | 2-4 実装時の計測行 (**当時の実測値としては正しい** — 履歴としてこのままでも可) |
+| **本 doc**「次のタスク」節「Phase 2 以降」箇条書きの 2-4 (VAE decode) 項 (★実体は表でなく箇条書き — S5f で呼称是正) | 2 次記述 (要追随)。★**同一 doc 内なので行番号では指さない** (下記の注記参照) |
+| `docs/roadmap.md:43` | 2 次記述 (要追随) |
+| `docs/testing.md:444` | 2 次記述 (要追随) |
+| `README.md:90` / `README.md:289` | ★**対外文書**。正典と食い違った状態 |
+| `README_en.md:96` | ★**対外文書**。正典と食い違った状態 |
+
+- 値が動いた実体は **2-6 最適化**であって G-8k ではない。**真の変化点は `b3fe139` 単独** (2026-06-20 =
+  conv を im2col+wmma GEMM 化 + 帯分割 stride バグ修正) で、この時点で既に 0.999988 である
+  (同 commit 本文「noise_pred SSIM 0.999996 / **VAE SSIM 0.999988 復帰**」)。
+  - ★**帰属を決めるのは直前 `f3f4625` (2-6 S2 の 2 本目 = attention flash 化) 本文の
+    「noise_pred SSIM 0.999998 / **VAE SSIM 0.999992 維持**」である** (S5d で追加)。
+    `b3fe139` 本文の「**復帰**」は、**同 commit 内で作り込んだ帯分割 stride バグ (VAE SSIM 0.0116) からの復帰**を
+    指しており、**それ単独では「0.999992 から動いた」ことを示さない**。`f3f4625`(0.999992 維持) →
+    `b3fe139`(0.999988) の **2 本をセットで読んで初めて変化点が確定する**。
+    片方だけを見た担当が「`b3fe139` は 0.0116→0.999988 の話で 0.999992 とは無関係では」と判断して
+    **4 度目の書き換え (S3-E 説への逆戻り) をしないよう、必ず両方を引くこと**。
+  - ★**「変化点は S2」という書き方をしない** (S5d で是正)。2-6 S2 は件名に「(S2)」を持つ commit が
+    **3 本** (`b492085` / `f3f4625` / `b3fe139`) あり、「S2」と書くと前 2 本まで容疑者に入る。
+    **帰属は hash `b3fe139` 単独で書き、必要なら「2-6 S2 の 3 本目」と添える**。以降の
+  S3-A (`502c936`) / S3-D (`2e079e1`) は本文が「golden 維持: VAE SSIM 0.999988」、
+  S3-E (`a71898e`) は「TF32 既定で VAE SSIM=0.999988」と記録しており、いずれも **維持**。
+  出典 commit `b3fe139` / `a71898e`。
+  - ★**S3-E (VAE up2/up3 の TF32 GEMM 化) を変化点として名指ししないこと** — S5b (`6d8f1e1`) の
+    記述はこれを誤って断定していた (S5c で是正)。犯人を S3-E に取り違えると、将来 VAE 精度を
+    疑う担当が TF32 化を revert しに行き、**真の変化点である S2 の FP16 im2col+wmma conv を見逃す**。
+  - **G-8k S3/S3c は VAE 数値を動かしていない** (G-8k S3 前後で出力 FP16 画像が memcmp BIT-EXACT・
+    出典 commit `88b3ae7` 本文)。同本文には **「S3 前ベースラインとも同値」** の一次記録もある
+    (「test_vae_decode SSIM 0.999988 (POOL=0 / S3 前ベースラインとも同値」)。S5b はこれを
+    出典なしと誤認して削除したので、S5c で出典付きで復活させた。
+  - ★ただし**同じ `88b3ae7` 本文の「CLAUDE.md の 0.999992 は陳腐化した記録値」という評価部分は
+    誤りなので引かないこと**。0.999992 は 2-4 当時の正しい実測値であり、「陳腐化」ではなく
+    2-6 S2 での実変化に正典表が追随していなかっただけである (次に `88b3ae7` を読む担当が
+    同じ誤解をしないよう、この 1 行を残す)。
+- S5 の決裁が「CLAUDE.md の訂正は SSIM 1 箇所のみ」だったため、上記 7 箇所は**今回スコープ外として据え置き**。
+  ★とくに README / README_en は対外文書なので、次に触る担当が優先して追随させること。
+
+**② CLAUDE.md に G-8k の行が無い**
+
+CLAUDE.md の計測表には G-2k / G-3kf / G-4k の行はあるが **G-8k の行が無く**、
+さらに G-4k S2 の行 (CLAUDE.md:230 付近) は今も
+「resnet ≤0.95s の合否は **G-10k(conv 真batch2)/G-8k(im2col malloc撲滅) 後**へ再割当」と
+**G-8k を未完了の前提**で書かれている。G-8k は S4b 全緑でクローズ済 (2026-08-19) なので、
+次に CLAUDE.md を触る際に追随させること (再 profile 自体は G-10k 完了後で正しい —
+G-8k は秒数レバーではないため)。
+→ ★**「未完了前提」の側は S5g (2026-08-22) でクローズ**: G-4k S2 行の再割当文に G-8k クローズ済
+(S1〜S4b・2026-08-19) の最小注記を追加した (6 回目監査の中4・ユーザー決裁は最小注記のみ)。
+**「計測表に G-8k の行が無い」の側は未実施のまま残債** (行を足すか否かは未決裁。CLAUDE.md 肥大の
+制約があるため黙って足さない)。
+→ ★**S5h (2026-08-22・ユーザー決裁) で CLAUDE.md 計測表に G-8k 行を 1 行追加 = ②は両側クローズ**。
+内容は S1〜S4b と S4b 6 ハードゲート全 PASS の芯のみ (正本は本 doc の G-8k S4/S4b 行と
+`docs/fast-mode-plan.md` G-8k 実装記録)。test 列は `test_device_arena` — 自動枠 (meson test) があるのは
+これのみで、`prof_arena_e2e` は計測専用・test 未登録 (`src/meson.build` の executable 定義に test() 呼出が
+無いことを S5h で確認)。
+
+★**追随対象は docs だけではない (S5d で追加)**: `.claude/agents/` のエージェント定義にも同型の残置がある。
+`perf-profiler.md:99` は「現在の最有力は G-10k と **G-8k**」のままだった (S5d で是正済)。
+エージェント定義は**起動時にそのまま文脈へ入る**ため、放置すると docs 側で防いだ重複起票が
+エージェント経路から復活する。G-8k 以外の項目でも `grep -rn "最有力\|未着手\|バックログ" .claude/agents/` で
+定期的に突き合わせること。
+
+**③ UNet noise_pred SSIM に同型の陳腐化 (2-5 値 0.999998 が残存・S5c で追加)**
+
+VAE と**同じ形の追随漏れ**が UNet 側にもある。2-6 最適化後の実測は **0.999996** (本 doc の
+2-6 最適化行「golden 維持 (UNet noise_pred SSIM 0.999996 ...)」・`docs/fast-mode-plan.md:295` の
+`test_unet_fast` 実走出力 `default vs golden ... SSIM=0.999996`) だが、下記は 2-5 当時の
+**0.999998** のまま:
+
+| 箇所 | 種別 |
+|---|---|
+| `CLAUDE.md:224` | ★**正典**。VAE と違い未訂正 (S5b/S5c の決裁が「CLAUDE.md は SSIM の VAE セルのみ」ゆえスコープ外) |
+| `docs/measurements-log.md:40` | 2-5 実装時の計測行 (**当時の実測値としては正しい** — 履歴としてこのままでも可) |
+| **本 doc**「次のタスク」節「Phase 2 以降」箇条書きの 2-5 (SDXL UNet) 項 / `docs/roadmap.md:44` / `docs/roadmap.md:182` / `docs/testing.md:445` | 2 次記述 (要追随) |
+| `docs/fast-mode-plan.md:15` / `:22` / `:333` / `:340` / `:438` | 2 次記述 (要追随)。同一 doc 内で :295 の実測 0.999996 と食い違っている |
+| `README.md:90` / `README.md:281` / `README_en.md:96` | ★**対外文書**。正典と食い違い中 |
+| `docs/superpowers/specs/2026-08-05-subagent-refresh-design.md:91` | 2 次記述 (S5d で追加。**S5c 時点の表は「全箇所」を装いながらこの 1 件が漏れていた**) |
+
+VAE と同じく **0.999998 は 2-5 当時の正しい実測値であって誤記ではない**。次に CLAUDE.md を
+触る担当は、VAE セルと同じ体裁 (旧値・変化点 commit・「誤記ではない」の明記) で追随させること。
+なお **`CLAUDE.md:224` には S5d で「2-6 後の実測は 0.999996 = 本残債③」への注記のみ入れた** (値は未置換)。
+
+**④ 秒数側にも同型の陳腐化 (CLAUDE.md の decode 7.96s / 1step ~9.2s・S5d で追加)**
+
+★**S5/S5b/S5c は「SSIM の追随漏れ」だけを直し、同じセルに載っている秒を見落としていた。**
+`CLAUDE.md:223` は「本表が追随していなかった分の訂正」と自己宣言しながら、**同じセル末尾の
+`decode 7.96s` は 2-6 最適化に未追随**だった (`:224` の `1step ~9.2s` も同型)。
+
+| 正典の記載 | 実際に動いた経緯 (一次証拠) | 食い違い |
+|---|---|---|
+| `CLAUDE.md:223` VAE `decode 7.96s` | `b3fe139` 本文「**VAE decode 7.96s→5.73s**」→ `a71898e` 本文「wall-clock: **VAE decode 5.21s→1.16s**」 | `docs/fast-mode-plan.md` の **G-9k は同じ対象を 1.197s** と見積っており **7 倍** |
+| `CLAUDE.md:224` UNet `1step ~9.2s` | `f3f4625` 本文「**UNet 1step ~9.2s → 2.50s**」 | G-3kf の **warm 実測 default 469.5-526ms** と **19 倍** |
+
+同型の秒は**正典以外にも残っている** (S5e で追加。①③ と同じく横断で押さえる):
+
+| 箇所 | 記載 |
+|---|---|
+| **本 doc** 計測表の 2-4 計測行 (「自作 VAE decoder 全段」= ①の表の測定原行と同じ行・S5f で追加) | 「decode **中央値 7.96s**」 (**当時の実測値としては正しい**) |
+| **本 doc** 計測表の 2-5 計測行 (「自作 SDXL UNet 全段」= ③の表の測定原行と同じ行・S5f で追加) | 「1step **中央値 ~9.2s**」 (**当時の実測値としては正しい**) |
+| `docs/testing.md:444` | 「実測 … decode 中央値 **7.96s**」 |
+| **本 doc**「次のタスク」節「Phase 2 以降」箇条書きの 2-5 項 | 「1step **~9.2s**」 |
+
+いずれも**当時の実測値としては正しい**ので誤記ではない。再測時に①③④をまとめて追随させること。
+
+- **誤読経路**: 正典表を分母にして G-9k / G-10k の効果見積りや合否設計を組むと、**桁違いの分母で
+  合否が決まる**。SSIM と違い秒は「効果 %」の分母に直接使われるため実害が大きい。
+- ★**S5d では数値を置き換えていない** — 現況の decode 秒 / 1step 秒は**今回測っていない**からである
+  (未測定値を書けば陳腐化を新しい陳腐化で上書きするだけになる)。CLAUDE.md には
+  **「陳腐化・要再測・分母に使うな」の注記のみ**を入れ、値は旧値に取り消し線を付けて残した。
+- **宿題**: `test_vae_decode` / `test_unet_fast` の現況中央値を研究機で採り、正典表を実測値へ置き換える。
+  そのとき **G-9k の 1.197s と同一ハーネス・同一条件で採ること** (条件が違えばまた比較不能な数値が増える)。
+- **同型の再発防止**: 計測表のセルを訂正するときは、**そのセルに載っている他の指標も同時に検算する**。
+  「SSIM だけ直す」という決裁は、同居する秒を暗黙に「正しい」と保証してしまう。
+
+**⑤ S4b 生ログを repo へ退避済 (S5d で実施) / S3・S3b・S4・S6 (T2) の生ログは依然として無し (S4 は S5h で、S6 は S6 の記録時に列挙へ追加)**
+
+- S4b の生ログ 10 本 (S5d 時点は 9 本・S5e で `smi_before_A2.txt` を追加) は消える temp (セッション ID 付き scratchpad) にしか無く、**S4b 全緑の唯一の一次証拠**が
+  失われる寸前だった → S5d で **`docs/logs/g8k-s4b/` へ無改変のまま退避**した (来歴・読み方の注意は
+  同ディレクトリの `README.md`)。以後 S4b 行から参照すべきはこの repo 内パス。
+- ★**S3 の「96 対 / 102 本」と S3b の「12 枚実測で live peak 変動ゼロ」は生ログが残っていない**
+  (根拠は commit 本文とコードコメントのみ)。解像度 / batch / step を変える改修時はこの 2 つを
+  **再測してから**触ること。
+- ★**S4 (6 走行・上記計測表「G-8k S4」行) の生ログも repo に無い (S5h で本リストへ追加)**:
+  `docs/logs/` にあるのは S4b 分 (`g8k-s4b/`) のみ (物理確認済) で、S4 の peak 13309/13310・16302MB・
+  捨て分 4637MiB・ページング事故 (11s→25s) は**生ログでの再検証ができない** (出典は当時の実走報告 =
+  上記 S4 行のみ)。研究機 temp 原本の有無は本機から検証不能。S4 の実行形態 (1 走行 1 プロセス) も
+  ハーネス構造からの演繹 (S4b 行の S5f 加筆参照)。なおこれは**下記の reserve 定数まわりの列挙とは別軸**
+  (定数値 5914/137 自体が S4b 生ログで検証可能であることは変わらない)。
+- ★**S6 (T2) の実走生ログも repo に無い (本 S6 で追加)**: 是正前ツリーの V1〜V6 は研究機ローカル
+  `E:\Develop\logs\g8k-t2-verify\` (再現スクリプト同梱)、最終ツリー再確認は同 `...\g8k-t2-verify-final\` にあり、
+  **`docs/logs/` 配下は依然 `g8k-s4b/` の 1 ディレクトリのみ** (物理確認済)。したがって上記計測表の
+  「G-8k S6」行の数値 (13397/13057MB・`0x8a96690109d2b253`・sha256 群・10.82/16.09s 等) は
+  **本機からは再検証できず、出典は研究機での実走報告のみ**である。S4b と同型の残債なので、
+  **研究機に触れる次のセッションで `docs/logs/g8k-t2/` 相当へ退避すること** (S4b は退避しないまま
+  temp が消えかけ、全緑が自己申告に降格する寸前だった)。
+- ★**F1 の negative control も走行出力が残っていない (2026-08-23 の監査で判明・本 S6 で追加)**: 「現行 8/8 PASS /
+  `lock_guard` 削除 + busy=120 → 8/8 FAIL / busy=50 → 8/8 FAIL / busy=1 → コンパイル停止」は
+  **`test_http` の直列化ゲートが空撃ちでないことを支える唯一の証拠**だが、実体は開発機のスクラッチ配下
+  (`...\scratchpad\nc\`) にあり、**現存するのは `run_nc2.sh` (`for i in $(seq 1 8)` = 8/8 の出所) /
+  `nc2_compile.log` (static_assert 失敗の実物) / `nc1.exe` `nc4.exe` `pc.exe` だけ**で、
+  **8 回分の走行出力はコンソールのみ = ファイルに落ちていない**。セッション ID 付きディレクトリごと消える。
+  S4b 生ログが temp から消えかけ「全緑が自己申告に降格する寸前だった」のと**同型**なので、
+  再走するなら出力をファイルへ落として repo へ退避すること。
+- ★**ただし reserve 定数 5914 / 137 MiB の「値そのもの」は repo 内の S4b 生ログで検証できる** (S5g で是正。
+  従来ここにあった「定数の**唯一の出典**が S3/S3b の commit 本文とコードコメント」は**過小申告**だった)。
+  `docs/logs/g8k-s4b/` の `.log` 8 本 (採用 7 走行 + 棄却 `DISCARDED_A2_overlap_risk.log`) を全数確認:
+  **`arena=unet live_peak=5914MiB` は 8 本すべて**・**`arena=unet_persist live_peak=137MiB` は 6 本**に印字
+  (POOL=0 の 2 本は `live_peak=0MiB` = pool 無効時は persist アリーナを使わないため、値として正しい挙動)。
+  生ログで検証できるのは**定数値そのものと、POOL / RESERVE_MB / steps に対する不変性**。
+  **この定数まわりで生ログ無しのまま残るのは S3 の「96 対 / 102 本」と、S3b だけが持つ `DOLLAMA_ARENA_RELEASE=1`
+  構成込みの不変性** (S3b の 12 枚に release 構成が入っていた出典は `acca803` 本文「4 構成 (POOL=0 /
+  既定 / RESERVE_MB=0 / ARENA_RELEASE=1) x 3 枚」。S4b は 8 本すべてヘッダが
+  `DOLLAMA_ARENA_RELEASE=(unset)` で release 経路を含まない)。
+
+★**行番号は追記でズレる (S5d で 2 度実際にズレた)**: S5c 時点で正しかった `measurements-log:160/161` は
+本節への加筆で `:217/:218` へ移動し、**それを書き直した直後の加筆でもう一度ズレた**。
+**同一 doc 内を行番号で指すのは自己参照ゆえ構造的に腐る** → 上表では**行番号を使わず「どの節の何の行か」で指す**
+形に変えた。突き合わせは `grep -rn "0.999992" --include=*.md .` の結果と照合すること
+(他 doc への参照は、その doc を編集しない限り腐らないので行番号のままでよい)。
+
+**⑥ 見送りを明示した項目 (S5d)**
+
+- 「現状 (裏取り)」ブロックの旧行 (`conv2d.cu:370/420` 等) に**打ち消し線を付けるのは見送った**。
+  ブロック冒頭の「S1〜S3c で全て解消済み」注記が十分に強く、また一次記録を後から装飾する方向は
+  原本性を損なうため。**ただし grep で行だけ拾うと注記が見えない**ので、当該行を引くときは
+  必ずブロック冒頭を併せて読むこと。
+- ~~`.claude/agents/record-auditor.md` (記録監査人の定義) は repo 未追跡のまま~~
+  → **追跡化済 (2026-08-20・ユーザー決裁)**。監査人自身の定義が記録に残っていないのは不備であり、
+  この定義には**このプロジェクトで実際に起きた事故形態が埋め込まれている** (未達を達成と書く / 数値の陳腐化 /
+  旧記述の残置 / 被験変数の取り違え / 比較条件の非対称 / 代理指標での合格宣言) ため、
+  監査の再現性のうえでも repo に置くのが筋。
+  ★**エージェント定義はセッション起動時にしか読み込まれない** (新設・改訂した直後のセッションでは
+  `Agent type not found` や旧版のまま動く) 点は変わらないので、改訂したら次セッションで効く前提で運用する。
+
+
+**⑦ 6 回目監査 (S5f 後・条件付き PASS / 重大 0・中 4・軽微 4) の扱い (S5g・2026-08-22)**
+
+6 回目監査は「新たに持ち込まれた誤り: なし」= 5 ラウンド続いた「是正が新しい誤りを持ち込む」型が
+初めて止まった。中 4 件のうち、ユーザー決裁で **中3 (上記⑤で是正)・中4 (残債②の「未完了前提」側を
+是正) の 2 件を S5g で実施し、中1・中2 は見送り**。見送り分もここに記録する (指摘の消失防止)。
+★その後のユーザー決裁により、**中1・中2 は S5h (2026-08-22) で実施済** (各項末尾に追記)。
+
+- **中3 (是正済)**: reserve 定数 5914/137 の証拠所在の過小申告 → 上記⑤と `docs/fast-mode-plan.md`
+  「G-8k 実装記録」S3c 項を是正。★監査人の申告「S4b 生ログ **7 本すべて**に 5914/137 が印字」は
+  **本数・内訳とも不正確** (実数は `.log` 8 本・5914 は 8 本すべて・137 は 6 本で POOL=0 の 2 本は
+  `0MiB`) で、S5g で全 8 本を開いて検算した値だけを採った。
+- **中4 (是正済)**: CLAUDE.md が G-8k を未完了前提のまま (残債②で S5b から宿題化されていたが未実施
+  だった)。兄弟コピー (`docs/fast-mode-plan.md` の「追記 (2026-08-19)」2 箇所・
+  `docs/hw-accel-plan.md:117/126-130/145`・`.claude/agents/perf-profiler.md:101-102`) は是正済みで、
+  毎セッション文脈に入る入口の CLAUDE.md だけが取り残されていた → G-4k S2 行に最小注記を追加
+  (詳細は残債②)。
+- **中1 (見送り → S5h・2026-08-22 で実施)**: 上記計測表の **G-8k S4 行**の冒頭「同一プロセスで」が、S4b 行で
+  2 度是正した「同一プロセス」誤読 (S5e→S5f) の**発生源**なのに、発生源自体に注記が無い。
+  S5f は台帳指定どおり隣の S4b 行と `docs/fast-mode-plan.md` だけを直した (スコープ遵守の結果)。
+  誤読経路: 「同一プロセスで … 3 枚連続 × 3 構成 × 2 ラウンド」の「同一プロセス」は**枚数** (1 プロセスで
+  3 枚連続) に掛かるが、構成 (= 1 プロセス内で構成切替) にも掛かると読める。一次証拠:
+  `src/tests/prof_arena_e2e.cu:4` 「同一プロセスで … N 枚 (既定 3) 連続実行」・`:8` 「走行間で変えるのは
+  DOLLAMA_POOL / DOLLAMA_ARENA_RELEASE のみ」・getenv は `:150-151` の 1 度だけ。
+  → **S5h で是正**: S4 行の「3 枚連続」直後に「同一プロセスで」の係り先の注記を追加
+  (`prof_arena_e2e.cu:4` / `:8` は S5h セッションで開き直して確認)。
+- **中2 (見送り → S5h・2026-08-22 で実施)**: S5f が S4b 行に新設した「★S4 の生ログは残っていない (実行形態は
+  ハーネス構造からの演繹)」が、生ログ不在の正典リスト (上記⑤) に入っていない = 片肺。
+  ⑤は S5g 是正後も S3 / S3b (release 込み) しか列挙しておらず、⑤だけを読むと「S4 は生ログあり」と
+  誤読しうる。一次証拠: S4b 行の当該文 (S5f 加筆) と⑤の現行文面。
+  → **S5h で是正**: ⑤の見出しと列挙に S4 を追加し、S4 行 (本 doc 計測表) と `docs/fast-mode-plan.md` の
+  S4 記述 (「S3 の未達 (S4 実測)」項) にも生ログ不在の注記を追加。`docs/logs/` 配下が `g8k-s4b/` のみで
+  あることは物理確認済・研究機 temp 原本の有無は本機から検証不能 (S5f の限定と同じ)。
+
+### G-8k S6 (T2) — S2〜S3c 静的レビューの是正 (F1〜F7) と残債 (2026-08-22)
+
+由来は `docs/g8k-review-fix-plan.md` (2026-08-20 に**開発機**で実施した静的コードレビュー。
+ビルド・実走なしで、**行番号はすべて当時の HEAD `acca803` 基準**)。ユーザー決裁でスコープを
+**F1 / F3 / F4 / F2 は dtor try/catch のみ / F5 / F7** に確定し、**見送りゼロで全件実施**した。
+実測値・ゲート合否は上記計測表の「G-8k S6」行が正本、コード側の実装記録は
+`docs/fast-mode-plan.md` の G-8k 実装記録「S6」項。
+
+**実施内容の一次証拠 (現物の位置)**
+
+| 項目 | 実体 |
+|---|---|
+| F1 生成の直列化 | `src/server/api.cpp` の無名 namespace に `std::mutex g_generate_mutex` を置き、`result = gen.generate(gr);` **1 文だけ**を `lock_guard` で覆う。JSON 解析・base64・応答組み立てはロック外 |
+| F2 (dtor のみ) | `bool device_arena_release_noexcept(DeviceArenaId) noexcept` を新設 (**宣言は `src/kernels/device_arena.cuh` 1 本・実体は `src/kernels/device_arena.cu` 1 TU** = C0 の ODR 事故の再演防止・薄いラッパで release 本体を複製しない)。`unet_weights_destroy` の release 2 本を差し替え + `~DiffusionPipeline` を `destroy_resources() noexcept` へ集約。★**`maybe_release_arenas()` は noexcept 化していない** (generate 経路であって dtor ではないため。握り潰すと壊れた状態のまま生成が続く) |
+| F3 reserve 不足の可視化 | `arena_profile_enabled()` を撤去し **無条件 stderr へ 1 回**。1 回ガード (`reserve_warned`) は維持。粒度は 1 reserve サイクルにつき 1 行 (`DOLLAMA_ARENA_RELEASE=1` では画像ごと・既定構成ではプロセス通算 1 行) |
+| F4 / F4b ctor の例外安全 | `src/infer/diffusion.cu` の try を **device 確保区間全体** (`load_f16`×3 → `cudaMalloc`×3 → `cudaMemcpy`×3 → `unet_weights_create` 5.1GB → `vae_weights_create` 92MB → `reserve_arenas()`) へ拡大し catch で `destroy_resources(); throw;`。★**当初案は `reserve_arenas()` だけを覆う形**だったが、相互レビューで「1 行上の `vae_weights_create` が throw すると同じ 5.1GB リークが残る」と指摘されて範囲を広げた。F4b = `device_arena_reserve` の `chunks.clear()` 直後に `reserved_bytes = 0` と `reserve_warned = false` を追加 (`total_capacity = 0` は既にあった) |
+| F5 破棄経路のゲート | `src/tests/test_device_arena.cu` に **4 ゲートを新設** (`git show HEAD:src/tests/test_device_arena.cu` に `release_noexcept` は **0 件** = **HEAD からの差分としては 4 本すべてが新規**。「3 本で着手しレビュー指摘で 1 本追加」は**未コミットの作業中間状態**の話であり、S6 以前に 3 本あったわけではない)。①生存確保あり + foreign thread から素の `device_arena_release` → **throw する** (落ちる契約の維持) ②同条件で `release_noexcept` → 例外なし `false` かつ**アリーナ状態不変** (`cuda_free_calls` / 容量 / チャンク / カーソルの据え置きを assert) ③静止状態で `release_noexcept` → `true` (素の release と同結果) ④**不正 id (`static_cast<DeviceArenaId>(99)`) → `false`** = `arena_of` 経路も固定。**POOL 枠 / POOL OFF 枠の両方**に登録 |
+| F7 コメント・スタイル | `device_arena.cuh` の「C++14 前提」是正 (実体は **MSVC ホストのときだけ** `src/meson.build` が `-Xcompiler /std:c++14` に落としている) / revert 手順の是正 (`src/kernels/conv2d.cu:374/704/783` が `DeviceArenaId::UNet` をハードコードしているので `vae_decode.cu` の `kVaeArena` 1 行 revert では戻り切らない) / `prof_arena_e2e.cu` の Allman 整形 **9 箇所** (挙動不変) |
+
+**★履歴の訂正 — 「アリーナ化以前は同時 2 リクエストがメモリ安全に成立していた」は誤り**
+
+レビュープラン F1 の症状記述にあったこの一文は、相互レビュー (F1 側の検査者 = cuda-kernel-dev) で
+反証された。生成経路が握る**プロセス共有の無ロック可変状態は 3 つ**あり、アリーナはそのうち最も新しい 1 つ:
+
+- `src/kernels/gemm.cu:363` `g_cublas_handle` — **遅延生成が非アトミック** (`cublas_handle()` の
+  `if (g_cublas_handle == nullptr)` → `cublasCreate`)。導入は `fc97b76` (2026-06-22 / 2-6 S3-B
+  「transformer GEMM を cuBLAS GemmEx に委譲」)。**`cublasSetStream` の呼び出しは repo に 0 箇所**
+  = 全部デフォルトストリーム (現ツリーで `grep -rn cublasSetStream src/` が 1 件ヒットするのは
+  api.cpp に今回書いた**当該コメント自身**であり、`git grep cublasSetStream HEAD -- src/` は 0 件)。
+- `src/kernels/groupnorm.cu:223-238` `g_mb_buf` — **grow-only 再確保** (`floats > g_mb_buf_floats`
+  で `cudaFree` → `cudaMalloc`)。導入は `42ec1be` (2026-07-11 / G-4k S1a)。**出荷 `--fast` は
+  epilogue を含意**するので実運用経路。
+- `src/kernels/device_arena` (G-8k) — owner / cur / offset / req_live が無ロック。
+
+→ **HTTP 並行生成は G-8k の退行ではなく、少なくとも 2-6 から一貫して不成立**。G-8k は 3 つ目の
+共有状態を足した。**このロックを外せる条件は「3 つすべてが個別にスレッド安全化されたとき」**で、
+アリーナだけ直しても外せない (api.cpp の `g_generate_mutex` 定義コメントに 3 状態を列挙済み)。
+なお**再入経路が無いこと**も現物で確認した: `IImageGenerator::generate` の production override は 4 実装
+(`backend_image_generator` / `pipeline_generator` / `txt2img_generator` / `stub_generator`) で
+どれも他の `IImageGenerator` を保持せず、production の呼び出し元は `src/server/api.cpp:225` と
+`src/main.cpp:241` の 2 箇所のみ・`--http` と CLI は 1 プロセス内で排他 (`main.cpp` は `--http` を :224 で return し `--prompt` 分岐 :227 に到達しない)。
+(`src/tests/test_http.cpp` のゲート用デコレータだけは inner 生成器を保持するが、ファネルへは再入しない)
+
+**★F3 で警告文言が変わった (台帳・手順書が旧文言を引用していたら更新すること)**
+
+- **S3b 以来の committed 文言** (`git show 5da3bfb:src/kernels/device_arena.cu` の 350-351 行):
+  `[ALLOC] reserve shortage: arena=%s peak_request %zu MiB > reserve %zu MiB (falling back to chunk growth)`
+  — **stdout・`DOLLAMA_PROFILE=1` 配下**。
+- **S6 確定**: `... (falling back to chunk growth; reserve is undersized -- see reserve_arenas() in src/infer/diffusion.cu)`
+  — **stderr・無条件 1 回**。**接頭辞 `[ALLOC] reserve shortage: arena=…` は不変**なので、
+  接頭辞で grep している採取手順は壊れない。
+- 文面を **arena 非依存**にしたのは相互レビュー 中4 の指摘による: `arena=unet_persist` で出たときに
+  「`DOLLAMA_ARENA_RESERVE_MB` を上げろ」と誘導すると**嘘になる**。persist 側の予約量は
+  `arena_reserve_persist_mb()` (`src/infer/diffusion.cu:252-260`) の **固定 176MiB** (= 137+32 を
+  16MiB 境界へ切上げ) で、この env は persist に対しては「0 か否か」のキルスイッチとしてしか効かない
+  → 従っても警告は消えず、UNet 側の reserve だけ膨らんで VRAM ゲートの余白を削る。
+  ★なお「F3 初版の文面が `; raise DOLLAMA_ARENA_RESERVE_MB` だった」というのは**セッション中の
+  未 commit の中間状態**についての伝聞であり、一次証拠 (commit / ログ) では追えない。**確定版に
+  その文字列が存在しない**ことだけが現物で確認できる事実。
+
+**★実走で確定していないこと (書き方の禁止事項)**
+
+- **F4 / F2 の異常系は一度も発火していない。**「F4 を実走で確認した」と書かないこと。
+  V3 で同居 hog を idle 2560〜10240MiB / active 8192・11264MiB まで振っても **9 条件すべてで
+  reserve は成功**した (WDDM の eviction による)。実走で確定したのは
+  **「拡大した try が正常系の確保・破棄収支を動かさない」**ことまで
+  (`used_after_weight_load 13323MB` / `used_after_destroy 1391MB` が是正前と一致) で、
+  **異常系の正しさはコード上の推論に依拠する**。
+- **VRAM を絶対値で書かない。** V2 で「絶対値は同居量ぶん平行移動するが delta は同居に不変」が
+  実証された。判定は**同一セッションの `POOL=0` 比 delta** (S6 +340MB / S4b +380MB)。
+- **秒を単独で主張しない。** 倍率 (1.487x) + ドリフト併記で書く。
+
+**merge の経緯 (被験変数の混入について)**
+
+時系列は **① 着手前に merge (`5da3bfb`・2026-08-22) → ② その後に PL が「被験変数を増やさないため
+`git merge origin/main` は後回し」と決裁 → ③ 既に済んでいたので、影響が無いことを確かめて続行**、の順。
+(一次証拠で日付が取れるのは merge commit `5da3bfb` 自体だけで、②③ の順序は作業報告による。)取り込んだ **13 コミット** (レビュープラン起草時の見込みは
+11 コミットだった) は `git diff --name-only $(git merge-base d3c00f6 5da3bfb^2) 5da3bfb^2` で
+**`src/` と `meson.build` を 1 行も触っていない**ことを確認済 (実体は UI/Blazor + docs のみ)。
+merge 後のベースラインが **53/53 緑**であることを確認したうえで続行した。
+
+**★出所を格付けした主張 (一次証拠に当たれなかったもの・2026-08-23 の監査で追加)**
+
+以下は**本 repo からは裏が取れない**。引用するときは必ずこの格付けごと引くこと。
+結論 (S6 が数値を動かしていないこと) への影響は小さいが、**「検証済み」として再利用してはいけない**。
+
+| 主張 | 格 | 検算できたこと / できなかったこと |
+|---|---|---|
+| 相互レビューの指摘は **12 件** | 合計は**未検証** | `src/` のコメントに番号が残っているのは **6 件だけ** (`grep -rno "相互レビュー" src/` = 中2 / 中4 / 中6 / 軽1 / 軽3 / 軽6。すべてアリーナ側 = `device_arena.cu` `device_arena.cuh` `unet.cu` `diffusion.cu` `test_device_arena.cu`)。**F1 側 (`api.cpp` / `test_http.cpp`) には番号付きコメントが 0 件**。個々の是正が実在することは現物で確認できるが、**合計 12 という数は確認できない** |
+| merge 直後の**是正前ベースライン 53/53 緑** | **未検証** | 当該 testlog は後続走行で**上書き済みで現存しない**。最終ツリーの 53/53 は別途確認済みだが、**merge 直後の 1 回は自己申告** |
+| 負のコントロール **8/8 PASS / 8/8 FAIL** | 内訳は**未保存** | スクリプト `run_nc2.sh` と `nc2_compile.log` (static_assert 失敗) は現存するが、**8 回分の走行出力はコンソールのみ**。詳細は残債⑤ |
+| S6 **是正前ツリー**での V1〜V6 | ソースが**再現不能** | 是正前ツリーは **commit も stash も無い** (`git stash list` = 空・本 repo で物理確認)。ただし最終ツリーとの数値一致 (sha256 10/10・`used_after_weight_load 13323MB`・`used_after_destroy 1391MB`) は確認済みで、**結論への影響は小** |
+| 開発機 `multi_frame_pipeline` 赤の「stash して再現確認済み」 | **未検証** | `mfp.log` が **0 バイト**で追試不能。原因の PATH 汚染そのものは環境要因であり S6 の変更とは無関係 (研究機では緑) |
+| V1〜V6 / 最終ツリーの**全実測値** | 研究機ローカル | 生ログが repo に無い (残債⑤)。本機 (開発機) には `E:\Develop` 自体が存在しない |
+
+**S6 で残した follow-up (今回スコープ外・別タスク)**
+
+- **`gemm.cu:363` の `g_cublas_handle` 非アトミック遅延生成**と **`groupnorm.cu:223` の `g_mb_buf`
+  grow-only 再確保** — F1 のファネル直列化で実害は塞がれているが、**競合そのものは残存**。
+- **プロセス間は直列化されない**: `dollama.exe --http` と `--prompt` を同時起動すると reserve
+  6080MiB + 重み ~5GB が 2 セット必要になり 16GB 板では VRAM が足りない (排他は 1 プロセス内のみ)。
+- **matting (iGPU) と scoring (NPU) が `generate()` の内側 = ロック内に入った** → 「A の GPU 拡散」と
+  「B の NPU 採点」を重ねられない。**HW 協調はこのプロジェクトの芯**なので、取り戻すなら
+  backend 境界で切り直しが要る (2-6c の `IDiffusionBackend` 境界が候補)。
+- `try_lock` 失敗時に **503 + `Retry-After`** を返す UX 改善余地 (現状はロック待ちで HTTP スレッドが張り付く)。
+- **所有権設計 (参照カウント / 所有移動) は 2-6d (SDXL 3 preset) 着手時へ** — F2 の (a) 参照カウント化 /
+  (b) 所有移動はユーザー決裁で**不採用**。同居を防いでいるのは値保持ではなく
+  `src/server/cli_generate.hpp` の**排他フォールバック梯子**という不変条件である
+  (`DiffusionPipeline` を値で持つラッパは `src/server/diffusion_runner.cu` と
+  `src/server/pipeline_generator.hpp` の 2 つ。梯子を「両方作って良い方を選ぶ」形に書き換えた瞬間に同居が成立する)。
+- `device_arena.cuh` の単行 Allman 1 箇所は据え置き (レビュープランのスコープ外)。
+- **開発機の `multi_frame_pipeline` が赤** (`0xC0000139`) — `C:\Strawberry\c\bin` / `perl\bin` の古い
+  `libstdc++-6.dll` が PATH 先行。`std::jthread` を使う唯一の test。**環境問題で S6 の変更とは無関係**
+  (★**「stash して再現確認済み」は作業報告のみで追試不能** — 採取したはずの `mfp.log` が **0 バイト**。2026-08-23 の監査で格下げ)。**研究機では緑** (最終ツリー 53/53)。
+
 
 ## 次のタスク
 

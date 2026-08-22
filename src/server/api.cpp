@@ -14,6 +14,7 @@
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <mutex>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -62,6 +63,44 @@ bool parse_size(const std::string& s, int& w, int& h)
     }
     return (w > 0 && h > 0);
 }
+
+// G-8k F1: 生成 (IImageGenerator::generate) を直列化するためのロック。
+//
+// なぜ必要か:
+//   cpp-httplib は既定でスレッドプールから複数リクエストを並行ディスパッチする。
+//   一方、生成経路は **プロセス唯一のグローバル可変状態を 3 つ** 握っており、
+//   どれもロックを持たない。したがって生成の同時 2 本は成立しない。
+//
+//   [1] bump アリーナ (src/kernels/device_arena) — G-8k で UNet / VAE / conv2d の
+//       一時バッファをここへ集約した。状態 (owner / cur / offset / req_live) は無ロック。
+//         - 所有権違反を検出できた場合 = 生成 A の step 間 (アリーナ静止の瞬間) に
+//           生成 B が正規の所有権移譲で割り込み、A の次 forward の check_thread が
+//           throw → A が途中 step で 500 になる。
+//         - すり抜けた場合             = check_thread → カーソル bump が非アトミックな
+//           ため両者が静止判定を通過し、同一カーソルから重複払い出し = 画像の破壊。
+//   [2] cuBLAS ハンドル (src/kernels/gemm.cu の g_cublas_handle) — 遅延生成が
+//       非アトミック。同時 2 本で cublasCreate が 2 回走りハンドルが 1 本リークし、
+//       ポインタ書き込み自体が data race。定常状態でも cuBLAS は同一ハンドルの
+//       同時使用を保障しない (本 repo に cublasSetStream は 0 箇所 = 全部デフォルト
+//       ストリーム)。gemm.cu 自身のコメントが「単一 stream・単一スレッド前提」と明言。
+//   [3] GroupNorm multi-block の常駐バッファ (src/kernels/groupnorm.cu の g_mb_buf) —
+//       grow-only 再確保。A が返却ポインタでカーネル実行中に、B がより大きい要求で
+//       入ると cudaFree → A が解放済み VRAM に書く。epilogue 経路限定だが
+//       出荷 --fast は epilogue を含意するので実運用で踏む。
+//
+//   ★ 履歴の訂正: HTTP 並行生成は G-8k の退行ではない。[2] は fc97b76 (2026-06-22 /
+//     2-6 S3-B)、[3] は 42ec1be (2026-07-11 / G-4k S1a) から在る。G-8k は 3 つ目の
+//     共有状態を足しただけで、並行生成は少なくとも 2-6 から一貫して不成立だった。
+//
+//   ★ このロックを外せる条件: **3 つすべて** が個別にスレッド安全化されたとき。
+//     アリーナ単体をロック化しても [2][3] が残るので、このロックは外せない。
+//     「アリーナを直したからもう要らない」と判断すると [2][3] の競合が復活する。
+//
+// なぜファイルスコープか (生成器のメンバにしない理由):
+//   上記 3 つはいずれも生成器インスタンスではなく **プロセス** で共有される資源だから。
+//   生成器インスタンス単位のロックでは、生成器を 2 つ構築した瞬間に守れなくなる。
+//   ファネルは本 TU の handle_generations 1 箇所だけなので、ここに 1 本置けば足りる。
+std::mutex g_generate_mutex;
 
 void handle_generations(IImageGenerator& gen, const httplib::Request& req,
                         httplib::Response& res)
@@ -176,7 +215,15 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
     GenResult result;
     try
     {
-        result = gen.generate(gr);
+        // 直列化 (理由は g_generate_mutex の定義コメント)。ロックのスコープは
+        // gen.generate() の 1 文だけに絞る — JSON 解析・base64 化・応答組み立ては
+        // 並行のままでよい。生成器の内側から本ファネルへ再入する経路は無いので
+        // 非再帰の std::mutex で足りる (IImageGenerator::generate の呼び出し元は
+        // 本関数と CLI 経路の 2 箇所のみ・CLI 経路は --http と排他)。
+        {
+            std::lock_guard<std::mutex> lock(g_generate_mutex);
+            result = gen.generate(gr);
+        }
     }
     catch (const std::invalid_argument& e)
     {

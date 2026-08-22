@@ -1,0 +1,21 @@
+[S4] config images=3 steps=20 g=7.5 fast=1 DOLLAMA_POOL=(unset) DOLLAMA_ARENA_RELEASE=(unset) pool_enabled=1 sample_ms=5
+[S4] used_after_ctx=1317MB total=16302MB
+[ALLOC] reserve: unet=6080MiB unet_persist=176MiB (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)
+[S4] used_after_weight_load=13323MB free=2979MB
+[S4] image=1 sec=11.225 rgb_hash=0x8a96690109d2b253 1024x1024
+[S4] image arena=unet d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=25082 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=240 | cap=176MiB chunks=1 live_peak=137MiB cursor_peak=137MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image=1 peak_used_total=13637MB peak_used_delta_this_image=313MB used_after_image=13594MB
+[S4] image=2 sec=11.1723 rgb_hash=0x8a96690109d2b253 1024x1024
+[S4] image arena=unet d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=25082 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=240 | cap=176MiB chunks=1 live_peak=137MiB cursor_peak=137MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image=2 peak_used_total=13646MB peak_used_delta_this_image=9MB used_after_image=13601MB
+[S4] image=3 sec=11.1375 rgb_hash=0x8a96690109d2b253 1024x1024
+[S4] image arena=unet d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=25082 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=240 | cap=176MiB chunks=1 live_peak=137MiB cursor_peak=137MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image=3 peak_used_total=13649MB peak_used_delta_this_image=2MB used_after_image=13600MB
+[S4] PEAK_USED=13649MB (total=16302MB)
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=75246
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=720
+[S4] used_after_destroy=1391MB
+[S4] FINAL_PEAK_USED=13649MB

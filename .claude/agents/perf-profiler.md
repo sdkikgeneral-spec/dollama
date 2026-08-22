@@ -96,8 +96,10 @@ CPU: プロンプト生成 (自作タグ生成 LM)
 - 全体の支配項は拡散で、その中では **UNet が大半**。
 - **GroupNorm は multi-block 化で 4.2x になったが、resnet バケット全体には効かなかった**
   = バケットの質量は **conv2d** にあると確定済み。
-- 現在の最有力は **G-10k (conv の真 batch2)** と **G-8k (im2col の cudaMalloc 撲滅)**。
+- 現在の最有力は **G-10k (conv の真 batch2)**。
   CFG batch2 が理論 2× に届かないのは conv2d が per-n 直列で batch されないため。
+  ★**G-8k (cudaMalloc/cudaFree 撲滅) は S1〜S4b 全緑でクローズ済 (2026-08-19) — もう着手前の候補ではない。
+  重複起票しないこと** (経緯は `docs/fast-mode-plan.md` の G-8k 実装記録・`docs/measurements-log.md` の S4b 行)。
 - **`cudaMalloc` は隠れた律速。** `DOLLAMA_PROFILE` の確保回数・転送計時を必ず見る。
 - **測定環境のドリフトを疑う**: 機体のクロック・熱で全体が 2 割近く遅くなることがある
   (同一走行内で default のバケットが +9.9% した実例)。**相対倍率を主指標とし、絶対秒は条件付きで報告する。**

@@ -46,6 +46,12 @@ model: opus
 | `npu-benchmarker` | NPU / iGPU / CPU の推論計測とデバイス選定 | **研究機のみ** |
 | `gpu-benchmarker` | RTX5080 実走 (SDXL 生成・rollout 収集・reward 採点・GPU golden) | **研究機のみ** |
 | `perf-profiler` | 拡散パイプラインの律速内訳・occupancy / 電力診断 | **研究機のみ** (計装の著述は両機) |
+| `record-writer` | **記録の執筆・是正** (`docs/` ・CLAUDE.md 計測表・commit 本文)。`src/` は不可侵 | 両機 |
+| `record-auditor` | **記録の敵対的監査** (指摘のみ・書き込み一切なし) | 両機 |
+
+★**記録の書き手 (`record-writer`) と査読者 (`record-auditor`) は必ず分ける。** 同一主体に書かせて
+検査させない。G-8k S5 では**是正が新しい誤りを持ち込む形が 5 ラウンド連続**で起きており、
+検出したのは毎回この分離だった。
 
 ## タスク分割の原則
 
