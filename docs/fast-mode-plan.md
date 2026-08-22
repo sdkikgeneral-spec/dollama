@@ -554,11 +554,11 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
   へ変わっている (**接頭辞 `[ALLOC] reserve shortage: arena=…` は不変**)。詳細は下記「S6」項。
   env **`DOLLAMA_ARENA_RESERVE_MB`** で上書き・**`0` で reserve 無効 (= S3 挙動)**。
 - **S3c (`acca803`)**: ヘッドルームを **「live peak +10%」比例 → +128MiB 固定へ是正**。
-  **算出は 64MiB 境界への切り上げ込み** (`round_up_64mib()`・`src/infer/diffusion.cu:210-223`) である:
+  **算出は境界への切り上げ込み**である (★**刻みはアリーナで違う** — 2026-08-23 の監査で是正。`round_up_64mib()` (`src/infer/diffusion.cu:213-223`) を使うのは **unet 側だけ** (`:225`)。unet_persist は `arena_reserve_persist_mb()` (`:252-260`) の `(mib + 15) & ~15` = **16MiB 境界**で、ソース側コメント `:249` も「16MiB 境界へ切り上げ」と書いている。64MiB 境界なら 169 → 192MiB になるはずだが実際は 176MiB であることからも確かめられる):
   - unet: `kArenaLivePeakUnetMiB=5914` + `kArenaHeadroomUnetMiB=128` = 6042 → **切り上げ 6080MiB**
   - unet_persist: `kArenaLivePeakPersistMiB=137` + `kArenaHeadroomPersistMiB=32` = 169 → **切り上げ 176MiB**
 
-  (単純な加算では 6042 / 169 にしかならない。**チャンクの刻みに揃えるための 64MiB 切り上げ**が入る。)
+  (単純な加算では 6042 / 169 にしかならない。**チャンクの刻みに揃えるための切り上げ**が入る — unet は 64MiB 刻み・unet_persist は 16MiB 刻み。)
   live peak は S3b の 12 枚実測 (4 構成 × 3 枚) で **変動ゼロ** (確保列は形状で決まり乱数や実行順に依存しない) ゆえ、
   比例マージンは「何の分散に備えているのか」を答えられない根拠のない数字だった。**ゲート合わせではなく設計の是正**である。
   - ★**この 12 枚実測は reserve 定数 5914/137 の設計時の出典**であり、崩れれば reserve 不足 (= 警告 +
