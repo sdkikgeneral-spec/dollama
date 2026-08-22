@@ -59,8 +59,14 @@ struct Arena
     std::thread::id owner;
     bool            owner_set = false;
 
-    // G-8k S3b: reserve 済みなのに跨ぎが起きた (= reserve 不足) ことを
-    // DOLLAMA_PROFILE=1 のとき 1 回だけ知らせるためのフラグ。黙って太らせない。
+    // G-8k S3b: reserve 済みなのに跨ぎが起きた (= reserve 不足) ことを知らせたか。
+    // 黙って太らせないための 1 回ガード。**G-8k T2 (F3) で DOLLAMA_PROFILE 条件は
+    // 撤去済み = 環境変数に関係なく無条件に stderr へ 1 回出す** (プロファイル無効の
+    // 本番走行で静かに 2 倍遅くなるのを見逃さないため)。
+    // ここに条件を足し戻すと F3 を静かに revert することになる。足さないこと。
+    // 粒度は「1 reserve サイクルにつき 1 回」: 本フラグは device_arena_reserve と
+    // device_arena_release の両方でクリアされるので、DOLLAMA_ARENA_RELEASE=1
+    // (画像境界で release -> reserve をやり直す構成) では画像ごとに 1 行出る。
     bool            reserve_warned = false;
 
     DeviceArenaStats stats;
@@ -225,26 +231,10 @@ bool device_arena_pool_enabled()
     return e == 1;
 }
 
-// ----------------------------------------------------------------
-// DOLLAMA_PROFILE の有無 (infer/profile.cuh と同じ判定を kernels 層で独立に持つ。
-// 依存を張らないのは device_arena が最下層だから)。getenv は初回のみ・以後キャッシュ。
-// ----------------------------------------------------------------
-static bool arena_profile_enabled()
-{
-    static int e = -1;
-    if (e < 0)
-    {
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable : 4996)
-#endif
-        e = std::getenv("DOLLAMA_PROFILE") != nullptr ? 1 : 0;
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
-    }
-    return e == 1;
-}
+// (G-8k T2 / F3: DOLLAMA_PROFILE 判定ヘルパー arena_profile_enabled() は
+//  唯一の利用者だった reserve shortage 警告が無条件 stderr 出力になったため撤去した。
+//  再び必要になったら infer/profile.cuh と同じ形で足し直す。kernels 層は最下層なので
+//  profile.cuh へ依存を張らない、という方針は維持する)
 
 // ----------------------------------------------------------------
 // mark
@@ -339,22 +329,34 @@ void* device_arena_alloc(DeviceArenaId id, size_t bytes)
     //     (vector が持つのはチャンク記述子であり、デバイスメモリ本体は動かない)。
     //   - LIFO 前提より、生存中の mark は chunk <= a.cur しか無く、挿入で index が
     //     ずれるのは a.cur 以降だけ → 巻き戻し先は依然として「その時点以降の全確保」を覆う。
-    // G-8k S3b: reserve 済みなのに新チャンクが要る = reserve 不足。
-    // 黙って太らせず、DOLLAMA_PROFILE=1 のとき 1 回だけ報告する
-    // (正しさは不変。ここから先は従来どおりチャンクを足して続行する)。
+    // G-8k S3b / T2 (F3): reserve 済みなのに新チャンクが要る = reserve 不足。
+    // **DOLLAMA_PROFILE の有無に関わらず** stderr へ 1 回だけ報告する。
+    //   理由: これは「正しさは保たれたまま静かに 2 倍以上遅くなる」種類の劣化で、
+    //   S4 実測では 2 枚目以降が 11s -> 25s へ落ちた (WDDM ページング)。将来 live peak が
+    //   reserve (既定 6080MiB) を超えたとき、プロファイル無効の本番走行で無音になると
+    //   原因に到達できない。1 回ガードは残すが、粒度は **1 reserve サイクルにつき 1 行**
+    //   (reserve_warned は device_arena_reserve / device_arena_release の両方でクリア
+    //   されるため、DOLLAMA_ARENA_RELEASE=1 では画像ごとに 1 行出る。既定構成では
+    //   プロセス通算 1 行)。正しさは不変。ここから先は従来どおりチャンクを足して続行する。
+    //   文面は **arena 非依存** にすること (T2 相互レビュー 中4): 直し方を
+    //   DOLLAMA_ARENA_RESERVE_MB と書くと arena=unet_persist で出たときに嘘になる。
+    //   persist 側の予約量は arena_reserve_persist_mb() の固定値 176MiB で、UNet 側 env は
+    //   「0 か否か」のキルスイッチとしてしか見ていない → 従っても直らないまま VRAM だけ
+    //   余計に握って VRAM ゲートを割る。最下層の kernels/ が infer/ の env 名を
+    //   文字列で持たない、という層の分離とも整合する。
     if (a.stats.reserved_bytes != 0 && !a.reserve_warned)
     {
         a.reserve_warned = true;
-        if (arena_profile_enabled())
-        {
-            std::printf("[ALLOC] reserve shortage: arena=%s peak_request %zu MiB"
-                        " > reserve %zu MiB (falling back to chunk growth)\n",
-                        device_arena_name(id),
-                        (a.req_live > a.stats.peak_request_bytes
-                             ? a.req_live : a.stats.peak_request_bytes) >> 20,
-                        a.stats.reserved_bytes >> 20);
-            std::fflush(stdout);
-        }
+        std::fprintf(stderr,
+                     "[ALLOC] reserve shortage: arena=%s peak_request %zu MiB"
+                     " > reserve %zu MiB (falling back to chunk growth;"
+                     " reserve is undersized -- see reserve_arenas()"
+                     " in src/infer/diffusion.cu)\n",
+                     device_arena_name(id),
+                     (a.req_live > a.stats.peak_request_bytes
+                          ? a.req_live : a.stats.peak_request_bytes) >> 20,
+                     a.stats.reserved_bytes >> 20);
+        std::fflush(stderr);
     }
 
     ArenaChunk nc;
@@ -457,6 +459,12 @@ void device_arena_reserve(DeviceArenaId id, size_t bytes)
     }
     a.chunks.clear();
     a.stats.total_capacity = 0;
+    // G-8k T2 (F4b): ここから下の cudaMalloc が throw すると、この関数は
+    //   「旧チャンクは全解放済み・新チャンクは無い」状態のまま抜ける。統計が旧 reserve の
+    //   値を保持していると (a) 呼び出し側が reserve 済みと誤読し、(b) reserve_warned が
+    //   立ったままで次の reserve 不足が無音になる。解放した直後に両方落とす。
+    a.stats.reserved_bytes = 0;
+    a.reserve_warned       = false;
 
     ArenaChunk nc;
     nc.bytes  = align_up(bytes);
@@ -518,6 +526,51 @@ void device_arena_release(DeviceArenaId id)
     a.stats.bytes_in_use   = 0;
     // 所有スレッドの記録自体は維持する (release 後は静止状態なので、次に別スレッドが
     // 触れば check_thread が正規の移譲を行う)。
+}
+
+// ----------------------------------------------------------------
+// release の noexcept ラッパ (G-8k T2 / F2)。契約と非採用案は device_arena.cuh 参照。
+//   実装は **薄いラッパに限定する**。release 本体を複製して「途中まで解放して false」を
+//   作ってはならない (解放済み領域を指す生存ポインタ = dangling を作る)。
+//   device_arena_release が投げうるのは arena_of の不正 id と check_thread の 2 つだけで、
+//   どちらも最初の cudaFree より前に throw する → false = 1 バイトも解放していない。
+//   実体はこの .cu 1 本だけに置く (ヘッダに実装を書かない = C0 の ODR 事故の再演防止)。
+// ----------------------------------------------------------------
+bool device_arena_release_noexcept(DeviceArenaId id) noexcept
+{
+    try
+    {
+        device_arena_release(id);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        // 例外的イベントなので DOLLAMA_PROFILE の有無に関わらず必ず 1 行出す
+        // (デストラクタ経路から呼ばれる = ここで黙ると原因が完全に消える)。
+        //
+        // ★文字列リテラルは ASCII で書くこと (日本語を入れない)。
+        //   nvcc の front-end は **ソースを CP932 (ja-JP ANSI) として字句解析** している。
+        //   UTF-8 の日本語バイト列を CP932 として読むと、位置合わせ次第で末尾の 1 バイト
+        //   (0x81-0x9F / 0xE0-0xFC) が **閉じ引用符 0x22 を trail byte として食う**。
+        //   実測: "...解放を見送った" が『た』(E3 81 9F) + 22 で 9F が 22 を吸い、
+        //   error: missing closing quote になった (G-8k T2 で実際に踏んだ)。
+        //   -Xcompiler /utf-8 は cl にしか効かないので、これは回避できない。
+        //   既存の日本語リテラル (check_thread の throw 文) が通っているのは
+        //   たまたまバイト位置が合っているだけで、安全ではない。コメントは日本語で可。
+        std::fprintf(stderr, "[ALLOC] device_arena_release_noexcept: release skipped;"
+                             " arena untouched (not a single byte freed): %s\n",
+                     e.what());
+        std::fflush(stderr);
+        return false;
+    }
+    catch (...)
+    {
+        // (同上: ASCII のみ)
+        std::fprintf(stderr, "[ALLOC] device_arena_release_noexcept: release skipped;"
+                             " arena untouched (not a single byte freed): unknown exception\n");
+        std::fflush(stderr);
+        return false;
+    }
 }
 
 // ----------------------------------------------------------------

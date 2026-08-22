@@ -45,13 +45,19 @@ namespace dollama
 
 static int env_int(const char* k, int dflt)
 {
-    if (const char* e = std::getenv(k)) { return std::atoi(e); }
+    if (const char* e = std::getenv(k))
+    {
+        return std::atoi(e);
+    }
     return dflt;
 }
 
 static double env_dbl(const char* k, double dflt)
 {
-    if (const char* e = std::getenv(k)) { return std::atof(e); }
+    if (const char* e = std::getenv(k))
+    {
+        return std::atof(e);
+    }
     return dflt;
 }
 
@@ -61,11 +67,17 @@ static std::vector<float> load_f16_as_f32(const SafeTensors& st, const std::stri
     size_t nbytes = 0;
     const uint8_t* p = st.tensor_bytes(name, nbytes);
     const size_t   n = nbytes / sizeof(__half);
-    if (n != expect) { throw std::runtime_error("size mismatch: " + name); }
+    if (n != expect)
+    {
+        throw std::runtime_error("size mismatch: " + name);
+    }
     std::vector<__half> tmp(n);
     std::memcpy(tmp.data(), p, nbytes);
     std::vector<float> out(n);
-    for (size_t i = 0; i < n; ++i) { out[i] = __half2float(tmp[i]); }
+    for (size_t i = 0; i < n; ++i)
+    {
+        out[i] = __half2float(tmp[i]);
+    }
     return out;
 }
 
@@ -73,7 +85,10 @@ static std::vector<float> load_f16_as_f32(const SafeTensors& st, const std::stri
 static uint64_t fnv1a(const std::vector<uint8_t>& v)
 {
     uint64_t h = 1469598103934665603ULL;
-    for (uint8_t b : v) { h = (h ^ b) * 1099511628211ULL; }
+    for (uint8_t b : v)
+    {
+        h = (h ^ b) * 1099511628211ULL;
+    }
     return h;
 }
 
@@ -85,7 +100,10 @@ static std::atomic<uint64_t> g_total_mem{0};
 static uint64_t used_now()
 {
     size_t freeb = 0, totalb = 0;
-    if (cudaMemGetInfo(&freeb, &totalb) != cudaSuccess) { return 0; }
+    if (cudaMemGetInfo(&freeb, &totalb) != cudaSuccess)
+    {
+        return 0;
+    }
     g_total_mem.store(totalb);
     return static_cast<uint64_t>(totalb - freeb);
 }
@@ -94,7 +112,10 @@ static void bump_peak()
 {
     const uint64_t u = used_now();
     uint64_t prev = g_peak_used.load();
-    while (u > prev && !g_peak_used.compare_exchange_weak(prev, u)) {}
+    while (u > prev && !g_peak_used.compare_exchange_weak(prev, u))
+    {
+        // compare_exchange_weak が prev を実測値で更新するので body は空でよい。
+    }
 }
 
 static void sampler_main(int period_ms)
@@ -178,8 +199,14 @@ static int run_prof()
     }
     std::vector<float> uncond_ehs(cond_ehs);
     std::vector<float> uncond_txt(cond_txt);
-    for (float& v : uncond_ehs) { v *= 0.5f; }
-    for (float& v : uncond_txt) { v *= 0.5f; }
+    for (float& v : uncond_ehs)
+    {
+        v *= 0.5f;
+    }
+    for (float& v : uncond_txt)
+    {
+        v *= 0.5f;
+    }
 
     {
         FastConfig cfg;

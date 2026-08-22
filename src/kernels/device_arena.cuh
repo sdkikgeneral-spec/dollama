@@ -62,7 +62,10 @@
 //   で生成を実行するため、リクエスト間で GPU 実行スレッドが変わる。生成そのものは
 //   逐次 (同時 2 本は元々成立しない) なので、静止状態での移譲は安全であり、
 //   同時進入だけを確実に検出する形に落とし込む。
-//   注意: これは並行生成の直列化を代替しない (直列化は呼び出し側の責務)。
+//   注意: これは並行生成の直列化を代替しない。直列化は src/server/api.cpp の
+//   生成ファネル mutex (g_generate_mutex) で担保している (handle_generations が
+//   IImageGenerator::generate を lock_guard 下で呼ぶ 1 箇所のみ)。本アリーナの
+//   スレッド検査は、その担保が外れたときに黙って壊れず落ちるための保険である。
 //
 // ODR 注意:
 //   本ヘッダは TU 横断の外部リンケージを意図的に持つ (C0 の DeviceWeights /
@@ -96,7 +99,11 @@ namespace dollama
 //               UNet アリーナへ共有すれば capacity は「和」ではなく「max」で済む。
 //               VAE decode の時点で UNet アリーナは静止状態 (全 step 完了後) なので
 //               LIFO 契約は破れない。conv2d の im2col は元から UNet アリーナ共有だった。
-//               revert は vae_decode.cu の kVaeArena 1 行を戻すだけ。
+//               revert 手順 (正確に): vae_decode.cu の kVaeArena を DeviceArenaId::VAE
+//               へ戻す **だけでは足りない**。conv2d.cu が DeviceArenaId::UNet を 3 箇所
+//               (im2col / f32 中間) にハードコードしているため、VAE decode 中の conv も
+//               UNet アリーナ側に残る。正しさは各アリーナ独立 LIFO で保たれるので
+//               (壊れるのは VRAM 収支の読みだけ)、これはコメント精度の問題。
 // ----------------------------------------------------------------
 enum class DeviceArenaId : int
 {
@@ -106,7 +113,13 @@ enum class DeviceArenaId : int
 };
 
 // 本数 (内部テーブルの寸法)。
-// (C++14 前提のため inline 変数は使わない。TU ローカル定数で足りる)
+// (プロジェクト全体は meson の cpp_std=c++20 だが、CUDA TU のホスト側は
+//  **MSVC ホストのときのみ** src/meson.build で -Xcompiler /std:c++14 に落としてある
+//  (条件は src/meson.build の if cpp.get_id() == 'msvc' ブロック)。理由は同ファイルの
+//  一次記述どおり「CUDA 13.3 + MSVC で c++17/20 ヘッダ組合せの 0xC0000409 を回避」で、
+//  どのコンポーネントが落ちるかは特定されていない (断定して書かない)。
+//  本ヘッダは .cu からしか include されないので、C++17 の inline 変数には
+//  頼らない。TU ローカル定数で足りる)
 static constexpr int kDeviceArenaCount = 3;
 
 // 表示名 ("unet" / "vae" / "unet_persist")。プロファイル出力・エラーメッセージ用。
@@ -184,6 +197,46 @@ void device_arena_reserve(DeviceArenaId id, size_t bytes);
 // 指定アリーナの全チャンクを解放し、カーソルを初期化する。
 // 定期 trim / step 間 trim は **実装しない** (目的を殺すため)。明示呼び出し専用。
 void device_arena_release(DeviceArenaId id);
+
+// ----------------------------------------------------------------
+// G-8k T2 (F2): device_arena_release の noexcept ラッパ。
+//   戻り値 true = 解放した / false = **1 バイトも解放していない**。
+//   後者が契約として成立する根拠: device_arena_release が投げうるのは
+//   arena_of の不正 id と check_thread の 2 つだけで、どちらも最初の cudaFree
+//   より前に throw する。よって「途中まで解放して false」は原理的に起きない。
+//   本ラッパは release 本体のロジックを **一切複製しない** (複製して部分解放を
+//   作ると、生存ポインタが dangling になり本アリーナの芯が壊れる)。
+//
+//   使うのは unet_weights_destroy (src/infer/unet.cu) の 2 本だけ。狙いは
+//     (1) dtor 経路 (~DiffusionPipeline -> destroy_resources -> unet_weights_destroy)
+//         の二重防御。dtor から例外を出さないこと自体は destroy_resources() の
+//         try/catch が担保しているので、ここは保険である
+//         (「terminate をここで初めて防いでいる」わけではない = T2 相互レビュー 中2)。
+//     (2) UNet 側が拒否されても UNetPersist の解放へ進めること。素の release だと
+//         1 本目の throw で 2 本目に到達せず、persist 側が確実に残る。
+//   なお unet_weights_destroy 自体は dtor 専用ではなく、test / prof から直呼びされる
+//   経路が 8 箇所ある (そちらでは release 失敗が throw から stderr 1 行 + 続行に変わる)。
+//   **generate 経路 (diffusion.cu の maybe_release_arenas) では使わない**:
+//   あそこで失敗を握り潰すと、壊れた状態のまま reserve をやり直して生成が続く。
+//
+//   採らなかった案 (再提案を止めるための記録・ユーザー決裁済):
+//     (a) アリーナの参照カウント化 / (b) アリーナ所有権の移動。
+//     どちらも採らない。production の unet_weights_create 呼び出し元は
+//     src/infer/diffusion.cu の 1 箇所だけで、**パイプライン同居は現状発生しない**。
+//     ただし「同居しない」を担保しているのは値保持ではない (T2 相互レビュー 軽1):
+//     DiffusionPipeline を値で持つラッパは 2 つある
+//       - src/server/diffusion_runner.cu の DiffusionRunner::pipe_
+//       - src/server/pipeline_generator.hpp の PipelineGenerator::pipe_
+//     同居を防いでいるのは **src/server/cli_generate.hpp の排他フォールバック梯子**
+//     (段1 が非 null なら if (!gen) で段2 を作らない) という不変条件である。
+//     unique_ptr::operator= は新オブジェクトを構築し終えてから旧を破棄するので、
+//     この梯子を「両方作って良い方を選ぶ」形に書き換えた瞬間に同居が成立し、
+//     アリーナ (プロセス常駐・単一テーブル) を 2 本のパイプラインが取り合う。
+//     **梯子を非排他にするなら、その前に所有権設計をやり直すこと。**
+//     所有権設計は 2-6d (SDXL 3 preset で複数バックエンド常駐が現実になる) に
+//     着手する時点で改めて設計する。
+// ----------------------------------------------------------------
+bool device_arena_release_noexcept(DeviceArenaId id) noexcept;
 
 // 統計の読み取り。
 DeviceArenaStats device_arena_stats(DeviceArenaId id);

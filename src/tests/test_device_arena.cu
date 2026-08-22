@@ -388,6 +388,158 @@ static void test_thread_guard()
 }
 
 // ----------------------------------------------------------------
+// 8b) G-8k T2 (F5): **破棄経路** の契約。
+//     守りたい経路:
+//       ~DiffusionPipeline -> destroy_resources -> unet_weights_destroy
+//       -> device_arena_release -> check_thread throw
+//     dtor から例外を出さないこと自体は destroy_resources() の try/catch が担保して
+//     いるので、noexcept 版の役目は ① その二重防御 ② UNet 側が拒否されても
+//     UNetPersist の解放へ進むこと (素の release だと 1 本目の throw で 2 本目に
+//     到達しない) である。「noexcept 版が terminate を単独で防いでいる」という
+//     読み方は誤り (T2 相互レビュー 中2)。本テストはこのラッパの契約だけを固定する。
+//
+//     (1) 生存確保あり + 別スレッド -> 素の device_arena_release は **throw する**
+//         (落ちる契約は維持する。noexcept 版を足したことで緩んでいないことの明文化)。
+//     (2) 同条件で device_arena_release_noexcept は **投げず false**。しかも
+//         **1 バイトも解放していない** (統計据え置き + 生存ポインタの中身が無事) ので、
+//         元スレッドへ戻ればそのまま使い続けられる。
+//     (3) 静止状態での release_noexcept は **true** で、素の release と同じ結果
+//         (容量 0 -> 再成長できる)。
+//     (4) もう 1 つの throw 点 = arena_of の不正 id でも投げず false (軽5)。
+//         check_thread だけを固定して「arena_of 経路は素通し」にしないため。
+//
+//     POOL / POOL OFF の両枠に登録する: DOLLAMA_POOL=0 でも生存確保は fallback_ptrs に
+//     載るため is_quiescent が false になり、まったく同じ契約が成立する。片枠だけだと
+//     device_arena_pool_off が素通しになる。
+//
+//     注: (2) と (4) で device_arena_release_noexcept が stderr に 1 行ずつ (計 2 行)
+//     出す。**これは期待動作** (見送ったことを黙って隠さないための出力) であって、
+//     新規の赤ではない。
+//
+//     真の「2 パイプライン同居」テストは書けない (重み 7067MB x2 + アリーナ 6.3GB が
+//     16GB に入らない)。アリーナ層の等価形 = 「解放しようとした瞬間に別スレッドの
+//     生存確保がある」状態で代替する。
+// ----------------------------------------------------------------
+static void test_release_noexcept_contract()
+{
+    const DeviceArenaId id = DeviceArenaId::UNet;
+    const size_t        n  = 4u << 20;
+
+    // 元スレッドが所有権を取り、静止状態から始める。
+    device_arena_release(id);
+
+    DeviceArenaMark m = device_arena_mark(id);
+    void*           p = device_arena_alloc(id, n);
+    check(p != nullptr, "release_noexcept: precondition alloc");
+    CUDA_CHECK(cudaMemset(p, 0x5A, n));
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    const DeviceArenaStats before = device_arena_stats(id);
+    check(before.total_capacity != 0, "release_noexcept: precondition capacity is non-zero");
+
+    // --- (1) 素の release は foreign thread から throw する ---
+    bool threw = false;
+    std::thread t([&threw, id]
+                  {
+                      try
+                      {
+                          device_arena_release(id);
+                      }
+                      catch (const std::exception&)
+                      {
+                          threw = true;
+                      }
+                  });
+    t.join();
+    check(threw, "release_noexcept: raw release from foreign thread throws while live");
+
+    // --- (2) noexcept 版は投げず false・アリーナは無傷 ---
+    bool caught_any = false;
+    bool ret        = true;
+    std::thread t2([&ret, &caught_any, id]
+                   {
+                       try
+                       {
+                           ret = device_arena_release_noexcept(id);
+                       }
+                       catch (...)
+                       {
+                           caught_any = true;
+                       }
+                   });
+    t2.join();
+    check(!caught_any, "release_noexcept: never throws (a dtor would std::terminate)");
+    check(!ret, "release_noexcept: returns false when the arena is not releasable");
+
+    // 「1 バイトも解放していない」の検証:
+    //   (a) cudaFree 回数が 1 回も増えていない
+    //   (b) 容量 / チャンク本数 / カーソルが完全に据え置き
+    //   (c) 生存ポインタの中身が読み返せる (解放 -> 再利用で壊されていない)
+    // **ゲートとして効いているのは (a) と (b) だけ** (T2 相互レビュー 軽6)。
+    //   (c) の verify_pattern は補助証拠にすぎない: 本当に cudaFree されていたら
+    //   読み返しは UB であって「たまたま通る」方が普通なので、失敗を当てにできない。
+    //   **将来 (a)(b) を削って (c) だけ残す縮小をしないこと** (ゲートが空になる)。
+    const DeviceArenaStats after = device_arena_stats(id);
+    check(after.cuda_free_calls == before.cuda_free_calls,
+          "release_noexcept: no cudaFree happened on the refused path");
+    check(after.total_capacity == before.total_capacity,
+          "release_noexcept: total_capacity untouched on the refused path");
+    check(after.live_chunks == before.live_chunks,
+          "release_noexcept: live_chunks untouched on the refused path");
+    check(after.bytes_in_use == before.bytes_in_use,
+          "release_noexcept: cursor untouched on the refused path");
+    check(verify_pattern(p, n, 0x5A), "release_noexcept: live region intact after false");
+
+    // 元スレッドでそのまま使い続けられること (状態が壊れていない)。
+    void* p2 = device_arena_alloc(id, n);
+    check(p2 != nullptr, "release_noexcept: arena still usable after a refused release");
+    CUDA_CHECK(cudaMemset(p2, 0x5B, n));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    check(verify_pattern(p, n, 0x5A) && verify_pattern(p2, n, 0x5B),
+          "release_noexcept: both live regions valid after a refused release");
+    device_arena_rewind(m);
+
+    // --- (3) 静止状態なら true。素の release と同じ結果になる ---
+    const bool ok = device_arena_release_noexcept(id);
+    check(ok, "release_noexcept: returns true when quiescent");
+    const DeviceArenaStats q = device_arena_stats(id);
+    check(q.total_capacity == 0, "release_noexcept: total_capacity back to 0");
+    check(q.live_chunks == 0, "release_noexcept: live_chunks back to 0");
+    check(q.bytes_in_use == 0, "release_noexcept: bytes_in_use back to 0");
+
+    DeviceArenaMark m2 = device_arena_mark(id);
+    void*           p3 = device_arena_alloc(id, n);
+    check(p3 != nullptr, "release_noexcept: arena regrows after a successful release");
+    CUDA_CHECK(cudaMemset(p3, 0x5C, n));
+    CUDA_CHECK(cudaDeviceSynchronize());
+    check(verify_pattern(p3, n, 0x5C), "release_noexcept: regrown region works");
+    device_arena_rewind(m2);
+
+    // --- (4) もう 1 つの throw 点 = arena_of の不正 id も noexcept で受け止める ---
+    //     release_noexcept が握り潰す対象は check_thread だけではない (軽5)。
+    //     不正 id は arena_of がテーブルを引く前に throw するので、こちらも
+    //     「1 バイトも解放していない」= アリーナに一切触っていない。
+    bool bad_threw = false;
+    bool bad_ret   = true;
+    try
+    {
+        bad_ret = device_arena_release_noexcept(static_cast<DeviceArenaId>(99));
+    }
+    catch (...)
+    {
+        bad_threw = true;
+    }
+    check(!bad_threw, "release_noexcept: invalid arena id does not throw either");
+    check(!bad_ret, "release_noexcept: invalid arena id returns false");
+
+    std::cout << "[8b] release_noexcept: live+foreign -> false (arena untouched)"
+                 " / quiescent -> true (== release) / bad id -> false OK\n";
+
+    // 後続テストの前提 (静止状態) を壊さずに抜ける。
+    device_arena_release(id);
+}
+
+// ----------------------------------------------------------------
 // 9) DeviceArenaScope (RAII): S2 で Scratch を置換する形の疎通。
 // ----------------------------------------------------------------
 static void test_scope_raii()
@@ -724,6 +876,10 @@ static void test_reserve_overflow_fallback()
     }
 
     // reserve の残りに入らない要求 -> フォールバックで新チャンクが生える。
+    // **注 (G-8k T2 / F3)**: この 1 本で device_arena.cu が stderr へ
+    //   "[ALLOC] reserve shortage: ..." を 1 行出す。**本テストが意図的に
+    //   reserve 不足を起こしているので、これは期待動作**であり新規の赤ではない
+    //   (F3 以前は DOLLAMA_PROFILE=1 のときだけ stdout に出ていた)。
     const size_t over = (size_t)768 << 20;
     void*        po   = device_arena_alloc(id, over);
     check(po != nullptr, "overflow: fallback alloc beyond reserve");
@@ -847,6 +1003,8 @@ int main()
             dollama::test_release();
             dollama::test_scope_raii();
             dollama::test_thread_guard();
+            // G-8k T2 (F5): 破棄経路 (release_noexcept) の契約。
+            dollama::test_release_noexcept_contract();
             // G-8k S3 追加分 (GB 級チャンク / 挿入跨ぎ / release -> 再成長)。
             dollama::test_giant_alloc_exact_chunk();
             dollama::test_insert_across_live_pointers();
@@ -864,6 +1022,9 @@ int main()
             dollama::test_alignment();
             dollama::test_scope_raii();
             dollama::test_thread_guard();
+            // G-8k T2 (F5): POOL=0 でも生存確保は fallback_ptrs に載る =
+            //   is_quiescent が false になるので、破棄経路の契約は同一。
+            dollama::test_release_noexcept_contract();
             // G-8k S3: キルスイッチ経路でも「挿入跨ぎ」相当の同時生存と release -> 再成長が
             // 同じ結果になること (チャンク本数の検査はプール経路のみで判定する)。
             dollama::test_insert_across_live_pointers();

@@ -190,9 +190,11 @@ void image_f16_to_rgb_u8(const std::vector<__half>& h_image, std::vector<uint8_t
 //     使わない予約を比例で膨らませる正当化は無い。**「% に戻す」提案は却下済み。**
 //
 //   解像度・batch・step 構成が変わって live peak がこの値を超えた場合は、
-//   device_arena 側の **reserve 不足警告** (DOLLAMA_PROFILE=1 で
-//   "[ALLOC] reserve shortage: ...") が出たうえで従来のチャンク追加へ
+//   device_arena 側の **reserve 不足警告** が出たうえで従来のチャンク追加へ
 //   フォールバックする。正しさは不変で、静かに壊れる経路は無い。
+//   G-8k T2 (F3) でこの警告は **DOLLAMA_PROFILE に依存せず stderr へ無条件 1 回**
+//   になった ("[ALLOC] reserve shortage: ...")。プロファイル無効の本番走行で
+//   静かに 2 倍遅くなる (S4 実測 11s -> 25s) のを見逃さないため。
 //
 //   env DOLLAMA_ARENA_RESERVE_MB で UNet 側を上書きできる。**0 指定で reserve 無効
 //   = S3 と同じ挙動** (S4b の A/B に必須)。getenv は初回のみ・以後キャッシュ。
@@ -304,43 +306,130 @@ DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
         fast_cfg_.epilogue = true;
     }
     // golden 埋め込みを host にロード (全 step 使い回すためデバイス常駐させる)。
+    //   SafeTensors 自体は host 側 (mmap) なので try の外でよい。メンバ
+    //   (unet_weights_ / vae_weights_) も含め、ctor 本体が throw してもメンバの
+    //   デストラクタは正常に走る。始末されないのは下の **生ポインタ / 生ハンドル** だけ。
     SafeTensors embeds(embeds_path);
-    std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
-    std::vector<__half> h_txt  = load_f16(embeds, "input_text_embeds_f16",           kTxtN);
-    std::vector<__half> h_tids = load_f16(embeds, "input_time_ids_f16",              kTidsN);
 
-    CUDA_CHECK(cudaMalloc(&d_encoder_hidden_states_, kEhsN  * sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&d_text_embeds_,           kTxtN  * sizeof(__half)));
-    CUDA_CHECK(cudaMalloc(&d_time_ids_,              kTidsN * sizeof(__half)));
+    // ----------------------------------------------------------------
+    // G-8k T2 (F4): ここから下は **デバイス資源を握る区間** なので丸ごと try で覆う。
+    //   コンストラクタが throw するとデストラクタは走らないため、raw な d_* ポインタと
+    //   unet/vae ハンドルは誰も解放しない = そのままリークする。
+    //   覆うのは reserve_arenas() だけでは足りない (T2 相互レビュー 中6 の指摘):
+    //     - 埋め込み 3 本の cudaMalloc / cudaMemcpy (~320KB・実害は小さいが同じ形)
+    //     - unet_weights_create (**5.1GB**)
+    //     - vae_weights_create (~92MB) ← **5.1GB を確保しきった直後にここが落ちる**のは、
+    //       reserve 6080MiB が落ちるより起こりやすい局面ですらある。ここで throw されると
+    //       直前の 5.1GB が丸ごと宙に浮く。
+    //     - reserve_arenas() (UNet 6080MiB -> UNetPersist 176MiB の単発 cudaMalloc。
+    //       UNet だけ通って Persist で落ちると 6080MiB が宙に浮く)
+    //   16GB 板で UI / OpenVINO / ブラウザが VRAM を握っていると、いずれも現実に起こりうる。
+    //   fail-fast の挙動は変えない (rethrow する)。投げる前に自分で後始末するだけ。
+    //   後始末は destroy_resources() 1 本に委ねる: 破棄順 (埋め込み -> unet -> vae) を
+    //   デストラクタと共有し、**部分構築でも安全** (全ポインタメンバが NSDMI で nullptr
+    //   初期化されており、破棄済みは nullptr に落とすので冪等)。
+    //   **生ハンドルを cudaFree するだけの実装にしてはならない** — アリーナを返すのは
+    //   unet_weights_destroy の側なので、そこを通さないと 6GB 級が残る。
+    // ----------------------------------------------------------------
+    try
+    {
+        std::vector<__half> h_ehs  = load_f16(embeds, "input_encoder_hidden_states_f16", kEhsN);
+        std::vector<__half> h_txt  = load_f16(embeds, "input_text_embeds_f16",           kTxtN);
+        std::vector<__half> h_tids = load_f16(embeds, "input_time_ids_f16",              kTidsN);
 
-    CUDA_CHECK(cudaMemcpy(d_encoder_hidden_states_, h_ehs.data(),
-                          kEhsN * sizeof(__half), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_text_embeds_, h_txt.data(),
-                          kTxtN * sizeof(__half), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_time_ids_, h_tids.data(),
-                          kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMalloc(&d_encoder_hidden_states_, kEhsN  * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_text_embeds_,           kTxtN  * sizeof(__half)));
+        CUDA_CHECK(cudaMalloc(&d_time_ids_,              kTidsN * sizeof(__half)));
 
-    // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
-    //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
-    unet_weights_handle_ = unet_weights_create(unet_weights_);
+        CUDA_CHECK(cudaMemcpy(d_encoder_hidden_states_, h_ehs.data(),
+                              kEhsN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_text_embeds_, h_txt.data(),
+                              kTxtN * sizeof(__half), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_time_ids_, h_tids.data(),
+                              kTidsN * sizeof(__half), cudaMemcpyHostToDevice));
 
-    // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
-    //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
-    vae_weights_handle_ = vae_weights_create(vae_weights_);
+        // S1: UNet 全重み (5.1GB) を 1 度だけデバイスへ常駐させる。以降の全 step は
+        //     このハンドルを使い回し、重み転送/再 malloc を発生させない。
+        unet_weights_handle_ = unet_weights_create(unet_weights_);
 
-    // G-8k S3b: 重みロード後・最初の generate 前に 1 回だけアリーナを reserve する。
-    //   ここはアリーナが静止状態であることが保証される唯一の安全地帯。
-    reserve_arenas();
+        // S3-D: VAE decoder 全重み (~92MB) を 1 度だけデバイスへ常駐させる。
+        //       以降の全生成は launch_vae_decode(handle, ...) で重み転送ゼロ。
+        vae_weights_handle_ = vae_weights_create(vae_weights_);
+
+        // G-8k S3b: 重みロード後・最初の generate 前に 1 回だけアリーナを reserve する。
+        //   ここはアリーナが静止状態であることが保証される唯一の安全地帯。
+        reserve_arenas();
+    }
+    catch (...)
+    {
+        destroy_resources();
+        throw;
+    }
+}
+
+// ----------------------------------------------------------------
+// G-8k T2 (F2/F4): デバイス資源の後始末を 1 本に括る。
+//   呼ばれるのは 2 箇所だけ: デストラクタと、**コンストラクタの device 確保区間**
+//   (埋め込み malloc/memcpy + unet_weights_create + vae_weights_create +
+//   reserve_arenas をまとめて覆う try) の catch。
+//   両者で破棄順が食い違うと「ctor 失敗時だけ 5-6GB リーク」のような差分バグに
+//   なるため、順序 (埋め込み -> unet -> vae) をここ 1 箇所で持つ。
+//   **部分構築でも安全であること**が ctor catch から呼ぶ前提: 全ポインタメンバは
+//   NSDMI で nullptr 初期化されており、どこで throw しても「作れた分だけ」畳む。
+//   例外は一切外へ出さない (dtor から出ると std::terminate)。unet_weights_destroy の
+//   アリーナ解放は既に device_arena_release_noexcept 化されている (unet.cu) が、
+//   ここでも try/catch で二重に止める。
+//   冪等: 破棄したメンバは nullptr に落とすので、2 回呼んでも安全。
+// ----------------------------------------------------------------
+void DiffusionPipeline::destroy_resources() noexcept
+{
+    // 埋め込み 3 本 (CUDA_CHECK は使わず素の free = 投げない)。
+    if (d_encoder_hidden_states_ != nullptr)
+    {
+        cudaFree(d_encoder_hidden_states_);
+        d_encoder_hidden_states_ = nullptr;
+    }
+    if (d_text_embeds_ != nullptr)
+    {
+        cudaFree(d_text_embeds_);
+        d_text_embeds_ = nullptr;
+    }
+    if (d_time_ids_ != nullptr)
+    {
+        cudaFree(d_time_ids_);
+        d_time_ids_ = nullptr;
+    }
+
+    // 常駐重み。unet 側は内部で UNet / UNetPersist アリーナも返す。
+    if (unet_weights_handle_ != nullptr)
+    {
+        UnetWeightsHandle h  = unet_weights_handle_;
+        unet_weights_handle_ = nullptr;
+        try
+        {
+            unet_weights_destroy(h);
+        }
+        catch (...)
+        {
+        }
+    }
+    if (vae_weights_handle_ != nullptr)
+    {
+        VaeWeightsHandle h  = vae_weights_handle_;
+        vae_weights_handle_ = nullptr;
+        try
+        {
+            vae_weights_destroy(h);
+        }
+        catch (...)
+        {
+        }
+    }
 }
 
 DiffusionPipeline::~DiffusionPipeline()
 {
-    // デストラクタでは例外を投げない (CUDA_CHECK は使わず素の free)。
-    if (d_encoder_hidden_states_ != nullptr) { cudaFree(d_encoder_hidden_states_); }
-    if (d_text_embeds_ != nullptr)           { cudaFree(d_text_embeds_); }
-    if (d_time_ids_ != nullptr)              { cudaFree(d_time_ids_); }
-    if (unet_weights_handle_ != nullptr)     { unet_weights_destroy(unet_weights_handle_); }
-    if (vae_weights_handle_ != nullptr)      { vae_weights_destroy(vae_weights_handle_); }
+    destroy_resources();
 }
 
 // ----------------------------------------------------------------
@@ -409,6 +498,11 @@ static void maybe_release_arenas()
     {
         return;
     }
+    // G-8k T2 (F2): **ここは noexcept 化しない**。generate 経路 (画像境界) であって
+    //   デストラクタではない。release が throw する状況で黙って false を返し、直後の
+    //   reserve_arenas() だけやり直すと、壊れた状態のまま生成が続いてしまう。
+    //   落ちる契約を維持するのが正しい。noexcept 版の用途は unet_weights_destroy
+    //   (デストラクタ経路) の 1 点だけ。
     device_arena_release(DeviceArenaId::UNet);
     device_arena_release(DeviceArenaId::UNetPersist);
 

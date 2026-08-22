@@ -1377,8 +1377,41 @@ void unet_weights_destroy(UnetWeightsHandle handle)
     //   前提: この時点で forward は 1 本も走っておらずアリーナは静止状態
     //   (= 生存中ポインタが無いので解放は安全)。所有スレッドが違っても静止状態なので
     //   S2 の所有権移譲ルールでそのまま通る。
-    device_arena_release(DeviceArenaId::UNet);
-    device_arena_release(DeviceArenaId::UNetPersist);
+    //
+    // G-8k T2 (F2): 解放は noexcept ラッパで行う。**呼び出し元は 1 種類ではない**
+    //   (T2 相互レビュー 中2 の是正。「ここはデストラクタ経路である」は事実でなかった):
+    //     - dtor 経路: ~DiffusionPipeline -> destroy_resources -> ここ (diffusion.cu)
+    //       … 1 箇所
+    //     - test / prof からの直呼び … 8 箇所: prof_unet_fast_warm.cu x1 /
+    //       test_unet.cu x1 / test_unet_fast.cu x1 / test_lora_runtime.cu x5
+    //     (実測 grep 時点で計 9 箇所。dtor 経路はそのうち 1 つだけ)
+    //   noexcept 化の狙いは 2 つで、**std::terminate の回避そのものではない**
+    //   (dtor から例外を出さないことは destroy_resources() 側の try/catch が既に担保している):
+    //     (1) dtor 経路の二重防御。ここで止めておけば、将来 destroy_resources を
+    //         経由しない破棄経路が増えても terminate に化けない。
+    //     (2) **UNet 側が拒否されても UNetPersist の解放を取りこぼさない**。素の release だと
+    //         1 本目の throw で 2 本目に到達せず、persist 176MiB が確実に残る。
+    //   代償: test/prof の直呼び経路では、release 失敗が throw から
+    //   「stderr 1 行 + 続行」に変わる (テストが赤くならず警告になる)。
+    //   ただし throw が起きるのは「foreign thread + 生存確保あり」だけで、直呼び 9 箇所は
+    //   その状況を作らないため、実質の契約緩和は無い。
+    //   false = 1 バイトも解放していない (アリーナは無傷) で、stderr に 1 行残る。
+    //   **generate 経路 (diffusion.cu の maybe_release_arenas) は noexcept 化しない**
+    //   — あそこで握り潰すと壊れた状態のまま生成が続く。
+    //
+    // UNet アリーナを返すことは VAE decode のスクラッチを返すことでもある
+    //   (vae_decode.cu の kVaeArena = DeviceArenaId::UNet / conv2d.cu の im2col も同アリーナ)。
+    //   「UNet のぶんだけ返す」つもりで書くと読み違える。ただしこの時点では decode も
+    //   conv も 1 本も走っていない (ハンドル破棄 = パイプライン破棄の最中) ため、
+    //   巻き添えになる生存ポインタは無く安全。
+    //
+    // 注意 (T2 相互レビュー 軽3): 「アリーナは無傷」は **アリーナの内部状態** の話でしかない。
+    //   本関数は既に上で delete static_cast<DeviceWeights*>(handle) を無条件に実行済みなので、
+    //   仮に「別スレッドが forward 中」という状況が本当に起きているなら、その forward は
+    //   この時点で解放済みの重み VRAM を読んでいる。noexcept 化が防ぐのは terminate だけで、
+    //   その状況自体の安全性は一切回復しない (直すべきは呼び出し側の寿命管理)。
+    (void)device_arena_release_noexcept(DeviceArenaId::UNet);
+    (void)device_arena_release_noexcept(DeviceArenaId::UNetPersist);
 }
 
 // ----------------------------------------------------------------
