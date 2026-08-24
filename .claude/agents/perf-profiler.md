@@ -46,10 +46,17 @@ CPU: プロンプト生成 (自作タグ生成 LM)
 
 ## 計測の道具 (実在するものだけ使う)
 
+★**計器を選ぶ/指定する前に、次の 3 点を `file:line` の一次証拠で確認する** (2026-08-24 PL 規則化。
+**この規則を作らせた事故は 3 連続で起き、3 回すべて「doc の 1 行を信じて計器を選んだ」ときだった**):
+① **どの関数が呼ばれるか** (ハーネスの呼び出し行) ② **その関数が被験コード行に到達するか** (呼び出し連鎖)
+③ **被験構成で実際にその枝を通るか** (B や env の値)。
+★**fast-mode で計器名を書くときは必ず `(B=1)` / `(B=2)` を併記する — 3 回の事故はすべて B の見落ちだった。**
+★**「PL の決裁だから裏取り不要」にしない** (規則化のきっかけになった誤決裁は PL 自身のもの)。
+
 | 道具 | 用途 |
 |---|---|
 | `src/infer/profile.cuh` | 拡散の段別計時基盤。**環境変数 `DOLLAMA_PROFILE=1` のときだけ有効** (既定オフ・本番不変)。`profile_enabled()` / `ProfileCounters` / `ScopedSyncTimer` |
-| prof_unet_fast_warm (計測 exe) | UNet の warm 1step 計測。cold の重み転送で希釈されない数字を取る。`[RESNET-BUCKET]` 等のバケット出力を持つ |
+| prof_unet_fast_warm (計測 exe) | UNet の warm 1step 計測。cold の重み転送で希釈されない数字を取る。`[RESNET-BUCKET]` 等のバケット出力を持つ。★**B=1 固定**: 呼ぶのは `launch_unet(handle,...)` で、その実体は `src/infer/unet.cu:1461-1463` の `launch_unet_impl(w, **1**, ...)`。**B=1 の UNet 単体プロファイラとしては現役**だが、**B>1 が被験変数のときは使ってはいけない** (`launch_conv2d` の N>1 枝を通らないので差が原理的に出ない)。B>1 は別 API `launch_unet_batched` (`src/infer/unet.cuh:137` / `src/infer/unet.cu:1475`)。`[RESNET-BUCKET]` も B=1 の 1 forward/step × 20step 換算値 |
 | `src/tests/prof_bitnet.cpp` / `src/tests/prof_cpu_topology.cpp` | CPU LM 側の計測専用 exe (test 非登録) |
 | `DOLLAMA_FAST` / fast_config | fast mode (attention / batch2 / epilogue) の ON/OFF。default 経路との差分計測に使う |
 | `cudaEvent_t` | カーネル単体の計時 (段境界で同期が不要な場所) |
@@ -63,7 +70,7 @@ CPU: プロンプト生成 (自作タグ生成 LM)
 | `weight_upload_sec` / `_bytes` / `_count` | 重み転送 (cudaMalloc + H2D)。「転送」と「計算」を分ける軸 |
 | `unet_total_sec` / `unet_steps` | UNet 1 step の壁時計と呼び出し回数 |
 | `unet_embed/down/mid/up/convout_sec` | 段グループ別 |
-| `cat_resnet_sec` / `cat_transformer_sec` / `cat_attention_sec` | カテゴリ別 (conv 律速か attention 律速かの判定) |
+| `cat_resnet_sec` / `cat_transformer_sec` / `cat_attention_sec` | カテゴリ別 (conv 律速か attention 律速かの判定)。★**`cat_resnet_sec` は B に関係なく `resnet_block` (`src/infer/unet.cu:537-543`) で積算されるが、印字箇所は B=1 経路にしかない** (2026-08-24 現物確認): 内訳表 (`src/infer/diffusion.cu:670-715`・resnet 行は `:701-702`) は **`DiffusionPipeline::generate`** (`:533-`) の中にあり、そこは CFG を拒否し (`:545-549`) UNet を `launch_unet(...)` = **B=1** で呼ぶ (`:616-624`)。**N>1 枝を通る e2e 経路は `generate_txt2img`** (`:872` で `launch_unet_batched(..., 2, ...)`) だが、**そちらに内訳表は無い**。→ **「e2e profile を見れば conv の batch 化が測れる」と考えないこと。** ★**とくに `DB2_BENCH=1 DOLLAMA_PROFILE=1` では構成ごとの `cat_resnet_sec` は出ない** (`src/tests/test_diffusion_batch2.cu` は parity `:249` も bench `:460` も `generate_txt2img` しか呼ばない。`DOLLAMA_PROFILE=1` で増えるのは `[ALLOC]` 行 = `src/infer/unet.cu:1352-1370` の方だけで、代わりに `ScopedSyncTimer` (`unet.cu:542`) の同期が入り **e2e 秒が膨らむ**)。**N>1 の e2e resnet 秒には `generate_txt2img` 側への reset + dump 追加が必要**で、これは **G-10k の T2b として実施が決裁済み (2026-08-24)・実装は未着手** (`docs/g10k-plan.md` §2 F3)。★**T2b 適用前は `bench_batch_vs_persample` (`src/tests/test_conv2d.cu:725-795`) が N=2 を直接測れる唯一の既存計器**。★**T2b 適用後**は `generate_txt2img` でも **resnet / transformer / attention と段グループの絶対秒**が出るが、**`VAE decode` / `host roundtrip` / `TOTAL` / `%` 列は出ない** — `vae_sec` (`diffusion.cu:655`) / `host_roundtrip_sec` (`:613`,`:642`) / `total_sec` (`:676`) は `generate` ローカル計時であり、**2026-08-24 の決裁で「この経路では埋めない・`%` 列は出さない」と確定**した (同一呼び出しに 2 つの wall 秒が並存して誤引用が確定するため。`unet_total_sec` を分母にした `%` も **VAE を含まない**ので却下)。★**`%` を探さない・`%` で報告しない。判定は絶対秒と削減率のみ。** ★**`n/a` 欄と `weight_upload=0` を実測値として引用しない** (warm では重み転送が計測窓外 = ctor 済みなので 0 は warm の証拠にならない)。★**resnet の比較は同一構成・プロセス間のみ** — `default` は 1 step あたり 2 forward なので **構成をまたいだ resnet の直接比較は桁が合わない** (`default` 行はドリフト対照専用) |
 | `vae_sec` | VAE decode |
 | `host_roundtrip_sec` | host 往復 (scale_model_input・dtype 変換・H2D/D2H・scheduler step) |
 | `total_sec` | generate 全体 |
@@ -96,8 +103,23 @@ CPU: プロンプト生成 (自作タグ生成 LM)
 - 全体の支配項は拡散で、その中では **UNet が大半**。
 - **GroupNorm は multi-block 化で 4.2x になったが、resnet バケット全体には効かなかった**
   = バケットの質量は **conv2d** にあると確定済み。
-- 現在の最有力は **G-10k (conv の真 batch2)**。
+- 秒数の本命は **G-10k (conv の真 batch2)**。**計画と決裁は完了 (2026-08-24)・実装は未着手**
+  (`docs/g10k-plan.md` が実行計画の正本。`DOLLAMA_CONV_BATCH` は `src/` にまだ存在しない)。
   CFG batch2 が理論 2× に届かないのは conv2d が per-n 直列で batch されないため。
+  ★**resnet ゲートの判定方式 (G-10k 決裁 2026-08-24)**: **B=1 換算の 1.212s / baseline 1.225s は
+  G-10k の合否分母として退役した。据え置き禁止。**
+  (この 2 値は `src/tests/prof_unet_fast_warm.cu:155-156` が出力文字列に埋め込んだままなので、
+  そのまま読んで分母にしないこと。)合否は**削減率**で見る
+  (**−22% 以上 = 達成 / −15%〜−22% = 部分的成功 / −15% 未満 = 秒中立**)。
+  **分母は毎回、その回の `--fast` + `DOLLAMA_CONV_BATCH=0` から取る** (絶対秒はドリフト ±9.9% に耐えない)。
+  ★**batch2 構成の resnet バケットは G-10k (T2b の計装) で初めて測れる量**であり、
+  **退役した B=1 の 1.212s / 1.225s とは別系列**。**2 系列を同じ表・同じ文で比較しないこと。**
+  ★**「同一走行で A/B を取る」と書いてはいけない**: この repo の正典用法では **走行 = プロセス**
+  (`docs/measurements-log.md:75`「S4 も **1 走行 1 プロセス**で、構成は起動時 env で固定される」) で、
+  キルスイッチ系 env は getenv キャッシュ型 (`src/kernels/gemm.cu:377-386` /
+  `src/kernels/device_arena.cu:215-232` の型) ゆえ**プロセス単位で固定**される。
+  A/B は必ず**別プロセス**になる。取り方は「**同一時刻帯・隣接して連続採取**」であって
+  「同一走行内」ではない。**プロセス内で切り替えたと記録に書かない** (S5e→S5f で 2 度是正された型)。
   ★**G-8k (cudaMalloc/cudaFree 撲滅) は S1〜S4b 全緑でクローズ済 (2026-08-19) — もう着手前の候補ではない。
   重複起票しないこと** (経緯は `docs/fast-mode-plan.md` の G-8k 実装記録・`docs/measurements-log.md` の S4b 行)。
 - **`cudaMalloc` は隠れた律速。** `DOLLAMA_PROFILE` の確保回数・転送計時を必ず見る。
@@ -120,7 +142,7 @@ CPU: プロンプト生成 (自作タグ生成 LM)
 |---|---|
 | 改善したはずが速くならない | ノイズ床を測る。3 回の分散未満なら「効果なし」と報告する |
 | cold と warm を混ぜている | 重み転送を分離して再計測。warm ハンドルを使う |
-| batch2 が 2× にならない | conv2d が per-n 直列。G-10k の担当領域 |
+| batch2 が 2× にならない | conv2d が per-n 直列。G-10k の担当領域 (計画のみ完了・`docs/g10k-plan.md`)。**観測点を間違えないこと**: N=2 を直接測れる既存計器は **`bench_batch_vs_persample`** (`src/tests/test_conv2d.cu:725-795`・同一ループ内で交互採取するのでドリフト耐性が最強・ただし per-call ms なので **e2e 秒には翻訳できない**) **だけ**。**`prof_unet_fast_warm` は B=1 固定なので使えない**し、**e2e の `cat_resnet_sec` 内訳表も B=1 経路 (`generate`) からしか出ない** (いずれも上の 2 つの表を参照)。**N>1 の e2e resnet 秒を出したいなら計装の追加が必要 = 実装タスク** (G-10k の **T2b** で実施決裁済・未着手) であって、既存計器の読み替えでは得られない |
 | VRAM が増え続ける | `cudaMalloc` の解放漏れ。プロファイルの確保回数を見る |
 | 実走が Permission denied | SAC のブロック。共通ルールの手順で OFF を依頼する (コードを疑う前に切り分け) |
 
