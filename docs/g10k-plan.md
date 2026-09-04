@@ -1,8 +1,41 @@
 # G-10k: conv2d 真の batch2 — 研究機セッション向け引き継ぎ書
 
-**ステータス**: 🔲 **未着手** (T3 以降はすべて**予定**)。本書は着手前に開発機で起草したもので、
-**実走した数値を 1 つも含まない**。「確認した」と読める記述があれば、それは本書起草時に
-**ソースを開いて確認した事実**であって、GPU 実走の結果ではない。
+## ステータス (2026-09-04 更新)
+
+**T2a ✅ / T2b ✅ / T2c ✅ 完了 — T3 以降は ⏸ 保留。再開点は T3。**
+
+| 段 | 状態 | commit | 生ログ |
+|---|---|---|---|
+| T2a 着手前の基準採取 | ✅ 完了 | `4d70aa1` | `docs/logs/g10k-baseline/` (README の T2a 節・`e2e_run*.log` / `conv2d_run*.log`) |
+| T2b `generate_txt2img` に profile reset + 内訳 dump | ✅ 完了 | `036cb94` (計器) + `de34ec6` (GATE5 を番兵で位置非依存化) + `f58ba2c` (生ログ) | 同 `t2b_*` 一式 |
+| T2c batch2 resnet バケット初採取 + nsys | ✅ 完了 | `1c85dd9` | 同 `t2c_*` 一式 |
+| **T3 以降 (S1 batched GEMM 〜 T9 監査)** | ⏸ **保留** | — | — |
+
+**保留の理由 (2026-09-04・ユーザー決裁)**: T2c の **nsys 実測**で優先順位が変わった。
+生成 1 枚 (1024²/20step/CFG/`--fast` 相当) の GPU カーネル総時間 **10.4705s** のうち
+**attention 2 カーネルが 6.858s** を占め (`attention_flash_wmma_fast_fp16` 6.3430s = **60.58%** +
+VAE mid の `attention_flash_wmma_fp16` 0.5147s = **4.92%**)、
+一方で **G-10k が対象とする resnet バケットは 0.854s** (出荷 `--fast` 構成)。
+launch 谷は wall の **1.79%** (GPU busy 98.21%) しかない。
+→ **attention の書き直し (G-14k) を先行**することがユーザー決裁で決まり、G-10k は T2c の状態で保留された。
+数値の出典と読み方は下記 **§13**。
+
+**再開するときは T3 から。** T3 以降の設計・ゲート・禁止事項は本書のまま有効で、
+**T2b / T2c で確定した値と実行物の所在は §13 に集約した**。
+
+★**`src/` の変更状況 (起票時からの更新)**: 起草時 (2026-08-24) は「`src/` の変更は 1 行も発生していない」
+だったが、**T2b で `src/infer/diffusion.cu` (計器) と `src/tests/test_diffusion_batch2.cu` (GATE5) が変わった**。
+★**`src/kernels/conv2d.cu` は未変更のまま** — これが T2c を「conv2d 未変更ツリーのアンカー」として
+成立させている前提である (T3/T4 で conv2d を触った瞬間にこの前提は失われる)。
+
+**起草時のステータス (履歴・当時の記述をそのまま残す)**:
+
+> **ステータス**: 🔲 **未着手** (T3 以降はすべて**予定**)。本書は着手前に開発機で起草したもので、
+> **実走した数値を 1 つも含まない**。「確認した」と読める記述があれば、それは本書起草時に
+> **ソースを開いて確認した事実**であって、GPU 実走の結果ではない。
+
+★**上記引用のうち「実走した数値を 1 つも含まない」は 2026-09-04 に失効した** —
+**§13 は実走値である**。§13 以外の本文 (§1〜§12) については引き続き上記が成り立つ。
 
 **作業ブランチ**: `feat/g10k-conv-true-batch2` (開発機で checkout 済。研究機でも同名で作業する)
 **起草**: 2026-08-24 / 開発機 (CUDA なし) / `record-writer`
@@ -10,10 +43,14 @@
 `%` 列は B 案 = 出さない / **アンカー 3 は帯 + 参考対照へ降格し、秒の hard 担保は T4 の構造保存要件へ移設**) +
 敵対的監査 3 ラウンド (BLOCK 2 → BLOCK 1 → BLOCK 1) を反映。
 ★**決裁は全件クローズ (2026-08-24)。未決は無い。**
-**T2b から T9 まで着手条件なしで直列に進めてよい。**
-★**ここまでで `src/` の変更は 1 行も発生していない** (計器設計は 3 回差し替わり、
-そのうち **2 件は PL 決裁の欠陥**だった。§2 の計器規則末尾)。
-**設計の正本**: `docs/fast-mode-plan.md` の「G-10k: conv2d 真の batch2」節 (`:688-693`)
+~~**T2b から T9 まで着手条件なしで直列に進めてよい。**~~
+→ ★**2026-09-04 更新**: **T2b / T2c は完了・T3 以降は保留** (冒頭ステータス)。
+**着手条件が無いこと自体は変わらない** ので、保留が解けたら T3 からそのまま直列に進めてよい。
+~~★**ここまでで `src/` の変更は 1 行も発生していない**~~ (計器設計は 3 回差し替わり、
+そのうち **2 件は PL 決裁の欠陥**だった。§2 の計器規則末尾)
+→ ★**2026-09-04 更新**: T2b で `src/infer/diffusion.cu` と `src/tests/test_diffusion_batch2.cu` が
+変わった (**`src/kernels/conv2d.cu` は未変更**)。冒頭ステータス参照。
+**設計の正本**: `docs/fast-mode-plan.md` の「G-10k: conv2d 真の batch2」節 (`:750-755`。★行番号は 2026-09-04 の R-1 加筆で `:688-693` から繰り下がった)
 
 ---
 
@@ -25,9 +62,26 @@
   → **承認計画にあった「S1〜S3 を開発機でビルド可否確認」工程は成立しないため廃した**
   (承認計画からの意図的な逸脱。判断根拠は上記の実測)。
 - したがって **実装・実走はすべて研究機 `KIK-WIN-RTX58` (`E:\Develop\Projects\dollama`) で行う**。
-- 研究機セッションと本セッションは通信できない。**本書が唯一の転送路**であり、研究機側は冷えた
+- ~~研究機セッションと本セッションは通信できない。**本書が唯一の転送路**であり、研究機側は冷えた
   コンテキストからこれを拾って実行する。前例は G-8k S6 (`docs/g8k-review-fix-plan.md:268`
-  「実装・実走とも研究機 `KIK-WIN-RTX58` (SAC OFF)」) と同型。
+  「実装・実走とも研究機 `KIK-WIN-RTX58` (SAC OFF)」) と同型。~~
+  ★**是正 (2026-09-04・当時の記述は上に残す)**: **この前提は退役した。**
+  2026-09-04 に**開発機 → 研究機の SSH + `scp` 疎通を実測**し、T2a / T2b / T2c は
+  **開発機から SSH 越しに研究機を操作して実走した**。したがって「本書が唯一の転送路」ではない。
+  - 実運用の形: **開発機で編集 → 開発機で commit → 研究機が同一 HEAD へ同期 → 開発機から SSH で
+    ビルド / 実走 → 生ログを `scp` で回収 → 開発機で commit**。
+  - 一次証拠 (repo 内 / 開発機の物理状態): ①開発機の `~/.ssh/config` に
+    `Host KIK-WIN-RTX58 rtx58` (`IdentityFile ~/.ssh/id_ed25519_rtx58` / `IdentitiesOnly yes`) が存在し、
+    `~/.ssh/known_hosts` に当該ホストのエントリがある (= 接続が成立した痕跡) ②回収コマンドと
+    両側 sha256 突合の実記録が `docs/logs/g10k-baseline/README.md` の T2a §6 (`scp -o BatchMode=yes
+    rtx58:'E:/Develop/logs/g10k-t2a/*.log' .` / **6/6 一致**) と T2c §T2c-4 (**21/21 一致**)
+    ③各段で両機の HEAD 一致と研究機 `git status --porcelain` 0 行を記録している
+    (`t2b_env.log` の `== HEAD: 036cb940...` / `t2c_env.log` の `f58ba2c1...`)。
+  - ★**「同期」の具体的な git コマンド (fetch + `reset --hard` か否か) はログに残っていない** —
+    repo 内で裏が取れるのは**両機の HEAD が一致していた事実**までである。ここを断定しないこと。
+  - ★**再現時の注意**: リモートの `.ps1` は **`pwsh` (PowerShell 7) で実行する**
+    (`powershell` 5.1 は BOM 無し UTF-8 を CP932 と解釈して日本語を壊す = T2a で実際に撮り直した)。
+    ssh のリモート inline コマンドに `$var` や `|` を素で書かない (README T2a §6 / T2c-5)。
 - 本書は正本 (`docs/fast-mode-plan.md` G-10k 節) を**実行手順・ゲート・不変条件へ落としたもの**。
   正本と重複する設計説明は繰り返さずポインタで済ませる。ただし §2 の N1/N2 のとおり、
   **正本には未検証の実装案が含まれ、行番号も現物とずれている**ので、正本を無条件の権威として読まないこと。
@@ -49,7 +103,7 @@ G-8k S5 で「是正が新しい誤りを持ち込む」形が 5 ラウンド続
 とくに stride 写像は**間違っても「動くが数値が違う」形で通ってしまう**ため、doc 由来の権威が
 最も危険な箇所である。
 
-★**注意 (N1)**: 正本 `docs/fast-mode-plan.md:691` には **stride 写像の案が既に書かれている**
+★**注意 (N1)**: 正本 `docs/fast-mode-plan.md:753` (旧 `:691`) には **stride 写像の案が既に書かれている**
 (起草時の提案で、**実測検証を経ていない**)。本書はそれを再掲しない。実装者は正本のあの 1 行を
 **「未検証の提案」として扱い、鵜呑みにせず `gemm.cu` から導出したものと突き合わせる**こと。
 一致しても、T3 のゲートを通すまでは正しさの根拠にしない。
@@ -62,7 +116,7 @@ G-8k S5 で「是正が新しい誤りを持ち込む」形が 5 ラウンド続
 **F1 / F2 / F3 / N2 / N3 はすべて決裁済み (2026-08-24)。未決は無い。**
 いずれも起草時または監査ラウンド中にソースを開いて見つけた食い違いで、**PL が独立に裏取りしたうえで
 決裁済み**。決裁内容は本書の該当節 (§3 分母 / §5 数値方針 / §6 タスク表 / §7 ゲート / §8 判定帯) に
-**すべて反映済み**。**T2b〜T9 は着手条件なしで直列に進めてよい。**
+**すべて反映済み**。**T2b〜T9 は着手条件なしで直列に進めてよい** (★2026-09-04: T2b / T2c は完了済み・T3 以降は保留中。冒頭ステータス)。
 以下は「なぜそう決まったか」の履歴 + 各件の一次証拠である。
 
 ★**この 3 件は同じ型の誤り**である: **計器が被験変数を見ていない** (F1 = B=1 の harness /
@@ -84,10 +138,10 @@ F3 = B=1 経路にしかない dump)。**G-4k S3 の「測っている変数が 
   (`prof_unet_fast_warm.cu:154-156`) は G-10k の前後で変わらないのが期待値。
 - さらに、分母 **1.212s** / baseline **1.225s** / S3 の 1.28564–1.41299s は
   **すべて B=1 の「1 forward/step × 20step 換算」**である
-  (出典: `docs/fast-mode-plan.md:306-316` の「参考: prof_unet_fast_warm」表 /
+  (出典: `docs/fast-mode-plan.md:340-350` (旧 `:306-316`) の「参考: prof_unet_fast_warm」表 /
   換算式は `prof_unet_fast_warm.cu:148` の `resnet_ms * gen_steps / 1000`)。
 
-**PL の認定 (射程は起草時の指摘より広い)**: `docs/fast-mode-plan.md:212-215` / `:318-324` の
+**PL の認定 (射程は起草時の指摘より広い)**: `docs/fast-mode-plan.md:242-245` / `:352-358` (旧 `:212-215` / `:318-324`) の
 「resnet ≤0.95s の合否を G-10k 後の再 profile へ再割当」という **G-4k の決裁自体が、
 被験変数を通らない計器に紐づいていた**。G-4k S3 で学んだ「測っている変数が epilogue ではない」と
 同型の誤りが、今回は比較条件ではなく**計器側**で起きていた。
@@ -206,10 +260,10 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 
 ### N2 (注意・残置): 正本の行番号が現物とずれている
 
-`docs/fast-mode-plan.md:690` は N>1 枝を `src/kernels/conv2d.cu:483-503` と書くが、**現物は `:487-507`**
+`docs/fast-mode-plan.md:752` (旧 `:690`) は N>1 枝を `src/kernels/conv2d.cu:483-503` と書くが、**現物は `:487-507`**
 (本セッションで `grep -n "N > 1 && use_gemm_path"` → 487 を確認)。
 **決裁 4**: 行番号ドリフトを追いかけて直す方針は採らないが、G-10k 節は**現役参照**なので例外として
-「現物 `:487-507` (2026-08-24 確認)」を**併記**する (当時の記述は消さない = `fast-mode-plan.md:463-466`
+「現物 `:487-507` (2026-08-24 確認)」を**併記**する (当時の記述は消さない = `fast-mode-plan.md:502-505`
 で確立した「行番号ごと当時の記述を残すのは経緯の履歴としてであって、再度撲滅しに行く対象ではない」型)。
 実施は **T8 のスコープ**。
 
@@ -235,12 +289,12 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 **直列 N 回**呼ぶ実装で、G-2k S1 のビット一致優先設計である (同 `:479-486` のコメントに設計意図が明記)。
 これを **im2col の n 次元対応 + strided batched GEMM による真の batch2** へ置き換える。
 
-- fast-mode に残る**唯一の秒数レバー**: `docs/fast-mode-plan.md:413` 「**秒数の本命は G-10k 単独**である」。
+- fast-mode に残る**唯一の秒数レバー**: `docs/fast-mode-plan.md:447` (旧 `:413`) 「**秒数の本命は G-10k 単独**である」。
   G-8k は秒数レバーではない (同 `:411-413`)。
-- 回収見込みは **resnet ~0.5-1.0s (resnet 1.3-1.7x 相当)** = 正本 `docs/fast-mode-plan.md:692` の
+- 回収見込みは **resnet ~0.5-1.0s (resnet 1.3-1.7x 相当)** = 正本 `docs/fast-mode-plan.md:754` (旧 `:692`) の
   **見込み値であり未実測**。同行も「正確な倍率は要実測」と書いている。本書はこの数値を合否に使わない。
 - G-4k で保留された **resnet ゲートの合否をここで確定する**のが本 Pkg の対外的な意味
-  (`docs/fast-mode-plan.md:212-215` / `:318-324`)。
+  (`docs/fast-mode-plan.md:242-245` / `:352-358`)。
 
 ### ★分母の決裁 (2026-08-24)
 
@@ -261,9 +315,9 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 ### 分母に使ってはいけない数値 (既存記録の明示禁止事項をそのまま引き継ぐ)
 
 - **B=1 の 1.212s / 1.225s / 1.28564–1.41299s** — 上記のとおり退役 (§2 F1)。
-  出典: 1.212s = `docs/fast-mode-plan.md:203` (S2 の表) / `:206` (ゲート未達の判定) / `:216` (分母の採用) 、
+  出典: 1.212s = `docs/fast-mode-plan.md:233` (S2 の表) / `:236` (ゲート未達の判定) / `:246` (分母の採用) 、
   1.225s の baseline と `≤0.95s` のゲート値は **ハーネスの出力文字列に埋め込まれている**
-  (`src/tests/prof_unet_fast_warm.cu:155-156`)、1.28564–1.41299s = 同 `docs/fast-mode-plan.md:310-313` の表。
+  (`src/tests/prof_unet_fast_warm.cu:155-156`)、1.28564–1.41299s = 同 `docs/fast-mode-plan.md:344-347` の表。
   ★**`prof_unet_fast_warm` を走らせると退役後も `(gate: <=0.95s / stretch <=0.85s / baseline 1.225s)` が
   そのまま印字される** (src 変更は本 Pkg のスコープ外 = §12-4)。**出力の文字列を分母として読まないこと。**
 - G-8k S4 / S4b の e2e 秒 (11s / 16s / 10.8s 等) — `docs/measurements-log.md:74` に
@@ -322,7 +376,7 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
   (**合否には使わない**。6.4e-05 は CLAUDE.md 計測表「UNet バッチ (G-2k S2)」行の既存記録の引用)。
 - e2e の合否は既存 `test_diffusion_batch2` の **GATE2 = batch2 vs off @g=1.0 SSIM ≥ 0.999**
   (`src/tests/test_diffusion_batch2.cu:360-372`) を流用する。
-- **g>1 で FP16 微差をゲートしない。** 出典は `docs/fast-mode-plan.md:244`
+- **g>1 で FP16 微差をゲートしない。** 出典は `docs/fast-mode-plan.md:274` (旧 `:244`)
   (「**教訓 (非交渉)**: CFG 増幅下 (g>1) で FP16 の微差をゲートしてはいけない。被験変数は g=1.0 で分離する。」)
   と `:345-347` (増幅の機序と G-4k S3 初版の実害 0.996533 < 0.999)。
 
@@ -351,6 +405,9 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 ## 6. タスク表 (T2b〜T9・完全直列)
 
 **実行順**: **T2b → T2c → T3 → T4 → T5 → T6 → T7 → T7b → [T7c] → T8 → T9**。
+★**進捗 (2026-09-04)**: **T2b ✅ / T2c ✅ 完了 — T3 以降は保留 (再開点 T3)**。
+下表の T2b / T2c 行は**実施済みタスクの定義**として残す (何をどう採ったかの根拠)。
+**採れた値と実行物の所在は §13。**
 **GPU 実走の並列は禁止** (同一 GPU を 2 プロセスで叩いた秒は意味を失う)。
 **T7b は実走なしなので GPU を占有しない** (両機で実施可)。
 **着手条件付きのタスクは無い** (§2 の F1 / F2 / F3 すべて決裁済み)。
@@ -463,7 +520,7 @@ T2c と T7 は**別セッション**なので、アンカー 1 (同一セッシ�
    ★**幅の正規化 = |P1 − P3| / P1 (先行プロセス P1 比)**。理由: 床の根拠である下記 **+9.9%**
    自体が前値比 ((1.41299 − 1.28564) / 1.28564 = 0.099) で算出されており、`max(実測幅, 10%)`
    の両辺を同一の正規化で比較するため (平均比だと同じ実測が 9.4% になり床との対応がずれる)。
-   下限 10% の根拠は G-4k S3 の実測ドリフト **+9.9%** (`docs/fast-mode-plan.md:310-313` の
+   下限 10% の根拠は G-4k S3 の実測ドリフト **+9.9%** (`docs/fast-mode-plan.md:344-347` の
    同一走行内 default 再測 **1.28564s → 1.41299s**)。
    ★**`max()` を採る理由**: アンカー 1 は**同一セッション内**の幅なので、**別セッション跨ぎの
    アンカー 3 に対しては下限としてしか使えない**。跨ぎの方が狭いという主張には根拠がないため、
@@ -498,12 +555,12 @@ T2c と T7 は**別セッション**なので、アンカー 1 (同一セッシ�
 
 ### T8 の記録スコープ (決裁で確定した分)
 
-1. **ゲート設計の誤りの是正** (数値更新ではない): `docs/fast-mode-plan.md:212-215` / `:318-324` の
+1. **ゲート設計の誤りの是正** (数値更新ではない): `docs/fast-mode-plan.md:242-245` / `:352-358` の
    「resnet ≤0.95s を G-10k 後の再 profile へ再割当」という **G-4k の決裁が、被験変数を通らない計器
    (`prof_unet_fast_warm` = B=1) に紐づいていた**こと。G-4k S3 の「測っている変数が epilogue ではない」と
    同型の誤りが**計器側**で起きた、という認定を書く。
 2. **分母の退役**: B=1 の 1.212s は G-10k の合否分母から退役し、判定は**削減率**へ移った (§3 / §8)。
-3. **`docs/fast-mode-plan.md:691`** の stride 写像案に「**起草時の未検証提案**」注記を付す
+3. **`docs/fast-mode-plan.md:753`** の stride 写像案に「**起草時の未検証提案**」注記を付す
    (**削除しない**。G-8k 節で確立した「当時の記述は履歴として残し現況を別に書く」型 = `:463-466`)。
 4. **同 `:690`** の行番号に「現物 `src/kernels/conv2d.cu:487-507` (2026-08-24 確認)」を**併記**
    (当時の記述は消さない)。
@@ -619,7 +676,7 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 ★**マージンを対照の代替にしない (決裁 2026-08-24・却下理由の明文化)**: 「−15% のマージンを取れば
 同一構成の再測は要らない」は**誤り**。マージンは**差の大きさしか見ない**ので、
 **ドリフトが有利方向に振れた場合 (偽の合格) を検出できない**。G-4k S3 で観測されたのは +9.9% の
-減速方向だったが (`docs/fast-mode-plan.md:287`)、**方向が保証されている根拠はどこにも無い**。
+減速方向だったが (`docs/fast-mode-plan.md:317`)、**方向が保証されている根拠はどこにも無い**。
 対照 (プロセス 1 と 3 の同一構成再測 + `default` 行の不変性) は**方向を含めて**検出する。
 
 | ② resnet バケットの削減率 (同一時刻帯 A/B) | 判定 | 既定 |
@@ -630,10 +687,10 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 
 - **副次条件 (合否なし・裏付け)**: T7 の e2e `--fast` 相対倍率が **x1.33 帯から +0.02 以上**動くこと。
   e2e はノイズが大きいので**合否は ② で取る**。x1.33 帯の出典は既存記録
-  (`docs/fast-mode-plan.md:288` 「主指標は相対倍率 x1.33」・CLAUDE.md 計測表 G-4k S3 行の x1.33439)。
+  (`docs/fast-mode-plan.md:318` 「主指標は相対倍率 x1.33」・CLAUDE.md 計測表 G-4k S3 行の x1.33439)。
   比較する構成は **fast+epilogue (= 出荷 `--fast`)** の列に固定する (T7 の 3 構成のうちどれで見るかを揺らさない)。
 - ドリフト床 **±9.9%** は既存記録の引用: G-4k S3 の同一走行内で default 自身の resnet バケットが
-  1.28564s → 1.41299s と揺れた実測 (`docs/fast-mode-plan.md:287`, `:310-313`)。本セッションで
+  1.28564s → 1.41299s と揺れた実測 (`docs/fast-mode-plan.md:317`, `:344-347`)。本セッションで
   再測はしていない。**−15% は「床 ~1.5 倍のマージンを取った値」**であって「床と等しい」わけではない。
 - 秒中立なら、**bit 一致という既存資産** (per-n 直列は N==1 と完全同一の蓄積順 =
   `conv2d.cu:483` のコメントが設計意図として明記・[G1] で memcmp 固定) を
@@ -657,7 +714,7 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
    **[G1] は数えない** — [G1] は `DOLLAMA_CONV_BATCH=0` = **per-n 直列経路**の検査であり (§7)、
    参照も per-sample N=1 呼びなので、**新経路 (batched) の一様バグには何も寄与しない**。)
 2. **`[ALLOC] reserve:` の行が出ただけを reserve 成功と読むのは既知の誤読。**
-   `DOLLAMA_POOL=0` でも出る (出典 `docs/fast-mode-plan.md:664-675`。機序は
+   `DOLLAMA_POOL=0` でも出る (出典 `docs/fast-mode-plan.md:726-737`。機序は
    `reserve_arenas()` 自身に pool 判定が無く、printf が `device_arena_reserve()` 呼出の**後**にあり、
    no-op 判定は callee 側の早期 return で行われるため)。
    **判定は終了時サマリの `cap` / `reserved` / `chunks`** (`src/infer/unet.cu:1360-1368`)。
@@ -680,7 +737,14 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 ## 10. 規律
 
 - ブランチ `feat/g10k-conv-true-batch2`。**`git add -A` 禁止** — 対象ファイルのみパスを明示して stage。
-- 研究機は**コミットのみ** (HTTPS+GCM で push 不可)。push は開発機が研究機から fetch して行う。
+- ~~研究機は**コミットのみ** (HTTPS+GCM で push 不可)。push は開発機が研究機から fetch して行う。~~
+  ★**是正 (2026-09-04・当時の記述は上に残す)**: **研究機ではコミットしない。commit も push も開発機のみ。**
+  研究機は「開発機の commit を同期して受け取り、ビルド / 実走して生ログを出す」だけの役に変わった
+  (§0 の SSH 運用)。**研究機の作業ツリーは各段で `git status --porcelain` 0 行 (clean) を保つ**
+  — これが「実走した exe は commit 済みツリーのものだ」という主張の根拠になる。
+  一次証拠: T2a / T2b / T2c の 5 commit (`4d70aa1` / `036cb94` / `de34ec6` / `f58ba2c` / `1c85dd9`) は
+  すべて author が **`sdkikgeneral-spec`** (= 開発機) であり、研究機 author の
+  `KIK-WIN-RTX58\sdkik` は 1 件も無い (`git log --format='%h %an'` で確認)。
 - **`meson test` の前に SAC OFF をユーザーへ依頼する** (黙って走らせない)。今回の実走は SAC OFF が前提。
 - ★**生ログは必ず repo 配下 `docs\logs\g10k-*\` へ退避する** (T5 / T6 = `g10k-resnet` /
   T7 = `g10k-e2e`。T5 分も同じ命名規則に従う)。前例は `docs\logs\g8k-s4b\` (README 付き)。
@@ -735,7 +799,7 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 | `prof_arena_e2e` は meson test 未登録 | `src/meson.build:886-899` |
 | 登録テスト数 = 53 | `src/meson.build` の `test(` 定義数を実数カウント |
 | `DOLLAMA_CONV_BATCH` は新規名 (衝突なし) | `grep -rn DOLLAMA_CONV_BATCH src/ docs/` = 0 件 |
-| 「当時の記述を履歴として残す」型の前例 | `docs/fast-mode-plan.md:463-466` |
+| 「当時の記述を履歴として残す」型の前例 | `docs/fast-mode-plan.md:502-505` |
 | **`diffusion.cu` の総行数と `DiffusionPipeline::` メソッド境界** | `src/infer/diffusion.cu` = **981 行** / `:384` `:438` `:461` `:521` `:533`(`generate`) `:732`(`generate_txt2img`) |
 | **reset は 1 箇所・dump は 1 箇所・どちらも `generate` 内** | reset `src/infer/diffusion.cu:554` / dump `:670-716` (ヘッダ `:686`・resnet `:701-702`・終端 `:714`) |
 | `generate` は CFG を拒否し B=1 で呼ぶ | `src/infer/diffusion.cu:545-549`, `:616-624` |
@@ -753,11 +817,14 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 | **parity 節が 1 プロセスで `generate_txt2img` を呼ぶ回数 = `g1_again` 付きの off / epi 2 構成が各 4 回 (guids 3 + 再走 1)・on / fst は `nullptr` = 各 3 回** (T2b DoD ② の置き場所根拠) | `src/tests/test_diffusion_batch2.cu:236` (steps=4) / `:247-253` (`gen` ラッパ) / `:267-270` (guidance 3 本) / **`:273-276`** (g=1.0 の再走 `g1_again`) / `:284`, `:289`, `:294`, `:300` (`run_config` 呼出 4 箇所・`g1_again` 付きは `:284` off と `:300` epi のみ) |
 | **同一ツリー二連走は determinism 検査であって無改変証明ではない** (WARN 4 の出典) | `src/tests/test_diffusion_batch2.cu:377-380` (GATE3 注記) |
 | **負のコントロールで空撃ちを潰した前例は F1** (F5 ではない) / **その出力がファイルに残っていなかった教訓** | `docs/measurements-log.md:223-230` (`test_http` 直列化ゲート) / F5 は「既存 exe 内にゲート増設・新規 meson test 0 本」の前例 = `docs/g8k-review-fix-plan.md:161`, `:285` |
-| **帯の下限 10% の根拠 (実測ドリフト +9.9%)** | `docs/fast-mode-plan.md:310-313` (同一走行内 default 再測 1.28564s → 1.41299s) |
+| **帯の下限 10% の根拠 (実測ドリフト +9.9%)** | `docs/fast-mode-plan.md:344-347` (同一走行内 default 再測 1.28564s → 1.41299s) |
 | ★**PL が挙げた `conv2d.cu:31-40` は printf ではなくソースコメント** (「帯分割の正当性に関する重要な注意」) = 「ログに埋めた警告」の前例としては当たらない (出典を訂正して上記に差し替えた) | `src/kernels/conv2d.cu:31-40` |
 
-**docs からの引用 (出典として明記した二次記述)**: `docs/fast-mode-plan.md:206`, `:212-215`, `:216`, `:244`,
-`:287`, `:306-316`, `:310-313`, `:318-324`, `:345-347`, `:411-413`, `:463-466`, `:664-675`, `:688-693` /
+**docs からの引用 (出典として明記した二次記述)**: `docs/fast-mode-plan.md:236`, `:242-245`, `:246`, `:274`,
+`:317`, `:340-350`, `:344-347`, `:352-358`, `:379-381`, `:445-447`, `:502-505`, `:726-737`, `:750-755` /
+(★fast-mode-plan.md の行番号は 2026-09-04 の R-1 加筆で全体が繰り下がった。上記は**加筆後**の値で、
+旧番号は順に `:206` / `:212-215` / `:216` / `:244` / `:287` / `:306-316` / `:310-313` / `:318-324` /
+`:345-347` / `:411-413` / `:463-466` / `:664-675` / `:688-693`。**指している中身は同じ**)
 `docs/measurements-log.md:74`, `:75`, `:192-198` / `docs/g8k-review-fix-plan.md:268` /
 `docs/testing.md:26-30` / CLAUDE.md 計測表 (G-2k S2 行の MAE 6.4e-05 と「conv2d S1 は per-n ループで
 BIT-EXACT」・G-4k S2 行の 1.212s)。
@@ -798,7 +865,7 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
      ファイル対応表)・同 `:126` (「G-4k の resnet ゲートは不合格で正しく閉じた」= **記述は正確**で、
      計器も分母も指定していない) の 2 件のみが関連ヒット。`gpu-benchmarker.md` / `docs/agent-common.md` は
      該当 0 件。**いずれも今回は触っていない。**
-3. **`docs/hw-accel-plan.md:118` / `:132`** (「GPU 側で次に残っているのは G-9k / G-10k → G-5k → G-6k」)
+3. **`docs/hw-accel-plan.md:122` / `:136`** (旧 `:118` / `:132`。2026-09-04 の R-1 加筆で +4 繰り下がった) (「GPU 側で次に残っているのは G-9k / G-10k → G-5k → G-6k」)
    は G-10k クローズで追随が必要になる。追随の要否は PL 決裁 (T8 のファイル指定に入っていない)。
 4. **`src/tests/prof_unet_fast_warm.cu:155-156` に退役済みゲートが出力文字列として残っている**:
    `(gate: <=0.95s / stretch <=0.85s / baseline 1.225s)`。この値は **B=1 換算に紐づいた絶対値ゲート**で
@@ -813,3 +880,156 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
    据え置かれる** (計時 3 行相当)。★**追加するときは、DB2_BENCH の wall
    (`src/tests/test_diffusion_batch2.cu:470-475` の `steady_clock` 窓・min は `:476` の min-of-iters) とは
    **窓が違う**ことを必ず併記する — 併記しないなら追加しない方がよい。
+
+
+---
+
+## 13. T2b / T2c 実測サマリ (2026-09-04・保留時点の到達点)
+
+★**本節だけが実走値である** (§1〜§12 は起草時のソース確認と決裁の記録)。
+★**判定・合否は書かない** — T2c は「採取と提出のみ」というタスク定義であり、
+T3 以降が保留になったので**この値で G-10k の合否を出してはいけない**。
+生ログはすべて `docs/logs/g10k-baseline/` にあり、同ディレクトリの `README.md` が索引。
+
+### 13-1. batch2 の resnet バケット絶対秒 (★アンカー・T2c で史上初採取)
+
+**採取条件 (これと 1 つでも違えば比較は成立しない)**
+
+| 項目 | 値 | 出典 |
+|---|---|---|
+| exe | `E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe` (sha256 `3649AF0B…CE43`) | `t2c_run_meta.log` |
+| env (設定した) | `DB2_BENCH=1` `DB2_BENCH_STEPS=20` `DB2_BENCH_ITERS=1` `DOLLAMA_PROFILE=1` | 同上 (プロセス内の実値を印字している) |
+| env (未設定を実確認) | `DB2_BENCH_G` = **未設定** → harness 既定 **7.5** / `DOLLAMA_POOL` / `DOLLAMA_EPILOGUE` / `DOLLAMA_FAST` / `DOLLAMA_CONV_BATCH` / `DOLLAMA_GEMM` / `DOLLAMA_ARENA_RELEASE` / `DOLLAMA_G8K_DUMP` / `DB2_STEPS` / `DB2_UNCOND_ZERO` はすべて `<unset>` | 同上 |
+| seed | harness 既定 **1234** (`src/tests/test_diffusion_batch2.cu:237`) | — |
+| プロセス | **1 プロセス**で 3 構成を連続 (実行 154.96s / `exit_code = 0`) | `t2c_run_meta.log` |
+| ツリー | HEAD **`f58ba2c`** (= **`conv2d` 未変更**)・研究機 `git status --porcelain` 0 行・`meson compile` = `ninja: no work to do.` | `t2c_env.log` |
+| 機体 | 研究機 KIK-WIN-RTX58 / RTX5080 / driver 610.88 / 走行前 35℃・180MHz → 走行後 49℃・2880MHz | `t2c_run_meta.log` |
+
+**値** (`t2c_db2bench.log` の `resnet (conv/groupnorm)` 行をそのまま転記。
+構成ごとに `generate_txt2img` が **warmup 1 + iters 1 = 2 回**呼ばれる = 先に出る方が warmup・
+後が本走。根拠は `src/tests/test_diffusion_batch2.cu:584` の `one(); // warmup` → `:586` の iters ループ)
+
+| 構成 | warmup | **本走 (アンカー)** | ログ行 |
+|---|---|---|---|
+| **`fast+epilogue` (= 出荷 `--fast`)** | 0.853 s | **0.854 s** | `t2c_db2bench.log:480` / `:504` |
+| `attn+batch2` (composite・**not CLI-reachable**) | 0.971 s | **0.972 s** | 同 `:430` / `:454` |
+| `default` (逐次 2 forward) | 1.058 s | 1.057 s | 同 `:380` / `:404` |
+
+- ★**`default` 行を被験の比較対象にしない。** default は 1 step = **2 forward (B=1 ×2)**、
+  batch2 系は 1 step = **1 batched forward (B=2)** で per-step の仕事量が違う (ログのヘッダにも
+  `Do not compare these seconds across configs` と印字されている)。**`default` の役割は
+  プロセス間ドリフトの対照だけ** (§6 T7b の決裁と同じ)。
+- ★**この秒は `DOLLAMA_PROFILE=1` = `ScopedSyncTimer` の同期入りであり、非 profile の wall ではない。**
+- ★**§6 T7 のアンカー 3 (帯 = ±max(アンカー 1 の実測ドリフト幅, 10%)) の分母はこの本走値**である。
+  帯を外れたときは断定せず §6「帯を外れたときの 3 段」へ。
+
+**同一走行で採れた e2e (参考・正典値ではない)**: `t2c_db2bench.log:513-514` の
+`BENCH e2e (min ms): default=13999.6 attn+batch2(composite / not CLI-reachable)=10879.7 fast+epilogue(shipping --fast)=10735.9` /
+`BENCH speedup vs default: attn+batch2 x1.28676  fast+epi(shipping) x1.30399`。
+★**profile ON の値なので、正典 e2e (`docs/fast-mode-plan.md` の「e2e ベースライン一本化」ブロック) の
+置換には使えない** — 置換は **T7c** (profile OFF) の担当で、**T7c は未実施**。
+
+### 13-2. T2c で保存した実行物 (★「帯を外れたときの 3 段」2 段目に必須)
+
+保存先は**研究機の永続パス** (セッション ID を含まない・repo 外)。所在と sha256 の正本は
+`docs/logs/g10k-baseline/README.md` の **T2c-2 節**。要点だけ再掲:
+
+| 絶対パス | bytes | sha256 |
+|---|---|---|
+| `E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe` | 1401344 | `3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43` |
+| `E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe` | 1388544 | `9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140` |
+
+- ★★**exe だけコピーしても起動しない。** 両 exe は OpenVINO にリンクしており
+  (`src/meson.build` の `deps += openvino_dep`)、**同ディレクトリに OpenVINO 系 DLL 21 本
+  (計 207,460,184 bytes) を同梱してある**。**再配置するときは 21 本ごと運ぶこと**
+  (出典 `t2c_stage_exe.log` の staged dir listing = `dll_count = 21`)。
+- 保存先からの起動は実確認済み: `test_diffusion_batch2.exe` は **T2c 本走行そのものを保存先から起動**
+  (`t2c_run_meta.log` の `exe = E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe` / `exit_code = 0`)、
+  `prof_arena_e2e.exe` は全計測の**後**に `PROF_IMAGES=0` で起動して `exit_code = 0`
+  (`t2c_launchcheck.log` / `t2c_launchcheck_meta.log`)。
+- nsys 生成物 (`.nsys-rep` / `.sqlite` 計 ~629MB) は repo に入れず
+  `E:\Develop\logs\g10k-t2c\nsys\` に保管 (`t2c_artifacts.txt`)。
+
+### 13-3. T2b で追加された計器 — 何を印字し、何を印字しないか
+
+★**T7b / T8 が「無い欄」を探して迷わないための節。** 実物のヘッダと欄は
+`t2c_db2bench.log:364-385` (1 ブロック分) を見れば全部載っている。
+
+**印字する**
+
+- ヘッダ `===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====`
+  (= `generate` 側の表と**見分けがつく文言**・§6 T2b 追加指示 5)
+- `diffusion steps=` / `unet forwards (launch_unet_impl calls)=` / `batch2=` と、
+  **構成依存の警告 2 行** (`with batch2 one diffusion step is ONE batched forward (B=2); with default
+  one diffusion step is TWO forwards` / `Do not compare these seconds across configs`)
+- `UNet step total (all forwards)` / 段グループ `embed` `down` `mid` `up` `conv_out`
+- **カテゴリ `resnet (conv/groupnorm)` / `transformer (attn/gemm)` / `-> attention only`** ← T2b の目的
+
+**意図的に印字しない (「探しても無い」が正しい)**
+
+| 欄 | 実際の印字 | 理由 |
+|---|---|---|
+| `%` 列すべて | **無い** | 分母 `total_sec` がこの経路で埋まらない。`unet_total_sec` を分母にする案も **VAE を含まない**ため却下 (§6 T2b 禁止事項 1 の決裁) |
+| `TOTAL` 行 (`total_sec`) | **無い** (ログに `total_sec is NOT measured on this path` と明記) | 同上。DB2_BENCH の `steady_clock` 窓と二重化して誤引用が確定するため |
+| `VAE decode` | **`n/a (not timed on this path)`** | `vae_sec` は `generate` 側 (`src/infer/diffusion.cu:655`) の計時 |
+| `host roundtrip` | **`n/a (not timed on this path)`** | 同上 (`src/infer/diffusion.cu:613` / `:642`) |
+| `weight upload+malloc` | **`n/a (outside this window; a 0 here is NOT evidence of warm)`** | warm では重み転送が ctor 済み = 計測窓の外。**0 を warm の証拠にしない** |
+
+★**`n/a` 欄を実測値として引用しない。`%` を探さない・`%` で報告しない。判定は絶対秒と削減率のみ。**
+
+**計器が被験を通っていることの証拠 (負のコントロール)**
+
+1. 最終ゲートコードのまま `src/infer/diffusion.cu` だけを T2b の親 (`4d70aa1`) へ戻したツリーで
+   **GATE5 が赤 (exit 1)**: `[GATE5] ... sentinel (1e6 s) survived the call` /
+   `[GATE5] ... ratio 2 >= 1.5` (`t2b_negctl_red.log`・逆 diff は `t2b_negctl_reverse_diff.log`)。
+2. 復元して再ビルドしたツリーで **緑** (`t2b_gate_green.log:359-360` = 番兵クリア・ratio 0.990 / 0.999)。
+3. `meson test -C build` **Ok: 53 / Fail: 0** (`t2b_meson_test.log`)。
+
+★**新規ビルドの exe が SAC を通ったと言えるのは T2b まで。** T2b は実際に再ビルドして走らせている
+(`build_t2b.log` / `build_negctl_red.log` / `build_negctl_green.log` / `build_final.log`)。
+**T2c は `ninja: no work to do.` で新規ビルドが発生していないので、T2c を SAC の証拠に使ってはいけない。**
+
+### 13-4. T2c nsys 実測 (★保留決裁の根拠。G-10k の合否のためではなく優先順位判断のために採った)
+
+**採取条件**: `nsys profile` を 2 本 (`t2c_nsys*` / `t2c_nsys2*`)。被計測は `prof_arena_e2e.exe`・
+env は `PROF_IMAGES=2 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1`、
+`DOLLAMA_PROFILE` / `DOLLAMA_POOL` / `DOLLAMA_ARENA_RELEASE` / `PROF_SAMPLE_MS` は**すべて未設定**
+(= **profile 計装 OFF** なので 13-1 の秒とは別条件)。HEAD は同じく `f58ba2c`。
+
+**生成 #2 (重み転送の尾を含まない側)** — 出典 `t2c_nsys_gen_split.log` (走行 #1) / `t2c_nsys2_gen_split.log` (走行 #2)
+
+| 指標 | 走行 #1 | 走行 #2 |
+|---|---|---|
+| wall | 10.6615 s | 10.6608 s |
+| Σ kernel time | 10.4705 s | 10.4707 s |
+| launch 谷 (wall − Σkernel) | 0.1910 s = **1.79 % of wall** | 0.1901 s = **1.78 % of wall** |
+| GPU busy | **98.21 %** | **98.22 %** |
+| `attention_flash_wmma_fast_fp16` (UNet・`--fast` 経路) | 6.3430 s = **60.58 %** | 6.3438 s = **60.59 %** |
+| `attention_flash_wmma_fp16` (VAE mid・default カーネル) | 0.5147 s = **4.92 %** | 0.5143 s = **4.91 %** |
+
+- ★**ログの `%` 列の分母は Σ kernel time (wall ではない)。** attention 2 本の合計は走行 #1 で
+  6.858 s = **Σkernel の 65.50 %** = **wall の 64.32 %**。**どちらの分母で言っているかを必ず併記する**
+  (65.5 と 64.3 はこの分母の違いであって、別々の測定ではない)。
+- UNet / VAE の分割は `t2c_nsys2_unet_vae_split.log`: UNet 20step は wall 9.6599 s / Σkernel 9.4756 s
+  (attention 6.3438 s = UNet Σkernel の **66.95 %**)、VAE decode は wall 1.0009 s / Σkernel 0.9951 s
+  (attention 0.5143 s = VAE Σkernel の **51.69 %**)。
+- ★**VAE mid attention は 1 launch で 514 ms** (`grid=(1024,1) block=32` = **1 block 1 warp**)。
+  `src/kernels/vae_decode.cu:683` は `launch_attention` を直接呼ぶため `--fast` でも default カーネルの
+  ままである (項目別の実装状況は `docs/fast-mode-plan.md` の #4 節の進捗表)。
+- ★**resnet の面積**: 13-1 の `fast+epilogue` 本走 **0.854 s** に対し、同じ dump ブロックの
+  `UNet step total` は **9.729 s** (`t2c_db2bench.log:472` と `:480`) = **UNet に対して 8.8 %**。
+  ★**この 8.8 % の分母は `UNet step total` であって VAE を含まない。**
+  異なる分母の % を混ぜないこと (§6 T2b 禁止事項 1 が `%` を印字させなかったのと同じ理由)。
+- ★**ここから先の「FA2 級ならどれだけ縮むか」は概算であって実測ではない。** 本書には書かない
+  (見積りは G-14k 側の計画書の担当)。
+
+### 13-5. 再開手順 (T3 から)
+
+1. **前提の再確認**: `src/kernels/conv2d.cu` が未変更であること (13-1 のアンカーの前提)。
+   変更済みなら **T2c を撮り直す**か、アンカー 3 を使わない設計に切り替える (§6 のアンカー節)。
+2. **T2c の exe (と DLL 21 本) が残っているか**を確認する (13-2)。無ければ
+   「帯を外れたときの 3 段」の 2 段目が実行不能になるので、**T3 に入る前に**アンカーの扱いを PL へ上げる。
+3. T3 → T4 → T5 → T6 → T7 → T7b → [T7c] → T8 → T9 は本書のまま。**着手条件は無い**。
+4. ★**G-14k が先に attention を書き換えている場合**、13-1 のアンカーと 13-4 の nsys 内訳は
+   **別ツリーの値になる**。resnet バケットは attention 改修の影響を受けない想定だが、
+   **「受けない」と確かめた実測はまだ無い** → T7 のドリフト対照 (`default` 行) で確認してから使う。
