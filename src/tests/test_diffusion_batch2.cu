@@ -26,9 +26,13 @@
 //
 //   G-10k T2b で 1 本追加 (条件付き・DOLLAMA_PROFILE=1 のときだけ判定):
 //     [5] reset ゲート: generate_txt2img の profile カウンタが呼び出しごとにリセットされる。
-//         同一パイプラインの 1 回目 (g=1.0) 直後と、同一構成の再走 (g1_again) 直後の
-//         cat_resnet_sec を比べる。リセットが無ければ後者は前者の ~4 倍 (間に g=3.0 /
-//         g=7.5 の 2 走が挟まる) に積み上がる。cat_resnet_sec は profile_enabled() の
+//         (a) 主検査 = 番兵: 生成直前に 1e6 s を注入し、生成後に消えていること。
+//         (b) 副検査 = 積み上がり比: 同一パイプラインの 1 回目 (g=1.0) 直後と、同一構成の
+//             再走 (g1_again) 直後の cat_resnet_sec がほぼ等しいこと。リセットが無ければ
+//             後者は前者の ~4 倍 (間に g=3.0 / g=7.5 の 2 走が挟まる) に積み上がる。
+//         ★(b) 単独では検出力が位置依存になる (負のコントロールの実測でプロセス 4 本目の
+//           構成が閾値を下回った)。経緯は run_test 内 ResnetProbe のコメント。
+//         cat_resnet_sec は profile_enabled() の
 //         ときしか加算されない (src/infer/unet.cu:541-542) ので、DOLLAMA_PROFILE
 //         未設定の meson test 既定実行では [SKIP] を印字するだけで判定しない。
 //         ★被験は generate_txt2img 側に新設したリセットである。generate (別メソッド) は
@@ -265,6 +269,18 @@ static int run_test()
 
     // G-10k T2b [GATE5] 用のプローブ: 既存の g1_again 二連走に相乗りして
     //   「1 回目直後」と「再走直後」の cat_resnet_sec を採る (追加の生成は行わない)。
+    //
+    // ★検出力について (負のコントロール実測で判明した弱点と、その手当て):
+    //   「積み上がり比 again/first」だけを見る設計は、プロセス後半の構成では検出力が落ちる。
+    //   リセットが無いとカウンタは構成をまたいで通算で積み上がるので、n 走目の構成では
+    //   again/first が (n+3)/n に縮むためである。実測 (T2b の負のコントロール・リセット無し):
+    //   1 本目の off = 3.97 で赤くなる一方、4 本目の fast+epi は 1.24 で閾値 1.5 を下回り
+    //   **単独では検出できなかった**。
+    //   → そこで各プローブの生成直前に「実測値としてあり得ない値」を注入し、
+    //     generate_txt2img がそれを消していることを直接検査する。これは比にも
+    //     プロセス内の位置にも依存しない。リセットが効いていれば毒は生成の冒頭で消え、
+    //     印字される内訳にも残らない。
+    constexpr double kResetSentinel = 1.0e6;  // 秒。実測 (0.1〜3s 級) とは桁が違う番兵。
     struct ResnetProbe
     {
         double first = -1.0;  // k=0 (g=1.0) の generate_txt2img 直後
@@ -286,9 +302,18 @@ static int run_test()
         cfg.epilogue  = epilogue;
         DiffusionPipeline pipe(unet_w, vae_w, iopath, cfg);
         int ngen = 0;
+        // 番兵の注入。profile 無効時はカウンタが誰にも読まれず reset もされないので入れない。
+        auto poison = [&]()
+        {
+            if (probe != nullptr && profile_enabled())
+            {
+                profile_counters().cat_resnet_sec += kResetSentinel;
+            }
+        };
         for (int k = 0; k < nG; ++k)
         {
             int ww = 0, hh = 0;
+            if (k == 0) { poison(); }
             gen(pipe, guids[k], rgb_out[k], ww, hh);
             ++ngen;
             if (k == 0) { w_out = ww; h_out = hh; }
@@ -298,6 +323,7 @@ static int run_test()
         if (g1_again != nullptr)
         {
             int ww = 0, hh = 0;
+            poison();
             gen(pipe, guids[0], *g1_again, ww, hh);  // 同一構成 same seed = bit-exact 期待
             ++ngen;
             if (probe != nullptr)
@@ -450,10 +476,13 @@ static int run_test()
 
     // --- [5] G-10k T2b: generate_txt2img の profile カウンタ reset ゲート ---
     //   被験 = generate_txt2img (src/infer/diffusion.cu) に新設した profile_counters().reset()。
-    //   リセットが効いていれば、同一パイプライン内で何回呼んでも「直後の cat_resnet_sec」は
-    //   1 回分に留まる。効いていなければ 4 走ぶん (g=1.0 / 3.0 / 7.5 / g1_again) 積み上がるので
-    //   again/first は ~4 になる。判定閾値 1.5 はその中間 (1 走ぶんの走行間ばらつきより十分上、
-    //   積み上がり ~4 より十分下)。
+    //   検査は 2 本立て:
+    //     (a) 番兵: 生成直前に注入した kResetSentinel (1e6 s) が生成後に残っていないこと。
+    //         これが主検査。比にもプロセス内の位置にも依存しないので、構成順を入れ替えても
+    //         検出力が変わらない (上の ResnetProbe のコメントに実測の弱点を記録した)。
+    //     (b) 積み上がり比: 同一パイプライン内の 1 回目直後と再走直後がほぼ等しいこと。
+    //         リセットが無ければ 4 走ぶん (g=1.0 / 3.0 / 7.5 / g1_again) 積み上がる。
+    //         閾値 1.5 は「1 走ぶんの走行間ばらつき」より十分上・「積み上がり」より下。
     //   cat_resnet_sec は profile_enabled() のときだけ加算される (src/infer/unet.cu:541-542) ので、
     //   DOLLAMA_PROFILE 未設定 (= meson test の既定) では判定せず [SKIP] を出す。
     {
@@ -476,11 +505,20 @@ static int run_test()
                     ok = false;
                     return;
                 }
-                const double ratio = p.again / p.first;
+                const double ratio        = p.again / p.first;
+                const bool   sentinel_ok  = (p.first < kResetSentinel) && (p.again < kResetSentinel);
                 std::cout << "[test_diffusion_batch2] [GATE5] " << tag
                           << " cat_resnet_sec: run1=" << p.first << "s  rerun=" << p.again
                           << "s  ratio=" << ratio << "  (gens in pipeline=" << p.gens
-                          << ", ratio<1.5 required)\n";
+                          << ", sentinel " << (sentinel_ok ? "cleared" : "SURVIVED")
+                          << ", required: sentinel cleared and ratio<1.5)\n";
+                if (!sentinel_ok)
+                {
+                    std::cerr << "[test_diffusion_batch2] FAIL: [GATE5] " << tag
+                              << " sentinel (1e6 s) survived the call: generate_txt2img"
+                                 " does not reset the profile counters\n";
+                    ok = false;
+                }
                 if (!(ratio < 1.5))
                 {
                     std::cerr << "[test_diffusion_batch2] FAIL: [GATE5] " << tag
