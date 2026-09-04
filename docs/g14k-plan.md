@@ -88,7 +88,7 @@ G-8k S5 で「是正が新しい誤りを持ち込む」形が 5 ラウンド続
 | 同 **`ssim_gate_case`** (vs `launch_attention`) | **B=1 と B=2** (`:396-399`) | `main` `:396-399` | base = `run_gpu(..., use_fast=false)` `:269` → `launch_attention` / fast = `:270` | ✅ SDXL 実 shape (self 4096 / cross 4096×77) を覆う。**ただし `H=1` に絞ってある** (理由はソースコメント `:395`「baseline (1 warp/block) を回すため」) |
 | 同 **`bench_pair`** (速度) | ★**現状 B=1 のみ** | `main` `:408-410` の 3 本 (`(1,1,4096,4096,64)` / `(1,8,1024,1024,64)` / `(1,8,4096,77,64)`) | `run_once` `:318-334` | ⚠ **B=2 の呼出が 1 本も無い**・self は `H=1`。**PL が hard に指定した「SDXL self 実形状・B=2」を現状の計器は通らない** (§7-2 / §2-2) |
 | `test_unet_fast` | ★**B=1** | `src/tests/test_unet_fast.cu:258` / `:280` が `launch_unet(uh, ...)` | `src/infer/unet.cu:1462` = `launch_unet_impl(w, **1**, ...)` | ✅ attn_fast=true で fast 経路に到達するが **B=1**。B=2 の被験は通らない |
-| `test_diffusion_batch2` parity 節 (steps=4) | **B=2** (batch2 構成のみ) | `src/tests/test_diffusion_batch2.cu:236` steps=4 / `:247-253` `gen` ラッパ / `run_config` 呼出 4 箇所 `:284`(off) `:289`(batch2 単独) `:294`(fst=attn+batch2) `:300`(epi=fast+epi) | `generate_txt2img` → `use_batch2` (`src/infer/diffusion.cu:755`) が true なら `launch_unet_batched(handle, **2**, ...)` (`:887-888`) | ✅ `fst` / `epi` は `attn_fast=true` かつ `batch2=true` = **B=2 で fast 経路**。`off` は attn_fast=false = **回帰アンカー側** |
+| `test_diffusion_batch2` parity 節 (steps=4) | **B=2** (batch2 構成のみ) | `src/tests/test_diffusion_batch2.cu:251` steps=4 / `:262-268` `gen` ラッパ / `run_config` 呼出 4 箇所 `:343`(off) `:348`(batch2 単独) `:353`(fst=attn+batch2) `:360`(epi=fast+epi) | `generate_txt2img` → `use_batch2` (`src/infer/diffusion.cu:755`) が true なら `launch_unet_batched(handle, **2**, ...)` (`:887-888`) | ✅ `fst` / `epi` は `attn_fast=true` かつ `batch2=true` = **B=2 で fast 経路**。`off` は attn_fast=false = **回帰アンカー側** |
 | 同 DB2_BENCH 節 (e2e 秒) | **B=2** | `:555` の `getenv("DB2_BENCH")` → `bench_pipe` `:567-598` (warmup `:584` + `iters` 回の min `:586-596`) | 同上 | ✅ 3 構成を **1 プロセス**で連続実行。窓は `steady_clock` (`:589` / `:592`)・その前後に `cudaDeviceSynchronize` (`:588` / `:591`) |
 | **T2b の内訳 dump** `-> attention only` | **B=2** | `src/infer/diffusion.cu:1009` (`generate_txt2img` 内・`DOLLAMA_PROFILE=1` のとき) | `pc.cat_attention_sec` = `src/infer/unet.cu:717` (self) と `:761` (cross) の `ScopedSyncTimer` | ✅ **B=2 経路で attention の絶対秒が読める**。★**`ScopedSyncTimer` は ctor と stop で `cudaDeviceSynchronize()` する** (`src/infer/unet.cu:67-93`) = **同期入りの host 壁時計**。**characterization 専用** |
 | `prof_arena_e2e` | **B=2** (`PROF_FAST=1` 既定) | `src/tests/prof_arena_e2e.cu:233` の `generate_txt2img` | 同上 | ✅ profile OFF の e2e 秒 / VRAM peak。**meson test 未登録** (`src/meson.build:889-890` は executable 定義のみ) |
@@ -319,7 +319,7 @@ G-8k S5 で「是正が新しい誤りを持ち込む」形が 5 ラウンド続
 
 ★**[A7] についての現物の注意**: **「同一ツリーの二連走 bit 一致」で代用してはいけない。**
 それは **determinism 検査であって無改変証明ではない**。この罠は
-`src/tests/test_diffusion_batch2.cu:377-380` (GATE3 注記) が明文化している。
+`src/tests/test_diffusion_batch2.cu:46-49` (ファイル冒頭のゲート設計注記) と `:438-440` (GATE3 直前の注記) が明文化している。
 無改変の証明は **改修前後の同一 seed 生成物の sha256 突合** (G-8k S6 / G-10k T2b で確立した型)。
 なお `test_unet_fast` の default 側ゲートは **tol** である (`:277-278` = `MAE > 5e-3` / `SSIM < 0.99`) ので、
 **「既存テストが default の bit 一致を守っている」と書かないこと。**
@@ -479,8 +479,8 @@ floor は既存ゲートの継承であって新設ではない。割った時�
 | `test_unet_fast` は B=1 | `src/tests/test_unet_fast.cu:258`, `:280` + `src/infer/unet.cu:1462` (`launch_unet_impl(w, 1, ...)`) |
 | `test_unet_fast` の default 側ゲートは tol | 同 `:277-278` (`MAE > 5e-3` / `SSIM < 0.99`) |
 | fast vs default のゲートは SSIM ≥ 0.9999 | 同 `:300-301` |
-| 二連走は determinism であって無改変証明ではない | `src/tests/test_diffusion_batch2.cu:377-380` |
-| parity 節の構成 4 本と g1_again | 同 `:236`, `:247-253`, `:267-276`, `:284`, `:289`, `:294`, `:300` |
+| 二連走は determinism であって無改変証明ではない | `src/tests/test_diffusion_batch2.cu:46-49`, `:438-440` |
+| parity 節の構成 4 本と g1_again | 同 `:251` (steps=4), `:252` (seed=1234), `:256` (guids 3 本), `:262-268` (`gen`), `:317` (guidance ループ), `:323-327` (g1_again 再走), `:343`, `:348`, `:353`, `:360` (`run_config` 4 本) |
 | DB2_BENCH は 1 プロセス・warmup1 + min-of-iters・`steady_clock` 窓 | 同 `:555-563`, `:567-598` (warmup `:584` / min ループ `:586-596` / 窓 `:589`,`:592`) |
 | `generate_txt2img` は `use_batch2` で B=2 | `src/infer/diffusion.cu:755`, `:879`, `:887-888` |
 | T2b dump が B=2 経路で attention 秒を出す | 同 `:1006-1009` (`resnet` / `transformer` / `-> attention only`) |
