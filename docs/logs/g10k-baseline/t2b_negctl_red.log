@@ -1,0 +1,28 @@
+[test_diffusion_batch2] unet_weights=E:/Develop/Projects/dollama/src/tests/data/unet_weights.safetensors
+[test_diffusion_batch2] vae_weights=E:/Develop/Projects/dollama/src/tests/data/vae_weights.safetensors
+[test_diffusion_batch2] io=E:/Develop/Projects/dollama/src/tests/data/unet_io.safetensors
+[test_diffusion_batch2] steps=4 guidance sweep={1.0, 3.0, 7.5} (gate=g1.0)
+[ALLOC] reserve: unet=6080MiB unet_persist=176MiB (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=39096
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=68MiB cursor_peak=68MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=384
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=2 cudaFree=1 alloc=54390
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=2 cudaFree=1 alloc=528
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=3 cudaFree=2 alloc=69684
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=3 cudaFree=2 alloc=672
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=4 cudaFree=3 alloc=90076
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=4 cudaFree=3 alloc=864
+[test_diffusion_batch2] VRAM free=14913MB (after all parity pipelines destroyed)
+[test_diffusion_batch2] [GATE1] noise floor (off@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 batch2-vs-off: MAE=0.0304753 max_abs=2 SSIM=0.999474 [GATE2 >=0.999]
+[test_diffusion_batch2] sweep g=3 batch2-vs-off: MAE=0.0870895 max_abs=9 SSIM=0.99877 (characterization)
+[test_diffusion_batch2] sweep g=7.5 batch2-vs-off: MAE=0.295126 max_abs=28 SSIM=0.996627 (characterization)
+[test_diffusion_batch2] [GATE3] epi determinism (fast+epi@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 (fast+epi)-vs-fast: MAE=0.0302668 max_abs=2 SSIM=0.999477 [GATE4 >=0.999]
+[test_diffusion_batch2] sweep g=3 (fast+epi)-vs-fast: MAE=0.0870231 max_abs=7 SSIM=0.998765 (characterization)
+[test_diffusion_batch2] sweep g=7.5 (fast+epi)-vs-fast: MAE=0.295204 max_abs=20 SSIM=0.996533 (characterization)
+[test_diffusion_batch2] [GATE5] off(default) cat_resnet_sec: run1=1e+06s  rerun=2e+06s  ratio=2  (gens in pipeline=4, sentinel SURVIVED, required: sentinel cleared and ratio<1.5)
+[test_diffusion_batch2] FAIL: [GATE5] off(default) sentinel (1e6 s) survived the call: generate_txt2img does not reset the profile counters
+[test_diffusion_batch2] FAIL: [GATE5] off(default) ratio 2 >= 1.5: generate_txt2img does not reset the profile counters (values pile up across calls)
+[test_diffusion_batch2] [GATE5] fast+epi cat_resnet_sec: run1=3e+06s  rerun=4e+06s  ratio=1.33333  (gens in pipeline=4, sentinel SURVIVED, required: sentinel cleared and ratio<1.5)
+[test_diffusion_batch2] FAIL: [GATE5] fast+epi sentinel (1e6 s) survived the call: generate_txt2img does not reset the profile counters
+[test_diffusion_batch2] FAILED

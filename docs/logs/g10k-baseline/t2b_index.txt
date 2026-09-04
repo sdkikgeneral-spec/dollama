@@ -1,0 +1,57 @@
+G-10k T2b 生ログ 索引 (2026-09-04 / 研究機 KIK-WIN-RTX58 / SSH 越し実走)
+採取のみ・判定と考察は含めない。sha256 は t2b_sha256.txt (研究機側で採取・回収後に両側一致を確認)。
+
+[コミット]
+  4d70aa1  T2a 基準採取 (docs のみ) = T2b diffusion.cu の親
+  036cb94  T2b: generate_txt2img に profile reset + 内訳 dump
+  de34ec6  T2b: GATE5 の検出力を番兵で位置非依存に (test のみ)
+
+[実走環境]
+  KIK-WIN-RTX58 / RTX5080 / driver 610.88 / nvcc release 13.3, V13.3.33 / meson 1.11.1
+  リモートシェル = PowerShell 7 (pwsh)。詳細は t2b_env.log。
+
+[ファイル]
+  t2b_env.log
+      環境スナップショット (hostname / HEAD / porcelain / nvidia-smi / nvcc / exe sha256)。
+      HEAD=036cb94 時点。
+
+  t2b_unchanged_e2e_run1.log
+  t2b_unchanged_e2e_run2.log
+      無改変証明。HEAD=036cb94 (両機一致・研究機 porcelain 空)。
+      exe = build/src/prof_arena_e2e.exe
+      env = PROF_IMAGES=2 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 PROF_SAMPLE_MS=5
+            DOLLAMA_PROFILE = 未設定 / DOLLAMA_POOL = 未設定 / seed 1234 / 1024x1024
+      2 プロセス x 2 枚。
+
+  t2b_unchanged_e2e_final.log
+      同上を HEAD=de34ec6 (最終ツリー・porcelain 空) で再採取。1 プロセス x 2 枚。
+
+  t2b_gate_green.log
+      GATE5 緑走行。HEAD=de34ec6・porcelain 空・負のコントロール後に
+      `git checkout HEAD -- src/infer/diffusion.cu` で復元し再ビルドしたツリー。
+      exe = build/src/test_diffusion_batch2.exe / env = DOLLAMA_PROFILE=1 / 既定 steps=4。
+      exit 0。
+
+  t2b_negctl_red.log
+      負のコントロール走行。最終ゲートコード (HEAD=de34ec6) + diffusion.cu だけを
+      4d70aa1 (= 036cb94 の親) へ戻したツリー。env = DOLLAMA_PROFILE=1。exit 1。
+
+  t2b_negctl_reverse_diff.log
+      上の負のコントロールツリーの `git status --porcelain` (= src/infer/diffusion.cu 1 件のみ) と
+      `git diff HEAD -- src/infer/diffusion.cu` (= T2b hunk の逆・61 行削除)。
+
+  t2b_meson_test.log
+      `meson test -C build` 全件。HEAD=de34ec6・porcelain 空・DOLLAMA_PROFILE 未設定。
+      Ok: 53 / Fail: 0。
+
+  build_t2b.log            HEAD=036cb94 のビルド
+  build_negctl_red.log     負のコントロール (diffusion.cu を 4d70aa1 へ戻した状態) のビルド
+  build_negctl_green.log   復元後のビルド
+  build_final.log          HEAD=de34ec6 のビルド
+
+  t2b_sha256.txt           上記 *.log の sha256 (研究機側で採取)
+
+[注意]
+  - 本 T2b では conv2d.cu を一切変更していない。
+  - t2b_gate_green.log / t2b_negctl_red.log の秒は DOLLAMA_PROFILE=1 の
+    同期入り計時であり、非 profile の wall ではない。

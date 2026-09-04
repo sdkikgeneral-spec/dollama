@@ -1,0 +1,59 @@
+== hostname: KIK-WIN-RTX58
+== date: 2026-09-04T21:00:08.2866708+09:00
+== HEAD: 036cb940af7a0b3f842a3639d2ab83cbf32d89df
+== porcelain:
+
+== nvidia-smi:
+Fri Sep  4 21:00:08 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.88                 KMD Version: 610.88        CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5080      WDDM  |   00000000:02:00.0  On |                  N/A |
+|  0%   42C    P8             12W /  360W |     465MiB /  16303MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128    C+G   C:\Windows\System32\LogonUI.exe       N/A      |
+|    0   N/A  N/A            2136    C+G   C:\Windows\System32\dwm.exe           N/A      |
+|    0   N/A  N/A           12092    C+G   C:\Windows\explorer.exe               N/A      |
+|    0   N/A  N/A           12152    C+G   ...indows\System32\ShellHost.exe      N/A      |
+|    0   N/A  N/A           12548    C+G   ...2txyewy\CrossDeviceResume.exe      N/A      |
+|    0   N/A  N/A           13704    C+G   ...IA App\CEF\NVIDIA Overlay.exe      N/A      |
+|    0   N/A  N/A           13744    C+G   ..._cw5n1h2txyewy\SearchHost.exe      N/A      |
+|    0   N/A  N/A           13768    C+G   ...y\StartMenuExperienceHost.exe      N/A      |
+|    0   N/A  N/A           15880    C+G   ...IA App\CEF\NVIDIA Overlay.exe      N/A      |
+|    0   N/A  N/A           16972    C+G   ...0.4129.107\msedgewebview2.exe      N/A      |
+|    0   N/A  N/A           17884    C+G   ...App_cw5n1h2txyewy\LockApp.exe      N/A      |
+|    0   N/A  N/A           22628    C+G   ...5n1h2txyewy\TextInputHost.exe      N/A      |
+|    0   N/A  N/A           22636    C+G   ...xyewy\ShellExperienceHost.exe      N/A      |
+|    0   N/A  N/A           23760    C+G   ...em_tray\lghub_system_tray.exe      N/A      |
+|    0   N/A  N/A           25188    C+G   ...\cef.win64\steamwebhelper.exe      N/A      |
+|    0   N/A  N/A           27484    C+G   ...__kzh8wxbdkxb8p\DCv2\DCv2.exe      N/A      |
+|    0   N/A  N/A           27508    C+G   ...yApp\MicrosoftSecurityApp.exe      N/A      |
+|    0   N/A  N/A           27652    C+G   ...Creative App\Creative.App.exe      N/A      |
+|    0   N/A  N/A           27772    C+G   ...are\IntelGraphicsSoftware.exe      N/A      |
+|    0   N/A  N/A           28408    C+G   ...lGraphicsSoftware.Overlay.exe      N/A      |
+|    0   N/A  N/A           29520    C+G   ...em32\ApplicationFrameHost.exe      N/A      |
+|    0   N/A  N/A           29540    C+G   ...ntrolPanel\SystemSettings.exe      N/A      |
++-----------------------------------------------------------------------------------------+
+
+== nvcc:
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Fri_Apr_24_19:26:09_Pacific_Daylight_Time_2026
+Cuda compilation tools, release 13.3, V13.3.33
+Build cuda_13.3.r13.3/compiler.37862127_0
+
+== exe sha256:
+test_diffusion_batch2.exe 1400832 2026/09/04 20:59:57 4200C3904AFEF078E80A51D187213B542D63E33E370E6CD98D8AE287AB00ECBF
+prof_arena_e2e.exe 1388544 2026/09/04 20:59:57 75C5288778A10B0631E52286C68277C7944FAD7FD1B3599C0760A773FAB0714D
+

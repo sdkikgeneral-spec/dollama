@@ -1,0 +1,86 @@
+== HEAD (final gate code): de34ec63126891c94c14a63d3484752b1da56a1a
+== diffusion.cu reverted to: 4d70aa12179012753e4bb04c68595685f198a821 (= parent of T2b diffusion.cu commit 036cb940af7a0b3f842a3639d2ab83cbf32d89df)
+== git status --porcelain (must be exactly 1 file):
+M  src/infer/diffusion.cu
+
+== git diff HEAD -- src/infer/diffusion.cu = reverse of the T2b hunk:
+diff --git a/src/infer/diffusion.cu b/src/infer/diffusion.cu
+index fd70e7e..da3d8cf 100644
+--- a/src/infer/diffusion.cu
++++ b/src/infer/diffusion.cu
+@@ -754,21 +754,6 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
+     // G-2k S3b: batch2 経路スイッチ。fast/DOLLAMA_BATCH2 で立つ (default=false)。
+     const bool use_batch2 = fast_cfg_.batch2;
+ 
+-    // --- G-10k T2b: プロファイル累積カウンタのリセット (DOLLAMA_PROFILE 時のみ) ---
+-    //   generate (本ファイル上方) は :554 相当でリセットしているが、この CFG 経路には
+-    //   リセットも内訳 dump も無かった (G-10k 引き継ぎ書 §2 F3)。カウンタ自体は
+-    //   resnet_block / launch_unet_impl 側で経路非依存に既に溜まっているので、
+-    //   ここで足すのは host 側の reset + printf だけ = 数値不変・同期増加ゼロ。
+-    //   リセットしないと同一プロセスで複数回呼んだとき前回ぶんに積み増され、
+-    //   印字される内訳が「その 1 回の実測」でなくなる。
+-    //   ★リセットのスコープ注意: 本経路で計測窓の外にある量 (重み転送・VAE・host 往復) は
+-    //     ここで 0 になるが、それは「実測 0」ではない。dump 側でも印字せず n/a と明示する。
+-    const bool prof = profile_enabled();
+-    if (prof)
+-    {
+-        profile_counters().reset();
+-    }
+-
+     // --- 外部 cond / uncond 埋め込みを FP16 へ変換してデバイス常駐させる ---
+     //     コンストラクタ常駐の golden 埋め込みは使わない (本 txt2img 経路)。
+     __half* d_cond_ehs    = nullptr;  // [77*2048]
+@@ -968,52 +953,6 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
+     h = kImgH;
+     image_f16_to_rgb_u8(h_image, rgb_out);
+ 
+-    // --- G-10k T2b: 内訳 dump (DOLLAMA_PROFILE 時のみ・絶対秒だけ) ---
+-    //   ★generate 側の表とは別レイアウト・別文言にしてある。同じ見た目のまま % 列だけ
+-    //     抜くと「% が欠けた同じ表」として切り貼りされ、欠けている理由が失われるため。
+-    //   ★この経路では total_sec / host 往復 / VAE decode を計測していない。
+-    //     よって % 列 (分母 = total_sec) と TOTAL 行はまとめて出さない。
+-    //     計測していない欄を 0.000s で印字すると、後段がそれを実測値として拾う。
+-    //   ★ヘッダに埋める注記は「陳腐化しない事実」に限る (step の数え方は不変なので適格)。
+-    //     閾値・分母・ゲート値は埋めない (prof_unet_fast_warm の baseline 埋め込みが
+-    //     退役後もそのまま印字され続けた反例に倣う)。
+-    if (prof)
+-    {
+-        const ProfileCounters& pc = profile_counters();
+-        std::printf("\n");
+-        std::printf("===== DOLLAMA_PROFILE / generate_txt2img (CFG path) --"
+-                    " ABSOLUTE SECONDS ONLY =====\n");
+-        std::printf("  diffusion steps=%d   unet forwards (launch_unet_impl calls)=%d"
+-                    "   batch2=%d\n",
+-                    steps, pc.unet_steps, use_batch2 ? 1 : 0);
+-        std::printf("  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);\n");
+-        std::printf("        with default one diffusion step is TWO forwards"
+-                    " (cond + uncond, B=1).\n");
+-        std::printf("        Do not compare these seconds across configs:"
+-                    " the per-step work differs.\n");
+-        std::printf("  NOTE: percent columns and the TOTAL row are absent on purpose --\n");
+-        std::printf("        total_sec is NOT measured on this path (see generate() for that).\n");
+-        std::printf("  %-32s %s\n", "weight upload+malloc",
+-                    "n/a (outside this window; a 0 here is NOT evidence of warm)");
+-        std::printf("  %-32s %9.3f s\n", "UNet step total (all forwards)", pc.unet_total_sec);
+-        std::printf("      [stage group, wall]\n");
+-        std::printf("      %-28s %9.3f s\n", "embed",    pc.unet_embed_sec);
+-        std::printf("      %-28s %9.3f s\n", "down",     pc.unet_down_sec);
+-        std::printf("      %-28s %9.3f s\n", "mid",      pc.unet_mid_sec);
+-        std::printf("      %-28s %9.3f s\n", "up",       pc.unet_up_sec);
+-        std::printf("      %-28s %9.3f s\n", "conv_out", pc.unet_convout_sec);
+-        std::printf("      [kernel category, orthogonal to stage groups]\n");
+-        std::printf("      %-28s %9.3f s\n", "resnet (conv/groupnorm)",  pc.cat_resnet_sec);
+-        std::printf("      %-28s %9.3f s\n", "transformer (attn/gemm)",  pc.cat_transformer_sec);
+-        std::printf("      %-28s %9.3f s   (subset of transformer)\n",
+-                    "  -> attention only", pc.cat_attention_sec);
+-        std::printf("  %-32s %s\n", "VAE decode",     "n/a (not timed on this path)");
+-        std::printf("  %-32s %s\n", "host roundtrip", "n/a (not timed on this path)");
+-        std::printf("==============================================="
+-                    "===================================\n\n");
+-        std::fflush(stdout);
+-    }
+-
+     // --- 後始末 ---
+     CUDA_CHECK(cudaFree(d_latent));
+     CUDA_CHECK(cudaFree(d_noise_cond));
+

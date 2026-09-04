@@ -1,0 +1,61 @@
+ninja: Entering directory `E:\Develop\Projects\dollama\build'
+ninja: no work to do.
+Activating VS 18.8.3
+ 1/53 dollama:quality_gate          OK               0.10s
+ 2/53 dollama:scoring_postprocess   OK               0.08s
+ 3/53 dollama:fast_config           OK               0.07s
+ 4/53 dollama:affinity              OK               0.07s
+ 5/53 dollama:png                   OK               0.03s
+ 6/53 dollama:cpu_topology          OK               0.02s
+ 7/53 dollama:png_meta              OK               0.08s
+ 8/53 dollama:pipeline_factory      OK               0.13s
+ 9/53 dollama:safetensors           OK               0.29s
+10/53 dollama:character             OK               0.32s
+11/53 dollama:scheduler             OK               0.51s
+12/53 dollama:tokenizer             OK               0.53s
+13/53 dollama:text_conditioner      OK               0.64s
+14/53 dollama:diffusion_backend     OK               0.65s
+15/53 dollama:scorer_runner         OK               0.75s
+16/53 dollama:gemm                  OK               0.71s
+17/53 dollama:timeembed             OK               0.27s
+18/53 dollama:activation            OK               0.89s
+19/53 dollama:layernorm             OK               0.52s
+20/53 dollama:attention_fast        OK               0.59s
+21/53 dollama:device_arena_pool_off OK               0.41s
+22/53 dollama:device_arena          OK               0.45s
+23/53 dollama:geglu                 OK               1.14s
+24/53 dollama:elementwise           OK               1.29s
+25/53 dollama:quality_scorer        OK               2.32s
+26/53 dollama:bias_add              OK               2.15s
+27/53 dollama:clip                  OK               3.64s
+28/53 dollama:groupnorm             OK               3.77s
+29/53 dollama:cuda_smoke            OK               4.77s
+30/53 dollama:multi_frame_pipeline  OK               5.21s
+31/53 dollama:conv2d                OK               7.05s
+32/53 dollama:attention             OK               7.64s
+33/53 dollama:matting               OK               8.12s
+34/53 dollama:tensor                OK              13.64s
+35/53 dollama:pipeline              OK              14.67s
+36/53 dollama:spsc_queue            OK              16.88s
+37/53 dollama:bitnet_d80m           OK              16.87s
+38/53 dollama:bitnet_int8           OK              18.35s
+39/53 dollama:allocator             OK              24.85s
+40/53 dollama:wd14                  OK              26.57s
+41/53 dollama:bitnet_infer          OK              28.10s
+42/53 dollama:bitnet                OK              60.01s
+43/53 dollama:vae_decode            OK              12.77s
+44/53 dollama:unet                  OK              19.72s
+45/53 dollama:unet_fast             OK              13.72s
+46/53 dollama:lora_runtime          OK               0.22s
+47/53 dollama:diffusion             OK               6.51s
+48/53 dollama:diffusion_batch2      OK              66.15s
+49/53 dollama:pipeline_generator    OK               7.09s
+50/53 dollama:bitnet_gpu            OK               6.23s
+51/53 dollama:txt2img               OK               0.14s
+52/53 dollama:http                  OK               0.66s
+53/53 dollama:cli_generate          OK               6.02s
+
+Ok:                53  
+Fail:              0   
+
+Full log written to E:\Develop\Projects\dollama\build\meson-logs\testlog.txt
