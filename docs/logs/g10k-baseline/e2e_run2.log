@@ -1,0 +1,31 @@
+=== T2a e2e 基準走行 #2 (prof_arena_e2e) ===
+開始 : 2026-09-04 20:35:14
+終了 : 2026-09-04 20:35:44
+経過秒: 29.588
+exit code: 0
+exe  : E:\Develop\Projects\dollama\build\src\prof_arena_e2e.exe
+exe sha256 : CA11AF279B729E23A2D928D8BDA2B14876AF16167B1711338F44EAA9BDDA6FDB
+env  : PROF_IMAGES=2 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 PROF_SAMPLE_MS=5
+       DOLLAMA_PROFILE=(未設定) DOLLAMA_POOL=(未設定=既定 ON) DOLLAMA_ARENA_*=(未設定)
+seed : 1234 (prof_arena_e2e.cu:233 でハードコード)
+nvidia-smi 前 (temp,sm_clk,mem_used,power): 40, 180 MHz, 465 MiB, 15.40 W
+nvidia-smi 後 (temp,sm_clk,mem_used,power): 47, 2835 MHz, 465 MiB, 177.36 W
+
+--- stdout ---
+[S4] config images=2 steps=20 g=7.5 fast=1 DOLLAMA_POOL=(unset) DOLLAMA_ARENA_RELEASE=(unset) pool_enabled=1 sample_ms=5
+[S4] used_after_ctx=1317MB total=16302MB
+[S4] used_after_weight_load=13323MB free=2979MB
+[S4] image=1 sec=10.7505 rgb_hash=0x8a96690109d2b253 1024x1024
+[S4] image arena=unet d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=25082 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=240 | cap=176MiB chunks=1 live_peak=137MiB cursor_peak=137MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image=1 peak_used_total=13397MB peak_used_delta_this_image=74MB used_after_image=13391MB
+[S4] image=2 sec=10.6561 rgb_hash=0x8a96690109d2b253 1024x1024
+[S4] image arena=unet d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=25082 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=240 | cap=176MiB chunks=1 live_peak=137MiB cursor_peak=137MiB cum_cudaMalloc=1 cum_cudaFree=0 cum_chunkAlloc=1
+[S4] image=2 peak_used_total=13397MB peak_used_delta_this_image=0MB used_after_image=13391MB
+[S4] PEAK_USED=13397MB (total=16302MB)
+[S4] used_after_destroy=1391MB
+[S4] FINAL_PEAK_USED=13397MB
+
+--- stderr ---
+(空)
