@@ -62,6 +62,14 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 
 > **✅ e2e ベースライン一本化 (2026-07-09・G-2k ベンチで確定)**: `test_diffusion_batch2 DB2_BENCH=1` (20step/1024²/guidance7.5/**warm**=UNet+VAE 重み常駐/VAE decode 込み/**OV encode・cold 重み転送は付帯外**/SAC OFF 実 exe) で 3 構成を min 実測: **default (逐次 2 forward) 20.93s** / batch2 単独 17.59s (x1.19) / **--fast (attn_fast+batch2) 15.88s (x1.32)**。冒頭 19.5s / G-0 推定 21.7s と同帯 (warm ゆえ僅かに軽い)。G-3k 注記の 43.83s は cold 重み転送込みの段1 CFG 本番値で別物 (付帯込み)。**G-6k 出荷判定の分母 = warm default 20.93s / diffusers 3.8s は cold+OV 込みの別条件ゆえ最終比較は同条件で取り直す**。
 >
+> ★★**陳腐化注記 (2026-09-04・値は差し替えていない)**: この 3 値 (20.93s / 17.59s / 15.88s) は **2026-07-09 = pre-G-8k のツリー**で採ったものである。
+> **G-8k (device_arena・既定 ON) は 2026-08-19 クローズ**なので、正典値は**現行ツリーの秒を表していない**。
+> 参考 (置換には使えない): post-G-8k の T2c 実走 (2026-09-04・`DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1` + **`DOLLAMA_PROFILE=1`**) の
+> min ms は default **13999.6** / attn+batch2 **10879.7** / fast+epilogue **10735.9** (x1.28676 / x1.30399)
+> — 出典 `docs/logs/g10k-baseline/t2c_db2bench.log` の `BENCH e2e (min ms)` 行。★**profile ON = ブロック境界に同期を挿した値で非 profile の wall ではない**ため、
+> **これを正典値の置換に使ってはいけない**。★**正典の再測は G-10k T7c (profile OFF で A→B→A) の担当で、T7c は未実施** (`docs/g10k-plan.md` §6 タスク表 T7c 行)。
+> ★**本 doc 内で 20.93s / 17.59s / 15.88s を引く箇所すべてに本注記が掛かる** (行番号では指さない = 加筆で腐るため)。
+>
 > **⚠ ラベルの読み替え (2026-07-28・G-4k S3 以降)**: 上記 **15.88s (x1.32) の `--fast` は pre-S3 の
 > 「attn_fast + batch2」構成**。S3 で epilogue が `--fast` に内包されたため、**出荷される `--fast` は
 > epilogue 込みの構成が継ぐ** (S3 実測 **x1.33439**)。旧 `attn+batch2` の組み合わせは S3 以降
@@ -105,12 +113,34 @@ default を byte-for-byte 現行のまま残すことで **golden-SSIM 0.999998 
 - 効果: **素で ~2×**。出荷経路そのものが速くなる恒久資産。
 
 ### #4 attention を FlashAttention-2 級に (精度ゼロコスト)
-- 現状 1 warp/block を **multi-warp block** 化し query 行タイルを増やして K/V 再ロードを償却
-  (Sq=Sk=4096 の self-attn は K/V を query タイルごとに読み直しており DRAM 帯域律速)。
-- **cp.async のダブル/トリプルバッファ**で K/V ロードと wmma をパイプライン化 (sm_120)。
-- P·V epilogue の shared 往復除去 (fragment を直接 acc へ)。
-- 触るファイル: `src/kernels/attention.cu` / `attention.cuh`。
+
+★★**進捗の実態 (2026-09-04 に現物を開いて確認)**: 本節の 3 項目は **G-3k (`f3b86fc`) で
+「一部だけ」実装された**。台帳の G-3k 行の ✅ は **#4 の全実現ではなく部分実現**を指す。
+**未実装分は G-14k (attention FA2 真書き直し) が引き継ぐ。**
+以前の本節は 3 項目を並列に列挙していたため**全部が実装済みと読めた** — 項目ごとに現物の状態を書く形へ改めた。
+
+| # | 起草時の項目 (文言はそのまま) | 現物の状態 (`src/kernels/attention_fast.cu` @ `1c85dd9`) |
+|---|---|---|
+| 1 | 現状 1 warp/block を **multi-warp block** 化し query 行タイルを増やして K/V 再ロードを償却 (Sq=Sk=4096 の self-attn は K/V を query タイルごとに読み直しており DRAM 帯域律速) | ✅ **実装済**。`:69` `const int nwarps = blockDim.x / 32;`・warp ごとに 16 行 query タイル (`:76-78`)・nwarps は launch 側が shared 制約から `{4,2,1}` の順で最大選択 (`:308-330`) |
+| 2 | **cp.async のダブル/トリプルバッファ**で K/V ロードと wmma をパイプライン化 (sm_120) | 🟡 **ダブルのみ実装**。`kbuf[2]` / `vbuf[2]` (`:96-107`)・`__pipeline_memcpy_async` (`:146-147`)・`__pipeline_wait_prior(1)` / `(0)` (`:178` / `:182`)。**トリプルは未実装** |
+| 3 | **P·V epilogue の shared 往復除去 (fragment を直接 acc へ)** | ❌ **未実装**。`:259` `wmma::store_matrix_sync(ws, o_frag, WF_N, wmma::mem_row_major);` で **いったん shared へ書き戻し**、`:261-266` で shared の `wacc` へ加算する往復のまま。`ws` (`:161`) も `wacc` (`:162`) も動的 shared 内 (`:101-102` で `smem_raw` から切り出し) |
+
+- 触るファイル: ~~`src/kernels/attention.cu` / `attention.cuh`~~ → **実際の G-3k は
+  `src/kernels/attention_fast.cu` を新設**し、**`attention.cu` は改変していない**
+  (`f3b86fc` の `--stat` に `attention.cu` は現れず、`attention.cuh` の 19 行追加のみ)。
+  `--fast` 経路だけが新カーネルへ分岐する (`src/infer/unet.cu:722` / `:766` が `launch_attention_fast`・
+  `:726` / `:770` が従来の `launch_attention`)。
+- ★**default 経路の attention は今も 1 block = 1 warp**: `src/kernels/attention.cu:636`
+  のコメント「各ブロック 1 warp (32 スレッド)」・`:653` `attention_flash_wmma_fp16<<<grid, 32, shmem>>>`。
+  **VAE mid attention は `--fast` でもこの default カーネルを通る** — `src/kernels/vae_decode.cu:683` は
+  `launch_attention` を直接呼んでおり `launch_attention_fast` の呼出は VAE 側に 1 つも無い
+  (`grep` 済)。nsys 実測でも VAE decode 区間に
+  `dollama::attention_flash_wmma_fp16 grid=(1024,1) block=32 n=1 total=0.5143s` = **単発 514ms**
+  (出典 `docs/logs/g10k-baseline/t2c_nsys2_unet_vae_split.log`)。→ **これも G-14k のスコープ**。
 - 精度: **FP32 蓄積維持** (reduction 順が変わり golden は微差・SSIM ゲートは通る想定)。
+  ★ただし G-3k は 16 タイル reduction 順を既存と同じに保ったため**実測は SSIM=1.0 のビット一致**
+  だった (下記「G-3k 結果の注記」)。**書き直し (G-14k) で reduction 順が変われば、この bit 一致は
+  前提にできない** — G-3k の SSIM=1.0 を G-14k の期待値として引き写さないこと。
 
 ### #5 epilogue 融合 (精度ゼロコスト) — G-4k スコープ確定 (PL 決裁 2026-07-10)
 
@@ -288,6 +318,10 @@ characterization (合否なし・回帰監視):
   24.66s = ~18% 遅)。よって **主指標は相対倍率 x1.33**、絶対秒は条件付き併記とする。相対倍率は
   G-2k 実測の x1.32 と整合しており、ベースライン表の 15.88s (x1.32) の帯と矛盾しない。
 - **「batch2 単独」は今回のベンチ harness に config が無く未測定** — 参照値 17.59s (x1.19) との直接比較は本走行では取れていない。
+- ★★**陳腐化注記 (2026-09-04・値は差し替えていない)**: 本表の 24662.8 / 18557.8 / **18482.4 ms** と **x1.33439** は
+  **2026-07-28 = pre-G-8k のツリー**の実測 (G-8k は 2026-08-19 クローズ)。**現行ツリーの秒ではない・要再測**。
+  再測は **G-10k T7c** の担当 (未実施)。post-G-8k の参考値と、それを置換に使えない理由は
+  上の「e2e ベースライン一本化」ブロックの陳腐化注記に集約した。
 
 ##### 実測: test_unet_fast (単独実走・ALL PASSED)
 
@@ -363,7 +397,7 @@ G-4k 自身の達成は **(A)(B) のパス数削減 + カーネル単体 bit-exa
 | **G-0b** | FAST フラグ枠 (env `DOLLAMA_FAST`/`DOLLAMA_FP8` + CLI・`FastConfig` を拡散経路へ貫通・default byte-for-byte 無改変) | cpp-implementer | G-0 | 無改変 | ✅ (test_fast_config 緑・golden 無改変で緑) |
 | **G-1k** | #1 ループ GPU 常駐化 + CUDA Graphs (時間直接効果は小・Graph ローンチ削減主) | cuda-kernel-dev | G-2k/G-4k 後の再profile | ゼロコスト | 🔲 **条件付き降格**: 降格根拠は 2 本立て — ① host 計算/転送の CPU 時間 0.007s (ただしこれは launch 谷を含まない・「profile の測り方の注意」参照) ② profile 推定 21.7s と非 profile warm 実測 20.93s の差 ~0.8s が同期+launch 谷の**上界** = e2e の ~4% 止まり。加えて G-2k/G-4k で起動列が変わると Graph 再キャプチャ=手戻り。**再判定は ScopedSyncTimer でなく非侵襲 profile (nsys 等) で launch 谷を直接観測**し、実測で残る場合のみ着手・残らなければ不着手クローズ可 |
 | **G-2k** | #2 CFG batch=2 (`launch_unet` batch 貫通) | cuda-kernel-dev + cpp-implementer | G-0b | ゼロコスト (fast側 SSIM=1 目標: 行単位 K-loop 不変なら G-3k 同様ビット一致狙い・届かねば ≥0.9999 ゲート) | ✅ **完了 (S1〜S3c・下記注)。parity gate g=1.0 SSIM 0.9994≥0.999 PASS (sweep g=1 は 0.9995・別走行)・batch2 e2e 1.19x (期待 ~2× に非到達)・合成 --fast 1.32x** |
-| **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)** |
+| **G-3k** | #4 attention FlashAttn級 (multi-warp/cp.async・`launch_attention_fast` 別 TU・既存温存) + call site 結線 (`--fast`→attn_fast) | cuda-kernel-dev | G-0b | ゼロコスト | ✅ **カーネル SSIM=1.0 ビット一致・self4096 単体 1.41x / warm e2e UNet 1.20x (下記注)**。★**この ✅ は #4 の部分実現**である (multi-warp ✅ / cp.async はダブルのみ / **P·V epilogue の shared 往復除去は未実装**・VAE mid attention は default カーネルのまま) — 項目ごとの現物状態は **#4 節の進捗表**。**未実装分は G-14k が引き継ぐ** |
 | **G-3kf** | G-3k follow-up: `test_unet_fast` を常駐ハンドル warm 経路へ (毎 call 4.9GB 再転送を止め・ゲート数値を実態 1.20x に是正) | cpp-implementer | G-3k | — | ✅ **完了**: warm ハンドル (unet_weights_create) で計測・default vs golden SSIM 0.999996/bad0・fast vs default bit-exact・warm 1step default 526ms/fast 437ms = **1.20x** |
 | **G-4k** | #5 epilogue 融合 = (A) `launch_group_norm_silu` + (B) conv2d 後段融合 (time-bias/residual・per-b ループ解消) + (C) S3 出荷結線。cuBLASLt は採らない (→G-7k) | cuda-kernel-dev | G-2k | ゼロコスト | ✅ **クローズ (S1a/S1b/S2/S3 完了・2026-07-28)**。実測は #5 節「S1a/S1b/S2/S3 実測」参照。S3 = `DOLLAMA_EPILOGUE` env + `--fast` 含意 + `DiffusionPipeline` 貫通 + **ゲート再設計 (ハードゲート 4 本を g=1.0 の parity 節へ移設・g=3/7.5 は characterization 化・DB2_BENCH は速度計測に純化)**。**parity 4/4 PASS** (GATE4 = (fast+epi) vs fast @g=1.0 SSIM **0.999477**)・**e2e `--fast` x1.33439** (epilogue 上乗せ +0.4% = ノイズ床内)・**default 無改変維持** (fast vs default bit-exact)。resnet ≤0.95s は G-4k スコープ外と確定し **G-10k/G-8k 後へ再割当** |
 | **G-5k** | #3 FP8 選択的経路 + 層別精度テーブル + FP8 ゲート | cuda-kernel-dev | G-2k/G-4k | トレードオフ | 🔲 |
@@ -411,6 +445,10 @@ epilogue 融合 (パス数削減) では動かないこと (S2/S3 の診断) →
 **是正 (2026-08-19)**: 初版はここに G-8k (malloc 撲滅) も秒数レバーとして併記していたが、**誤り**。
 G-8k は **G-1k (CUDA Graphs) の前提条件充足 + cudaFree の暗黙同期点除去**であって秒数レバーではない
 (S4b でクローズ済・下記「実装記録」)。**秒数の本命は G-10k 単独**である。
+★**追記 (2026-09-04)**: ここでの「秒数レバーではない」は**起票の目的**の話であって、
+**「実測で秒が動かなかった」という意味ではない** (S4b の A/B は既定 vs `DOLLAMA_POOL=0` で
+**−33.4〜−34.0%** の実測差・生ログ `docs/logs/g8k-s4b/`)。
+語義の解消は下記「実装記録」冒頭の**「用語の解消」**に 1 箇所へまとめた。
 #1 (G-1k) は上界 ~0.8s の条件付き。
 つまり **精度ゼロコスト4手の合計は ~15s 帯 (~1.33x) が現実線**で、**diffusers 級 (~3.8s) への主レバーは FP8 (G-5k) と
 G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どおり別立ての gated 実験 (絵の等価性はゲートで担保)。
@@ -436,6 +474,7 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 ## 参照
 - 診断根拠: `src/infer/diffusion.cu` / `src/kernels/attention.cu` / `src/infer/unet.cuh` / `src/kernels/gemm.cuh`
 - ベースライン: CLAUDE.md 計測表 (probe10 3.80s / 自作フル拡散 11.30s / test_unet SSIM 0.999998) / `docs/measurements-log.md`
+  ★**注 (2026-09-04・11.30s のみ)**: この 11.30s は **非 CFG (g=1.0)・B=1・`generate()` 経路・2026-06-22** の値で、本 doc が扱う CFG e2e (`generate_txt2img` = CFG・B=2) とは**別経路**。pre-G-2k〜G-8k で陳腐化・要再測 (一次証拠は `docs/measurements-log.md` の 2-6a 計測行) → **この 11.30s を G-x の分母にしない**。なお同じ行の SSIM 0.999998 は別件の既知残債 (measurements-log 「G-8k S5b/S5c/S5d/S5e 残債」③ の追随リストに載っている・本セッションでは触っていない)
 - (解消済み) 走行中だった依存: `docs/f0b-rejection-sft-plan.md` (F-0b G-1 rollout・2026-07-06 クローズ)
 - SAC 制約: [[reference_wdac_new_exe_block]] / CUDA ビルド: [[reference_cuda_meson_build]] / カーネル規約: [[reference_cuda_kernel_conventions]]
 
@@ -478,11 +517,34 @@ G-7k/attention 続戦等の追加最適化**に移った。FP8 は従来どお�
 
 **実装記録 (S1〜S4b・2026-08-19 に S3 系クローズ)**
 
-> **G-8k は秒数レバーではない。** 価値は ① **G-1k (CUDA Graphs) の前提条件充足** (capture 中は
-> cudaMalloc/cudaFree を許さない) ② **cudaFree の暗黙同期点の除去** の 2 点。よって本節では
-> **「速くなった」とは主張しない** — 秒は characterization としてのみ記す (秒数の本命は
-> **G-10k = conv 真 batch2**)。実測値・ゲート合否の完全版は `docs/measurements-log.md` の
-> 「G-8k S4」「G-8k S4b」行。
+> ★★**用語の解消 (2026-09-04 追記)** — 本 doc には「**G-8k は秒数レバーではない**」と
+> 「**−34%**」が同居しており矛盾して読める。**指しているものが違う。ここ 1 箇所で解消する。**
+>
+> - **「秒数レバーではない」= 起票の目的の話。** G-8k の狙いは ① **step ループ内の
+>   cudaMalloc/cudaFree 撲滅** = **G-1k (CUDA Graphs) の前提条件充足** (capture 中は
+>   cudaMalloc/cudaFree を許さない) ② **cudaFree の暗黙同期点の除去** の 2 点で、
+>   **「秒を稼ぐ Pkg」としては起票していない** (本節冒頭「現状 (裏取り)」/ 候補台帳の G-8k 行)。
+>   ★**VRAM 収支は「狙い」ではなく、アリーナ化に伴って満たすべき制約**である
+>   (S4 の VRAM ゲート落ちを S3b/S3c の reserve + 固定ヘッドルームで解消し、S4b の 6 ハードゲートで確認した
+>   — 経緯の正本は `docs/measurements-log.md` の「G-8k S4」「G-8k S4b」行)。
+>   よって**台帳・順序図・期待値の下方修正では G-8k を秒数レバーに数えない** (秒数の本命は
+>   **G-10k = conv 真 batch2**)。本節が「速くなった」と主張しないのはこの意味であり、
+>   秒は characterization としてのみ記す。本 doc の他所 (候補台帳の G-8k 行 / #5 節の
+>   resnet 再 profile 注 / 「期待値の下方修正」の是正段) にある「秒数レバーではない」も**すべてこの意味**。
+> - **「実測で秒が動かなかった」という意味ではない。** 下記 A/B は**実測**である。
+>
+> 実測値・ゲート合否の完全版は `docs/measurements-log.md` の「G-8k S4」「G-8k S4b」行。
+>
+> **S4b A/B の生ログ実数** (1 プロセス 3 枚連続・`[S4] image=N sec=` 行をそのまま転記・
+> 出典 `docs/logs/g8k-s4b/`):
+>
+> | ラウンド | 基準 `DOLLAMA_POOL=0` (旧 cudaMalloc/cudaFree 経路) | 既定 (アリーナ ON) | min 同士 |
+> |---|---|---|---|
+> | A | 16.6602 / 16.2348 / 16.3341 s (`s4b_roundA_1_pool0.log`) | 10.9382 / 10.8357 / 10.8111 s (`s4b_roundA_2_default.log`) | 16.2348 → 10.8111 = **−33.4%** |
+> | B | 17.1355 / 16.9907 / 17.0408 s (`s4b_roundB_1_pool0.log`) | 11.2686 / 11.2632 / 11.2204 s (`s4b_roundB_2_default.log`) | 16.9907 → 11.2204 = **−34.0%** |
+>
+> ★**「−34%」はラウンド B 側の実数**であり、本節が併記する「10.8s vs 16.2s」の**ラウンド A ペアの実数は −33.4%**
+> (2026-09-04 に生ログから再計算。旧記述の −34% は削らず残す)。
 >
 > ★**ただし「秒に効いていない」という意味ではない** (要約を実データと逆向きに読まないこと):
 > S4b の **A/B (同一バイナリ・env だけを変えた構成間比較)** は **既定 10.8s vs キルスイッチ `DOLLAMA_POOL=0` 16.2s = −34%**
