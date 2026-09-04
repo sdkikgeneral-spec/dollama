@@ -1,0 +1,15 @@
+=== large artifacts kept on the research machine (NOT collected into the repo) ===
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.nsys-rep   28513058 bytes   mtime=2026-09-04 23:16:24
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.sqlite   289697792 bytes   mtime=2026-09-04 23:16:31
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.nsys-rep   28167601 bytes   mtime=2026-09-04 23:30:43
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite   282767360 bytes   mtime=2026-09-04 23:30:50
+
+=== reserve shortage: literal-hit sweep (excluding the grep header line) ===
+  0 hits ('[ALLOC] reserve shortage:' never printed)
+
+=== [ALLOC] reserve lines actually present ===
+  t2c_db2bench.log: [ALLOC] reserve: unet=6080MiB unet_persist=176MiB (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)
+
+=== stderr check: any exception / SAC block / WinError ===
+  0 hits
+=== end ===

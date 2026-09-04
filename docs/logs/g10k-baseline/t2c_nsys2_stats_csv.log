@@ -1,0 +1,6 @@
+Processing [E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_gpu_kern_sum.py] to [E:\Develop\logs\g10k-t2c\nsys\stats2_cuda_gpu_kern_sum.csv]... PROCESSED
+
+Processing [E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_gpu_mem_time_sum.py] to [E:\Develop\logs\g10k-t2c\nsys\stats2_cuda_gpu_mem_time_sum.csv]... PROCESSED
+
+Processing [E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_api_sum.py] to [E:\Develop\logs\g10k-t2c\nsys\stats2_cuda_api_sum.csv]... PROCESSED
+

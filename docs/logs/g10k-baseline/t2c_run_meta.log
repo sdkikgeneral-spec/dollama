@@ -1,0 +1,43 @@
+=== T2c run meta ===
+start_local = 2026-09-04 23:03:25 +09:00
+exe = E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe
+exe_sha256 = 3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+cwd = C:\Users\sdkik
+
+--- env actually set in this process (DB2_* / DOLLAMA_*) ---
+  DB2_BENCH=1
+  DB2_BENCH_ITERS=1
+  DB2_BENCH_STEPS=20
+  DOLLAMA_PROFILE=1
+--- env deliberately NOT set (verified absent) ---
+  DB2_BENCH_G = <unset>
+  DB2_STEPS = <unset>
+  DB2_UNCOND_ZERO = <unset>
+  DOLLAMA_POOL = <unset>
+  DOLLAMA_EPILOGUE = <unset>
+  DOLLAMA_FAST = <unset>
+  DOLLAMA_CONV_BATCH = <unset>
+  DOLLAMA_GEMM = <unset>
+  DOLLAMA_ARENA_RELEASE = <unset>
+  DOLLAMA_G8K_DUMP = <unset>
+
+--- nvidia-smi BEFORE ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], utilization.gpu [%], memory.used [MiB]
+2026/09/04 23:03:25.728, 35, 180 MHz, 405 MHz, 11.39 W, 360.00 W, 0 %, 508 MiB
+
+--- launching (stdout+stderr merged via cmd 2>&1) ---
+exit_code = 0
+elapsed_sec = 154.96
+end_local = 2026-09-04 23:06:01 +09:00
+
+--- nvidia-smi AFTER (immediately post-run) ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw [W], power.limit [W], utilization.gpu [%], memory.used [MiB]
+2026/09/04 23:06:01.309, 49, 2880 MHz, 15001 MHz, 162.20 W, 360.00 W, 0 %, 508 MiB
+
+log_bytes = 32279
+log_sha256 = 786C1FFC47BC19AEE7A751C3B1DBFFCDA7B86FECC052A56B7B4F610D1CACD4D6
+smi_csv_lines = 55
+
+--- grep: reserve shortage ---
+  0 hits
+=== end ===

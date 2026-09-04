@@ -213,3 +213,109 @@ rgb_hash = 0x8a96690109d2b253      (1024x1024)
   BOM 無し UTF-8 のスクリプトを **CP932 と解釈**して日本語文字列を壊す (初回に実際に起きて撮り直した)。
 - ssh 引数は**シングルクォート**で包む。バッククォートは bash / PowerShell 双方でエスケープ文字なので使わない。
 - 接続のたびに post-quantum 警告 3 行が出るが無害。
+
+---
+
+# G-10k T2c 採取 追記 (2026-09-04・研究機 KIK-WIN-RTX58・SSH 越し)
+
+★**本節は追記のみ。上の T2a 節は一切書き換えていない。**
+★**採取と提出のみ。判定・合否・結論は書かない** (T2c のタスク定義)。
+
+## T2c-1. 採取環境と HEAD
+
+| 項目 | 値 |
+|---|---|
+| 採取日時 | 2026-09-04 23:00〜23:45 JST |
+| hostname | `KIK-WIN-RTX58` / Windows 11 Home 10.0.26200 / pwsh 7.6.5 |
+| GPU | RTX 5080 / 16303 MiB / driver 610.88 (CUDA UMD 13.3) |
+| nvcc | release 13.3 V13.3.33 / meson 1.11.1 |
+| Nsight Systems | **2026.1.3.243** (`C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\nsys.exe`) |
+| 両機 HEAD | **`f58ba2c10649806c11c3c36f5f5bd314975cdbb6`** (`feat/g10k-conv-true-batch2`) で一致 |
+| 研究機 `git status --porcelain` | **走行前・全走行後とも 0 行 (clean)** |
+| ビルド | `meson compile -C build` = **`ninja: no work to do.`** (T2b 成果物をそのまま使用・本タスクで再ビルドなし) |
+| SAC | ユーザー申告で OFF。本タスクでの実走はすべて exit 0。`WinError 4551` / アプリ制御ブロックは 0 件 |
+
+## T2c-2. ★保存した実行物 (アンカー 3 の 3 段手順 2 段目に必須)
+
+**保存先 (repo 外・セッション ID を含まない永続パス)**: `E:\Develop\logs\g10k-t2c\exe\`
+
+| 絶対パス | bytes | sha256 |
+|---|---|---|
+| `E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe` | 1401344 | `3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43` |
+| `E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe` | 1388544 | `9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140` |
+
+- 両者とも `build\src\` の原本と **sha256 一致** (`t2c_stage_exe.log`)。
+- ★**OpenVINO DLL 21 本を同ディレクトリへ同梱している** (`src/meson.build:1-7` で `deps += openvino_dep` =
+  この 2 つの exe は `openvino.dll` 等にリンクしており、exe だけコピーしても別ディレクトリからは起動しない)。
+  計 21 DLL / ディレクトリ合計 207,460,184 bytes。
+- ★**保存先からの起動確認 (コピーしただけで済ませていない)**:
+  - `test_diffusion_batch2.exe` — **T2c 本走行そのものを保存先から起動した** (`t2c_run_meta.log` の
+    `exe = E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe` / `exit_code = 0`)。
+    したがって「走行に使った exe」と「保存した exe」は同一実体。
+  - `prof_arena_e2e.exe` — 全計測の**後**に `PROF_IMAGES=0` で保存先から起動し `exit_code = 0`
+    (`t2c_launchcheck.log` / `t2c_launchcheck_meta.log`)。画像は生成していないので計測を汚さない。
+
+**nsys 生成物 (大きいので repo に入れず研究機に保管)**
+
+| 絶対パス | bytes |
+|---|---|
+| `E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.nsys-rep` | 28513058 |
+| `E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.sqlite` | 289697792 |
+| `E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.nsys-rep` | 28167601 |
+| `E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite` | 282767360 |
+
+## T2c-3. 使った env の実値
+
+**T2c 本走行** (`t2c_run_meta.log` に実出力あり)
+
+```
+DB2_BENCH=1  DB2_BENCH_ITERS=1  DB2_BENCH_STEPS=20  DOLLAMA_PROFILE=1
+```
+★**`DB2_BENCH_G` は設定していない** (= harness 既定 7.5。`test_diffusion_batch2.cu:559` の
+`float bg = 7.5f;` がそのまま使われ、`:562` の上書きは env 不在で発火しない)。ログ側にも
+`DB2_BENCH_G = <unset>` を印字して確認済。seed も harness 既定 (`:237` の固定 1234)。
+`DB2_STEPS` / `DB2_UNCOND_ZERO` / `DOLLAMA_POOL` / `DOLLAMA_EPILOGUE` / `DOLLAMA_FAST` /
+`DOLLAMA_CONV_BATCH` / `DOLLAMA_GEMM` / `DOLLAMA_ARENA_RELEASE` / `DOLLAMA_G8K_DUMP` は
+**すべて `<unset>` を実確認**。**1 プロセス**・実行時間 **154.96s** / `exit_code = 0`。
+
+**nsys 走行** (2 本とも同一 env)
+
+```
+PROF_IMAGES=2  PROF_STEPS=20  PROF_G=7.5  PROF_FAST=1
+DOLLAMA_PROFILE / DOLLAMA_POOL / DOLLAMA_ARENA_RELEASE / PROF_SAMPLE_MS = すべて <unset>
+```
+
+## T2c-4. ファイル一覧 (両側 sha256 一致を確認済 = 21/21)
+
+| ファイル | 内容 |
+|---|---|
+| `t2c_env.log` | 環境スナップショット + `meson compile` no work to do + exe sha256 + nsys 所在 |
+| `t2c_stage_exe.log` | exe/DLL の永続パスへの退避と sha256 突合 |
+| `t2c_run_meta.log` | **T2c 本走行のラッパ**: env 実値 / 経過秒 / 前後 nvidia-smi / reserve shortage sweep |
+| `t2c_db2bench.log` | ★**T2c 本体の生ログ** (`test_diffusion_batch2` stdout+stderr マージ) |
+| `t2c_gpu_sample.csv` | 本走行中の nvidia-smi 2s サンプル (53 サンプル) |
+| `t2c_nsys_meta.log` / `t2c_nsys2_meta.log` | nsys 走行 #1 / #2 のラッパ |
+| `t2c_nsys_stats.log` / `t2c_nsys2_stats.log` | `nsys profile --stats=true` の stdout |
+| `t2c_nsys_cuda_gpu_kern_sum.csv` / `t2c_nsys2_cuda_gpu_kern_sum.csv` | カーネル別 GPU 時間 (CSV 再出力) |
+| `t2c_nsys_cuda_api_sum.csv` / `t2c_nsys_cuda_gpu_mem_time_sum.csv` | CUDA API / memcpy 集計 |
+| `t2c_nsys_timeline.log` | 全体タイムライン解析 (総カーネル時間・クラスタ・grid dim) |
+| `t2c_nsys_gen_split.log` / `t2c_nsys2_gen_split.log` | 生成 1 枚ごとの wall / Σkernel / launch 谷 |
+| `t2c_nsys2_unet_vae_split.log` | 生成 #2 を UNet 20step と VAE decode に分割 |
+| `t2c_nsys_target_stdout.log` / `t2c_nsys2_target_stdout.log` | ★nsys が飲み込んだ**被計測プロセスの stdout** を `ProcessStreams` から復元したもの |
+| `t2c_nsys2_stats_csv.log` / `t2c_artifacts.txt` / `t2c_sha256.txt` | 付帯 |
+| `scripts/t2c_*.ps1` / `scripts/t2c_*.py` | 研究機で実際に実行したスクリプト実体 |
+
+## T2c-5. nsys 運用で踏んだ落とし穴 (再現時の注意)
+
+1. ★**`nsys profile --stats=true` の stdout から `cuda_gpu_kern_sum` の表が丸ごと落ちる。**
+   直前に `[libprotobuf ERROR] String field 'Agent.StatsReportExecutionInfo.output' contains
+   invalid UTF-8 data` が出て、その report の出力が stdout に届かない (`osrt_sum` も同様に空)。
+   → **`nsys stats --report cuda_gpu_kern_sum --format csv -o <base> <.sqlite>` で採り直す**
+   (post-processing のみ・GPU 再走不要)。
+2. ★**被計測プロセスの stdout がログに出ない。** `--show-output=true` (`-w true`) を付けても
+   リダイレクト先には流れない (走行 #2 で実測)。nsys は `.sqlite` の **`ProcessStreams` テーブル**に
+   格納しているので、そこから取り出す (`scripts/t2c_target_stdout.py`)。
+3. `Get-ChildItem -Include` は `-Recurse` かパス末尾ワイルドカードが無いと何も返さない
+   (`t2c_finalize.ps1` で空表になり `t2c_finalize2.ps1` で採り直した)。
+4. ssh のリモート inline コマンドに `$var` や `|` を素で書くと**リモート側シェルに食われる**。
+   スクリプトファイルを `scp` して `pwsh -NoProfile -File` で叩くのが安全。

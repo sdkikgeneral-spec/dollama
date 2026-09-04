@@ -1,0 +1,41 @@
+
+=== generation #2 : UNet part (20 diffusion steps, batch2 B=2) ===
+  window   = [10.7373s .. 20.3972s]  wall = 9.6599 s
+  kernels  = 65889   -> 3294.4 launches / diffusion step
+  sum_kern = 9.4756 s   wall-sum_kern = 0.1843 s (1.91 % of wall)   busy = 98.09 %
+      6.3438s  66.95%  n=  2800  dollama::attention_flash_wmma_fast_fp16(const __half *, const __half *, const __half *, __ha
+      0.5856s   6.18%  n=  1200  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x256_32x3_tn_align8>(T1
+      0.4614s   4.87%  n=  7440  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_tn_align8>(T1
+      0.2952s   3.12%  n=  1200  nvjet_sm120_hsh_mma_64x176x64_3_16x88x64_tmaAB_alignCD4_bz_TNNN
+      0.2926s   3.09%  n=  1584  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, 
+      0.2650s   2.80%  n=   864  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::
+      0.1724s   1.82%  n=  6453  dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)
+      0.1712s   1.81%  n=   560  nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+      0.1005s   1.06%  n=   199  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(T1
+      0.0950s   1.00%  n=  1398  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x4_tn_align8>(T1
+      0.0800s   0.84%  n=  1399  dollama::geglu_fp16(const __half *, __half *, int, int)
+      0.0712s   0.75%  n= 16800  dollama::k_split_heads(const __half *, __half *, int, int, int)
+
+=== generation #2 : VAE decode part (everything after the last UNet attention) ===
+  window   = [20.3972s .. 21.3981s]  wall = 1.0009 s
+  kernels  = 1143
+  sum_kern = 0.9951 s   wall-sum_kern = 0.0058 s (0.58 % of wall)   busy = 99.42 %
+      0.5143s  51.69%  n=     1  dollama::attention_flash_wmma_fp16(const __half *, const __half *, const __half *, __half *,
+      0.1268s  12.74%  n=    13  dollama::k_group_norm_f32(const float *, const __half *, const __half *, float *, int, int, 
+      0.1064s  10.69%  n=   258  void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nn_align4>(T1::Params)
+      0.0911s   9.15%  n=   257  dollama::im2col_f32(const float *, float *, int, int, int, int, int, int, int, int, int, int
+      0.0328s   3.29%  n=    27  nvjet_sm120_hsh_mma_128x80x64_3_32x40x64_tmaAB_alignCD4_bz_NNNN
+      0.0276s   2.77%  n=    58  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, 
+      0.0174s   1.75%  n=    17  dollama::group_norm_fp16(const __half *, const __half *, const __half *, __half *, int, int,
+      0.0161s   1.62%  n=    16  dollama::conv_bias_add_rows_f32(float *, const __half *, int, long)
+      0.0149s   1.49%  n=    13  dollama::k_silu_f32(const float *, float *, long)
+      0.0112s   1.13%  n=    27  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::
+      0.0086s   0.86%  n=     6  dollama::k_add_f32(const float *, const float *, float *, long)
+      0.0076s   0.77%  n=   257  dollama::scatter_band_to_out_f32(const float *, float *, int, long, long, long)
+
+=== attention kernels in generation #2 (grid = (qtiles, B*H, 1)) ===
+  dollama::attention_flash_wmma_fast_fp16          grid=(64,20) block=128 n=  400 total= 3.5174s avg=   8.793ms
+  dollama::attention_flash_wmma_fast_fp16          grid=(16,40) block=128 n= 2400 total= 2.8264s avg=   1.178ms
+  dollama::attention_flash_wmma_fp16               grid=(1024,1) block=32 n=    1 total= 0.5143s avg= 514.333ms
+
+=== end ===

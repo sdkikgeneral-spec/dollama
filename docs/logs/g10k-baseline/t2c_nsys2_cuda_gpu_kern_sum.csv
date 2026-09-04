@@ -1,0 +1,62 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+60.6,12669558822,5600,2262421.2,1266653.5,185210,17383432,4244915.4,"dollama::attention_flash_wmma_fast_fp16(const __half *, const __half *, const __half *, __half *, int, int, int, int, int, float)"
+5.6,1169769522,2400,487404.0,487794.0,484306,490610,1139.1,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x256_32x3_tn_align8>(T1::Params)
+4.9,1028631961,2,514315980.5,514315980.5,514298517,514333444,24697.1,"dollama::attention_flash_wmma_fp16(const __half *, const __half *, const __half *, __half *, int, int, int, int, int, float)"
+4.4,921584813,14880,61934.5,61919.0,61279,62591,211.7,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_tn_align8>(T1::Params)
+3.1,639419960,3284,194707.7,143772.0,4479,698445,160621.3,"dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int)"
+2.8,589770009,2400,245737.5,245849.0,243865,248889,619.4,nvjet_sm120_hsh_mma_64x176x64_3_16x88x64_tmaAB_alignCD4_bz_TNNN
+2.6,551647156,1782,309566.3,272216.0,62782,810986,173936.5,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::Params)
+1.6,345021113,12920,26704.4,8800.0,608,208635,40048.6,"dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)"
+1.6,341908565,1120,305275.5,267961.0,135484,534161,104567.5,nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+1.2,253502906,26,9750111.8,10998852.0,5520200,22020652,4473082.5,"dollama::k_group_norm_f32(const float *, const __half *, const __half *, float *, int, int, int, int, float)"
+1.0,212512925,516,411846.8,322935.0,1920,607535,154219.8,void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nn_align4>(T1::Params)
+1.0,203626532,206,988478.3,1072978.0,740171,1271261,208856.0,nvjet_sm120_hsh_mma_128x80x64_3_32x40x64_tmaAB_alignCD4_bz_NNNN
+1.0,201643765,400,504109.4,504210.0,501074,510738,1666.0,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(T1::Params)
+0.9,189967384,2800,67845.5,67646.0,66942,69566,566.5,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x4_tn_align8>(T1::Params)
+0.9,182031425,514,354146.7,368118.0,67454,386005,57948.7,"dollama::im2col_f32(const float *, float *, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int)"
+0.8,160249395,2800,57231.9,40479.0,40127,159772,41070.9,"dollama::geglu_fp16(const __half *, __half *, int, int)"
+0.7,142192576,33600,4231.9,5151.0,704,13024,2815.5,"dollama::k_split_heads(const __half *, __half *, int, int, int)"
+0.6,118072197,8898,13269.5,11680.0,640,216442,8113.5,"dollama::add_fp16(const __half *, const __half *, __half *, int)"
+0.5,110026201,8400,13098.4,11264.0,10527,24992,4553.9,"dollama::layer_norm_fp16(const __half *, const __half *, const __half *, __half *, int, int, float)"
+0.5,97743976,400,244359.9,244473.0,243034,248985,713.0,nvjet_sm120_hsh_mma_64x144x64_3_16x72x64_tmaAB_alignCD4_bz_TNNN
+0.4,83110895,80,1038886.2,1038963.0,1034915,1048674,1961.9,nvjet_sm120_hsh_mma_64x144x64_3_16x72x64_tmaAB_alignCD4_bz_NNNN
+0.3,69664088,11200,6220.0,5536.0,5439,10720,1691.8,"dollama::k_merge_heads(const __half *, __half *, int, int, int)"
+0.3,64468793,474,136010.1,43151.0,41823,2698039,363378.7,"dollama::group_norm_fp16(const __half *, const __half *, const __half *, __half *, int, int, int, int, float)"
+0.3,60026090,4800,12505.4,12112.0,10752,15200,1596.3,nvjet_sm120_hsh_mma_64x40x128_3_16x40x128_tmaAB_alignCD4_bz_TNNN
+0.3,58131273,1360,42743.6,30271.0,8448,170683,34979.7,"dollama::group_norm_mb_normalize_silu(const __half *, const __half *, const __half *, const float *, __half *, int, int, int, int, long)"
+0.2,48208748,882,54658.4,38431.0,37375,223738,19618.6,"dollama::k_chw_to_sc(const __half *, __half *, int, int)"
+0.2,45818716,882,51948.7,36063.0,35423,225114,19148.9,"dollama::k_sc_to_chw(const __half *, __half *, int, int)"
+0.2,39036597,840,46472.1,45439.0,11391,100029,13745.3,"dollama::gemm_fp16_tiled(const __half *, const __half *, __half *, int, int, int, float, float, bool, bool)"
+0.2,32226700,32,1007084.4,960917.5,16032,2646200,582365.6,"dollama::conv_bias_add_rows_f32(float *, const __half *, int, long)"
+0.1,29708627,26,1142639.5,1301148.0,618159,2638392,549867.0,"dollama::k_silu_f32(const float *, float *, long)"
+0.1,24206854,42,576353.7,604895.0,2240,608207,129944.7,"dollama::conv2d_fp16(const __half *, const __half *, const __half *, __half *, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int)"
+0.1,23970690,720,33292.6,24703.5,8704,95933,25333.0,"dollama::k_concat_chw(const __half *, const __half *, __half *, int, int, int)"
+0.1,22830397,680,33574.1,28799.0,14656,64542,19118.3,"dollama::conv_bias_residual_fp16(const __half *, const __half *, const __half *, __half *, long, int, int)"
+0.1,21995504,1318,16688.5,11808.0,2591,735852,33535.5,"dollama::conv_bias_add_rows(__half *, const __half *, int, long)"
+0.1,21238675,680,31233.3,28399.0,13951,58334,17815.8,"dollama::conv_bias_biasch_fp16(const __half *, const __half *, const __half *, __half *, long, int, int)"
+0.1,20273650,400,50684.1,60671.0,17343,68350,17925.1,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x64_32x4_nn_align8>(T1::Params)
+0.1,17496622,320,54676.9,54638.5,18495,91230,25923.2,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_nn_align8>(T1::Params)
+0.1,17209674,12,1434139.5,1434169.0,948838,1917996,502818.4,"dollama::k_add_f32(const float *, const float *, float *, long)"
+0.1,16599412,1400,11856.7,7488.0,2752,69758,12287.3,"dollama::group_norm_mb_partial(const __half *, float *, int, int, int, int, int)"
+0.1,15228003,514,29626.5,35503.0,704,45855,13477.6,"dollama::scatter_band_to_out_f32(const float *, float *, int, long, long, long)"
+0.0,6503019,84,77416.9,79150.0,39615,726381,104534.2,"dollama::upsample_nearest2x_fp16(const __half *, __half *, int, int, int, int)"
+0.0,6385841,4,1596460.3,1596676.0,1268413,1924076,377688.9,void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_128x128_32x3_nn_align4>(T1::Params)
+0.0,6148106,800,7685.1,7663.5,7071,8448,357.2,nvjet_sm120_hsh_mma_128x40x64_4_32x40x64_tmaAB_alignCD4_splitK_TNNN
+0.0,5415626,80,67695.3,67742.0,66782,68510,547.5,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x64_64x3_nn_align8>(T1::Params)
+0.0,5016016,222,22594.7,19967.5,1344,67998,24289.6,"dollama::scatter_band_to_out(const __half *, __half *, int, long, long, long)"
+0.0,4484742,14,320338.7,320135.0,318711,325560,1627.9,nvjet_sm120_hsh_mma_48x256x64_2_48x32x64_tmaAB_alignCD4_bz_NNNN
+0.0,3621021,2,1810510.5,1810510.5,1810030,1810991,679.5,"dollama::k_upsample2x_f32(const float *, float *, int, int, int, int)"
+0.0,3541089,80,44263.6,44255.0,43935,44798,170.6,nvjet_sm120_hsh_mma_64x160x64_3_32x40x64_tmaAB_alignCD4_splitK_NNNN
+0.0,3420678,192,17816.0,608.0,576,154171,35620.3,"dollama::silu_fp16(const __half *, __half *, int)"
+0.0,2174147,40,54353.7,54334.5,54014,54815,203.6,"dollama::group_norm_mb_normalize(const __half *, const __half *, const __half *, const float *, __half *, int, int, int, int, long)"
+0.0,2020744,2,1010372.0,1010372.0,1009892,1010852,678.8,"dollama::k_h2f(const __half *, float *, long)"
+0.0,1577600,880,1792.7,1696.0,1535,3584,490.1,"void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, float, __half, float, __half, (bool)0, float, __half, __half, (bool)1, (bool)0, (bool)0, (bool)0>(cublasLt::cublasSplitKParams<T6>, const T4 *, const T10 *, T9 *, T5 *, const T6 *, const T6 *, const T11 *, const T4 *, T11 *, void *, long long, T6 *, int *, T6 *, T6 *, const T6 *, const T6 *, const T6 *, const T6 *, const T6 *)"
+0.0,1434365,80,17929.6,17920.0,17503,18208,125.3,void cutlass::Kernel2<cutlass_80_wmma_tensorop_f16_s161616gemm_f16_32x32_32x1_nn_align2>(T1::Params)
+0.0,1390979,1400,993.6,960.0,896,1568,86.9,"dollama::group_norm_mb_finalize(const float *, float *, int, int, float)"
+0.0,683629,8,85453.6,85309.5,84926,86110,522.4,nvjet_sm120_hsh_mma_128x160x64_2_64x40x64_tmaAB_alignCD4_bz_TNNN
+0.0,253242,520,487.0,480.0,448,704,37.0,"dollama::timestep_embedding_fp16(__half *, float, int, float)"
+0.0,205818,8,25727.3,25631.5,25471,26047,248.0,"dollama::k_add_bias_sc(__half *, const __half *, int, int)"
+0.0,109531,32,3422.8,2432.0,1088,8160,1914.4,"dollama::weight_h2f(const __half *, float *, long)"
+0.0,47423,2,23711.5,23711.5,23616,23807,135.1,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_f16_256x128_32x3_nn_align2>(T1::Params)
+0.0,16832,2,8416.0,8416.0,8384,8448,45.3,"dollama::k_f2h(const float *, __half *, long)"
+0.0,2176,2,1088.0,1088.0,1024,1152,90.5,"void cublasLt::splitKreduce_kernel<(int)32, (int)16, int, float, float, float, float, (bool)0, float, float, float, (bool)1, (bool)0, (bool)0, (bool)0>(cublasLt::cublasSplitKParams<T6>, const T4 *, const T10 *, T9 *, T5 *, const T6 *, const T6 *, const T11 *, const T4 *, T11 *, void *, long long, T6 *, int *, T6 *, T6 *, const T6 *, const T6 *, const T6 *, const T6 *, const T6 *)"

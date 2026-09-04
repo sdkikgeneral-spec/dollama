@@ -1,0 +1,40 @@
+=== staged to E:\Develop\logs\g10k-t2c\exe ===
+test_diffusion_batch2.exe
+  build/src : 3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+  staged    : 3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+  -> IDENTICAL
+prof_arena_e2e.exe
+  build/src : 9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+  staged    : 9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+  -> IDENTICAL
+
+=== staged dir listing ===
+
+[32;1mName                                  [0m[32;1m   Length[0m[32;1m LastWriteTime[0m
+[32;1m----                                  [0m [32;1m  ------[0m [32;1m-------------[0m
+openvino_auto_batch_plugin.dll           207864 2026/06/12 22:45:02
+openvino_auto_plugin.dll                 502264 2026/06/12 22:45:02
+openvino_c.dll                           222200 2026/06/12 22:45:02
+openvino_hetero_plugin.dll               472056 2026/06/12 22:45:02
+openvino_intel_cpu_plugin.dll          44923896 2026/06/12 22:45:02
+openvino_intel_gpu_plugin.dll          36964856 2026/06/12 22:45:02
+openvino_intel_npu_compiler_loader.dll  6994424 2026/06/12 22:45:02
+openvino_intel_npu_compiler.dll        76250104 2026/06/12 22:45:02
+openvino_intel_npu_plugin.dll           6745592 2026/06/12 22:45:02
+openvino_ir_frontend.dll                 461304 2026/06/12 22:45:02
+openvino_jax_frontend.dll                466936 2026/06/12 22:45:02
+openvino_onnx_frontend.dll              4523512 2026/06/12 22:45:02
+openvino_paddle_frontend.dll            1491960 2026/06/12 22:45:02
+openvino_pytorch_frontend.dll           2678776 2026/06/12 22:45:02
+openvino_tensorflow_frontend.dll        4036088 2026/06/12 22:45:02
+openvino_tensorflow_lite_frontend.dll   1244152 2026/06/12 22:45:02
+openvino.dll                           15888376 2026/06/12 22:45:02
+prof_arena_e2e.exe                      1388544 2026/09/04 21:13:59
+tbb12.dll                                225272 2026/06/12 22:45:02
+tbbbind_2_5.dll                          208376 2026/06/12 22:45:02
+tbbmalloc_proxy.dll                       41464 2026/06/12 22:45:02
+tbbmalloc.dll                            120824 2026/06/12 22:45:02
+test_diffusion_batch2.exe               1401344 2026/09/04 21:13:59
+
+dll_count = 21
+total_bytes = 207460184

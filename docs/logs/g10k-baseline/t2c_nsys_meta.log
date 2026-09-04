@@ -1,0 +1,42 @@
+=== T2c nsys meta ===
+start_local = 2026-09-04 23:15:32 +09:00
+nsys = C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\nsys.exe
+nsys_exists = True
+exe = E:\Develop\Projects\dollama\build\src\prof_arena_e2e.exe
+exe_sha256 = 9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+NVIDIA Nsight Systems version 2026.1.3.243-261337792075v0
+
+--- env actually set (PROF_* / DOLLAMA_*) ---
+  PROF_FAST=1
+  PROF_G=7.5
+  PROF_IMAGES=2
+  PROF_STEPS=20
+--- deliberately unset ---
+  DOLLAMA_PROFILE = <unset>
+  DOLLAMA_POOL = <unset>
+  DOLLAMA_ARENA_RELEASE = <unset>
+  PROF_SAMPLE_MS = <unset>
+
+--- nvidia-smi BEFORE ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], power.draw [W], memory.used [MiB]
+2026/09/04 23:15:33.204, 36, 180 MHz, 11.58 W, 508 MiB
+
+--- launching nsys profile (stdout+stderr merged) ---
+exit_code = 0
+elapsed_sec = 59.52
+end_local = 2026-09-04 23:16:33 +09:00
+
+--- nvidia-smi AFTER ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], power.draw [W], memory.used [MiB]
+2026/09/04 23:16:33.312, 38, 180 MHz, 12.94 W, 508 MiB
+
+--- artifacts ---
+
+[32;1mName                  [0m[32;1m    Length[0m[32;1m LastWriteTime[0m
+[32;1m----                  [0m [32;1m   ------[0m [32;1m-------------[0m
+g10k_t2c_nsys.nsys-rep  28513058 2026/09/04 23:16:24
+g10k_t2c_nsys.sqlite   289697792 2026/09/04 23:16:31
+
+stats_log_bytes = 17960
+stats_log_sha256 = 0A7B343D6E5447D843846B4939490DF1899BF85C0786E7CEBFAED3C37C102A14
+=== end ===

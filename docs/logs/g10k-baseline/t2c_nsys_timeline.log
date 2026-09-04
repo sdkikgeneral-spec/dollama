@@ -1,0 +1,76 @@
+=== sqlite ===
+db = E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.sqlite
+has KERNEL: True  MEMCPY: True  RUNTIME: True
+
+=== kernels (whole capture) ===
+kernel_instances = 134064
+sum_kernel_gpu_time = 20.920558 s
+kernel_activity_span (first start .. last end) = 21.411760 s
+gap_over_span = 0.491203 s (2.29 % of span)
+
+=== memcpy (whole capture) ===
+  copyKind=1 (H2D) count=1875 time=0.303912s bytes=5241.003MB
+  copyKind=8 (D2D) count=1128 time=0.007851s bytes=11242.237MB
+  copyKind=2 (D2H) count=122 time=0.001074s bytes=23.069MB
+
+=== kernel-activity clusters (split where consecutive-kernel gap > 20 ms) ===
+  #   t0_rel_s     span_s  sum_kern_s     gap_s   busy%   kernels
+  1      0.000      0.001       0.000     0.001   15.48        26
+  2      0.097     21.314      20.920     0.394   98.15    134038
+
+=== cluster t0_rel=0.000s span=0.001s : top kernels ===
+     0.0002s  n=     4  dollama::gemm_fp16_tiled(const __half *, const __half *, __half *, int, int, int, float, float, bool
+     0.0000s  n=    13  dollama::timestep_embedding_fp16(__half *, float, int, float)
+     0.0000s  n=     1  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int, int
+     0.0000s  n=     4  dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)
+     0.0000s  n=     3  dollama::silu_fp16(const __half *, __half *, int)
+     0.0000s  n=     1  dollama::add_fp16(const __half *, const __half *, __half *, int)
+
+=== cluster t0_rel=0.097s span=21.314s : top kernels ===
+    12.6732s  n=  5600  dollama::attention_flash_wmma_fast_fp16(const __half *, const __half *, const __half *, __half *, in
+     1.1702s  n=  2400  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x256_32x3_tn_align8>(T1::Params
+     1.0287s  n=     2  dollama::attention_flash_wmma_fp16(const __half *, const __half *, const __half *, __half *, int, in
+     0.9219s  n= 14880  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_tn_align8>(T1::Params
+     0.6398s  n=  3283  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int, int
+     0.5900s  n=  2400  nvjet_sm120_hsh_mma_64x176x64_3_16x88x64_tmaAB_alignCD4_bz_TNNN
+     0.5520s  n=  1782  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::Params)
+     0.3450s  n= 12916  dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)
+     0.3420s  n=  1120  nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+     0.2528s  n=    26  dollama::k_group_norm_f32(const float *, const __half *, const __half *, float *, int, int, int, int
+     0.2125s  n=   516  void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nn_align4>(T1::Params)
+     0.2038s  n=   206  nvjet_sm120_hsh_mma_128x80x64_3_32x40x64_tmaAB_alignCD4_bz_NNNN
+     0.2017s  n=   400  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(T1::Params
+     0.1900s  n=  2800  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x4_tn_align8>(T1::Params
+     0.1820s  n=   514  dollama::im2col_f32(const float *, float *, int, int, int, int, int, int, int, int, int, int, int, i
+
+=== grid/block dims (B=2 evidence) for selected kernels ===
+  -- attention_flash_wmma_fast_fp16 --
+     grid=(16,40,1) block=(128,1,1) n=4800 t=5.6479s
+     grid=(64,20,1) block=(128,1,1) n=800 t=7.0253s
+  -- k_split_heads --
+     grid=(5120,1,1) block=(256,1,1) n=19200 t=0.0994s
+     grid=(385,1,1) block=(256,1,1) n=9600 t=0.0086s
+     grid=(10240,1,1) block=(256,1,1) n=3200 t=0.0331s
+     grid=(193,1,1) block=(256,1,1) n=1600 t=0.0012s
+  -- im2col_fp16 --
+     grid=(65535,1,1) block=(256,1,1) n=2002 t=0.5555s
+     grid=(46080,1,1) block=(256,1,1) n=960 t=0.0737s
+     grid=(23040,1,1) block=(256,1,1) n=160 t=0.0062s
+     grid=(2304,1,1) block=(256,1,1) n=82 t=0.0004s
+     grid=(30240,1,1) block=(256,1,1) n=80 t=0.0041s
+
+=== CUDA runtime API calls (top by count) ===
+  n=   99610 cpu_time=   7.7568s  cudaLaunchKernel_v7000
+  n=   99610 cpu_time=   0.0182s  cuKernelGetName
+  n=   67145 cpu_time=   0.0177s  cuStreamGetGreenCtx
+  n=   23664 cpu_time=   2.0468s  cuLaunchKernel
+  n=   23664 cpu_time=   0.0326s  cuKernelGetFunction
+  n=    9908 cpu_time=   0.7634s  cuLaunchKernelEx
+  n=    9908 cpu_time=   0.8323s  cuKernelSetAttribute
+  n=    5382 cpu_time=   0.0009s  cuStreamGetCaptureInfo_v2
+  n=    3125 cpu_time=   0.6901s  cudaMemcpy_v3020
+  n=    1857 cpu_time=   0.0642s  cudaMalloc_v3020
+  n=    1855 cpu_time=   0.2438s  cudaFree_v3020
+  n=    1768 cpu_time=   0.1070s  cudaMemGetInfo_v3020
+
+=== end ===
