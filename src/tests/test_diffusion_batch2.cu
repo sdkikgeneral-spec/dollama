@@ -24,6 +24,16 @@
 //     [3] epi determinism: fast+epi@g=1.0 二連走が bit-exact
 //     [4] epi ゲート  : fast+epi vs fast @ g=1.0 SSIM >= 0.999
 //
+//   G-10k T2b で 1 本追加 (条件付き・DOLLAMA_PROFILE=1 のときだけ判定):
+//     [5] reset ゲート: generate_txt2img の profile カウンタが呼び出しごとにリセットされる。
+//         同一パイプラインの 1 回目 (g=1.0) 直後と、同一構成の再走 (g1_again) 直後の
+//         cat_resnet_sec を比べる。リセットが無ければ後者は前者の ~4 倍 (間に g=3.0 /
+//         g=7.5 の 2 走が挟まる) に積み上がる。cat_resnet_sec は profile_enabled() の
+//         ときしか加算されない (src/infer/unet.cu:541-542) ので、DOLLAMA_PROFILE
+//         未設定の meson test 既定実行では [SKIP] を印字するだけで判定しない。
+//         ★被験は generate_txt2img 側に新設したリセットである。generate (別メソッド) は
+//           元からリセットを持つので、そちらを 2 回呼んでも被験を一度も通らない。
+//
 //   [4] の比較対象を **fast+epi vs fast** にしたのは、両辺に attn_fast+batch2 が等しく載るので
 //   **差分が epilogue のみに分離される**ため (fast+epi vs default だと batch2 の CFG 増幅が混入し、
 //   epilogue が完全に正しくてもゲートが落ちる = 被験変数を測っていない)。`batch2+epi vs batch2` は
@@ -55,6 +65,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include "infer/diffusion.cuh"
+#include "infer/profile.cuh"
 #include "kernels/utils.cuh"
 #include "io/safetensors.hpp"
 #endif
@@ -252,36 +263,58 @@ static int run_test()
                               time_ids.data(), rgb, w, h);
     };
 
+    // G-10k T2b [GATE5] 用のプローブ: 既存の g1_again 二連走に相乗りして
+    //   「1 回目直後」と「再走直後」の cat_resnet_sec を採る (追加の生成は行わない)。
+    struct ResnetProbe
+    {
+        double first = -1.0;  // k=0 (g=1.0) の generate_txt2img 直後
+        double again = -1.0;  // g1_again (同一構成・同一 g) の generate_txt2img 直後
+        int    gens  = 0;     // first と again の間に挟まった generate_txt2img 回数を含む総数
+        bool   used  = false;
+    };
+
     // 構成を FastConfig で直接指定してパイプラインを 1 本構築し、全 guidance を回す。
     //   fast=false のまま attn_fast/batch2/epilogue を直に立てる (コンストラクタの fast 含意は
     //   fast=true のときだけ働くので、ここで立てた値がそのまま使われる = 構成を厳密に制御できる)。
     auto run_config = [&](bool attn_fast, bool batch2, bool epilogue,
                           std::vector<uint8_t>* rgb_out, std::vector<uint8_t>* g1_again,
-                          int& w_out, int& h_out)
+                          int& w_out, int& h_out, ResnetProbe* probe = nullptr)
     {
         FastConfig cfg;
         cfg.attn_fast = attn_fast;
         cfg.batch2    = batch2;
         cfg.epilogue  = epilogue;
         DiffusionPipeline pipe(unet_w, vae_w, iopath, cfg);
+        int ngen = 0;
         for (int k = 0; k < nG; ++k)
         {
             int ww = 0, hh = 0;
             gen(pipe, guids[k], rgb_out[k], ww, hh);
+            ++ngen;
             if (k == 0) { w_out = ww; h_out = hh; }
+            // 1 回目の直後の累積値を採る (dump 側でリセットが効いていれば「1 回分」)。
+            if (k == 0 && probe != nullptr) { probe->first = profile_counters().cat_resnet_sec; }
         }
         if (g1_again != nullptr)
         {
             int ww = 0, hh = 0;
             gen(pipe, guids[0], *g1_again, ww, hh);  // 同一構成 same seed = bit-exact 期待
+            ++ngen;
+            if (probe != nullptr)
+            {
+                probe->again = profile_counters().cat_resnet_sec;
+                probe->gens  = ngen;
+                probe->used  = true;
+            }
         }
     }; // scope を抜けて pipe 破棄 → VRAM 解放してから次構成を構築。
 
     // --- (1) default 相当 (全 false)。g=1.0 は determinism 制御用に 2 回走らせる ---
     std::vector<uint8_t> off[3];
     std::vector<uint8_t> off_g1_again;   // ノイズ床制御 (off@1.0 の 2 回目)
+    ResnetProbe          off_probe;      // G-10k T2b [GATE5]
     int w = 0, h = 0;
-    run_config(false, false, false, off, &off_g1_again, w, h);
+    run_config(false, false, false, off, &off_g1_again, w, h, &off_probe);
 
     // --- (2) batch2 単独 (attn_fast は off 側と同値 = false 固定) ---
     std::vector<uint8_t> on[3];
@@ -296,8 +329,9 @@ static int run_test()
     // --- (4) fast + epilogue = 出荷正典 (`--fast`)。g=1.0 は determinism 用に 2 回 ---
     std::vector<uint8_t> epi[3];
     std::vector<uint8_t> epi_g1_again;
+    ResnetProbe          epi_probe;      // G-10k T2b [GATE5]
     int w4 = 0, h4 = 0;
-    run_config(true, true, true, epi, &epi_g1_again, w4, h4);
+    run_config(true, true, true, epi, &epi_g1_again, w4, h4, &epi_probe);
 
     {
         size_t freeb = 0, totalb = 0;
@@ -412,6 +446,53 @@ static int run_test()
         std::cerr << "[test_diffusion_batch2] FAIL: [GATE4] epilogue SSIM(g=1.0) "
                   << ssim_epi_g1 << " < 0.999\n";
         ok = false;
+    }
+
+    // --- [5] G-10k T2b: generate_txt2img の profile カウンタ reset ゲート ---
+    //   被験 = generate_txt2img (src/infer/diffusion.cu) に新設した profile_counters().reset()。
+    //   リセットが効いていれば、同一パイプライン内で何回呼んでも「直後の cat_resnet_sec」は
+    //   1 回分に留まる。効いていなければ 4 走ぶん (g=1.0 / 3.0 / 7.5 / g1_again) 積み上がるので
+    //   again/first は ~4 になる。判定閾値 1.5 はその中間 (1 走ぶんの走行間ばらつきより十分上、
+    //   積み上がり ~4 より十分下)。
+    //   cat_resnet_sec は profile_enabled() のときだけ加算される (src/infer/unet.cu:541-542) ので、
+    //   DOLLAMA_PROFILE 未設定 (= meson test の既定) では判定せず [SKIP] を出す。
+    {
+        const bool prof_on = profile_enabled();
+        if (!prof_on)
+        {
+            std::cout << "[test_diffusion_batch2] [GATE5] SKIP (DOLLAMA_PROFILE unset: "
+                         "cat_resnet_sec is only accumulated while profiling is enabled)\n";
+        }
+        else
+        {
+            auto check_reset = [&](const char* tag, const ResnetProbe& p)
+            {
+                if (!p.used || p.first <= 0.0 || p.again <= 0.0)
+                {
+                    std::cerr << "[test_diffusion_batch2] FAIL: [GATE5] " << tag
+                              << " cat_resnet_sec not accumulating (first=" << p.first
+                              << " again=" << p.again << " used=" << (p.used ? 1 : 0)
+                              << "): the probe never reached the code under test\n";
+                    ok = false;
+                    return;
+                }
+                const double ratio = p.again / p.first;
+                std::cout << "[test_diffusion_batch2] [GATE5] " << tag
+                          << " cat_resnet_sec: run1=" << p.first << "s  rerun=" << p.again
+                          << "s  ratio=" << ratio << "  (gens in pipeline=" << p.gens
+                          << ", ratio<1.5 required)\n";
+                if (!(ratio < 1.5))
+                {
+                    std::cerr << "[test_diffusion_batch2] FAIL: [GATE5] " << tag
+                              << " ratio " << ratio
+                              << " >= 1.5: generate_txt2img does not reset the profile"
+                                 " counters (values pile up across calls)\n";
+                    ok = false;
+                }
+            };
+            check_reset("off(default)", off_probe);
+            check_reset("fast+epi", epi_probe);
+        }
     }
 
     if (ok)
