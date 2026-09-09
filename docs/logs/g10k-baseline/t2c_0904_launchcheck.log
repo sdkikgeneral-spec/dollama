@@ -1,0 +1,6 @@
+[S4] config images=0 steps=1 g=7.5 fast=1 DOLLAMA_POOL=(unset) DOLLAMA_ARENA_RELEASE=(unset) pool_enabled=1 sample_ms=5
+[S4] used_after_ctx=1317MB total=16302MB
+[S4] used_after_weight_load=13323MB free=2979MB
+[S4] PEAK_USED=13323MB (total=16302MB)
+[S4] used_after_destroy=1317MB
+[S4] FINAL_PEAK_USED=13323MB

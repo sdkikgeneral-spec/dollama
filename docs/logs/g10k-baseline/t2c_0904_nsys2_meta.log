@@ -1,0 +1,32 @@
+=== T2c nsys capture #2 meta ===
+start_local = 2026-09-04 23:29:58 +09:00
+exe_sha256 = 9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+  PROF_FAST=1
+  PROF_G=7.5
+  PROF_IMAGES=2
+  PROF_STEPS=20
+--- nvidia-smi BEFORE ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], power.draw [W], memory.used [MiB]
+2026/09/04 23:29:58.132, 35, 180 MHz, 11.62 W, 508 MiB
+exit_code = 0
+elapsed_sec = 53.49
+--- nvidia-smi AFTER ---
+timestamp, temperature.gpu, clocks.current.sm [MHz], power.draw [W], memory.used [MiB]
+2026/09/04 23:30:51.670, 38, 180 MHz, 12.02 W, 508 MiB
+
+--- target stdout captured? ---
+  NO [S4] lines in log
+
+stats_log_sha256 = A10CA37BE2BBDA4789F592544193C8DC2C4663D088630655281B2F60BBA06FA3
+
+[32;1mName                           [0m[32;1m    Length[0m
+[32;1m----                           [0m [32;1m   ------[0m
+g10k_t2c_nsys.nsys-rep           28513058
+g10k_t2c_nsys.sqlite            289697792
+g10k_t2c_nsys2.nsys-rep          28167601
+g10k_t2c_nsys2.sqlite           282767360
+stats_cuda_api_sum.csv               1900
+stats_cuda_gpu_kern_sum.csv          9200
+stats_cuda_gpu_mem_time_sum.csv       389
+
+=== end ===

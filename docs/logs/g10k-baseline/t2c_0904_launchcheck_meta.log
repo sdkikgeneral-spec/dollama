@@ -1,0 +1,17 @@
+=== launch check of saved exe copies ===
+start_local = 2026-09-04 23:44:26 +09:00
+target = E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe
+sha256 = 9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+env: PROF_IMAGES=0 PROF_STEPS=1 PROF_FAST=1 (no image generated)
+exit_code = 0   elapsed_sec = 5.19
+--- output ---
+[S4] config images=0 steps=1 g=7.5 fast=1 DOLLAMA_POOL=(unset) DOLLAMA_ARENA_RELEASE=(unset) pool_enabled=1 sample_ms=5
+[S4] used_after_ctx=1317MB total=16302MB
+[S4] used_after_weight_load=13323MB free=2979MB
+[S4] PEAK_USED=13323MB (total=16302MB)
+[S4] used_after_destroy=1317MB
+[S4] FINAL_PEAK_USED=13323MB
+
+NOTE: test_diffusion_batch2.exe launchability from the saved path is already proven
+      by the T2c measurement run itself (t2c_run_meta.log: exe = ...\exe\test_diffusion_batch2.exe, exit 0).
+=== end ===

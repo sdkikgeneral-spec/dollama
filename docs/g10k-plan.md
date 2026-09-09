@@ -813,3 +813,162 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
    据え置かれる** (計時 3 行相当)。★**追加するときは、DB2_BENCH の wall
    (`src/tests/test_diffusion_batch2.cu:470-475` の `steady_clock` 窓・min は `:476` の min-of-iters) とは
    **窓が違う**ことを必ず併記する — 併記しないなら追加しない方がよい。
+
+---
+
+## 13. 実施記録 (実走後に追記する節・タスク表の DoD は書き換えない)
+
+★**本節は「何をやったか」の記録である。§6 のタスク表 (設計・DoD) は PL 決裁物なので変更しない。**
+台帳と実施記録が食い違ったときは、**両方を残して食い違いの事実を書く** (片方を消して辻褄を合わせない)。
+
+### T2b (実装 + 実走) — 完了
+
+- コミット `036cb94` (実装) / `de34ec6` (GATE5 の検出力是正) / `f58ba2c` (生ログ回収)。
+- 生ログと索引は `docs/logs/g10k-baseline/t2b_*` (索引 = `t2b_index.txt`)。
+- 本節では T2b の内容を再掲しない。**T2c の記述が T2b の権威になることを避けるため**、
+  T2b の合否は `t2b_index.txt` と上記 3 コミットの本文を一次として読むこと。
+
+### T2c (実走・採取のみ) — 完了。★**2 回・別セッションで重複実行された**
+
+**経緯 (事実)**
+
+1. **セッション A = 2026-09-04**。研究機 `KIK-WIN-RTX58` 上で T2c 本走を実施。加えて DoD の範囲外である
+   nsys プロファイル 2 本・保存 exe の launchcheck・UNet/VAE split 解析まで採取した。
+   原本の置き場は **repo 外**の `E:\Develop\logs\g10k-t2c\`。
+   ★**この成果は 2026-09-09 まで repo に 1 バイトも回収されていなかった。**
+2. **セッション B = 2026-09-09**。`gpu-benchmarker` が**セッション A の存在を知らないまま**
+   T2c を再実行した。原本は `E:\Develop\logs\g10k-t2c\run_20260909\`。
+3. 両者は **exe sha256・env pin・seed のすべてが同一**だったため、結果として
+   **別セッション間の再現性の直接測定値**が 1 組手に入った (下記「セッション間差」)。
+4. 本記録の作成時 (2026-09-09) に**両セッション分を repo へ回収**した。
+   配置と両側 sha256 突合は `docs/logs/g10k-baseline/t2c_index.txt` /
+   同 `t2c_collect_sha256.txt` (一致 26 / 不一致 0 / 採取時記録なし 22)。
+
+★**重複実行そのものの評価 (再発防止の要否・A と B のどちらを正典採取とするか) は PL 決裁事項**であり、
+ここでは決めない。**両方の生ログを等しく残してある。**
+
+**★事故 3 件 (セッション B がセッション A の採取ディレクトリへ書き込んだことによる)**
+
+| # | 事故 | 現状 |
+|---|---|---|
+| 1 | セッション A の `t2c_env.log` (6409 bytes) を**上書きして失った** | ★**復旧不能**。sha256 `72D882E2…12B1` と byte 数だけが `t2c_0904_sha256.txt` に残る (実体は `E:\Develop\logs\g10k-t2c\` に無いことを回収時に確認)。同種の情報の**大半**は生存した `t2c_0904_run_meta.log` / `t2c_0904_stage_exe.log` に重複記録されているが、**同一ではない** |
+| 2 | `exe\prof_arena_e2e.exe` を「余計なコピー」と誤認して**削除**した | **復旧済み**。`build\src` から復元し、セッション A の記録 (`t2c_0904_stage_exe.log`) の sha256 `9D420AB1…1140` / 1388544 bytes と一致することを**本記録の作成時に再ハッシュして確認**した |
+| 3 | 以後の衝突回避のため、セッション B の新規ファイルを `run_20260909\` へ隔離した | 対処済み。セッション A の他ファイルは無改変 (`t2c_collect_sha256.txt` で採取時記録がある 21 件すべて一致・不一致 0) |
+
+**走行条件 (両セッション共通の部分)**
+
+- HEAD `f58ba2c` / `git status --porcelain` 空 / `src/kernels/conv2d.cu` **未変更** (T3・T4 未着手)。
+- exe sha256 `3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43`
+  (`test_diffusion_batch2.exe`) — **両セッションで同一**。
+- env (set) = `DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1 DOLLAMA_PROFILE=1`、
+  `DB2_BENCH_G` 未設定 = 既定 guidance 7.5、seed 1234 (harness ハードコード)、1 プロセス。
+- ★**差異**: cwd はセッション A が `C:\Users\sdkik`・B が `E:\Develop\Projects\dollama`
+  (重み・IO は harness が絶対パスで持つ)。exe の起動元パスも A は保存先 `…\g10k-t2c\exe\`・
+  B は `build\src\`。**「同一 sha256 の同一バイナリだが、起動元パスと cwd は違う」**。
+
+**★T2c 用に保存した exe の永続パスと sha256 (T7 の 3 段手順 2 段目に必須)**
+
+```
+E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe   1401344 bytes
+    3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe          1388544 bytes
+    9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+```
+
+同ディレクトリに OpenVINO / TBB の dll 21 本を同梱済み (全件の sha256 は
+`docs/logs/g10k-baseline/t2c_0909_exe_sha256.txt`)。**セッション ID 付き temp ではない永続パス**である。
+★`prof_arena_e2e.exe` は上記の事故 2 で一度削除され、復元したものである (sha256 一致確認済)。
+
+#### T2c 採取値 — resnet バケット (★T2c は判定をしない)
+
+`DOLLAMA_PROFILE=1` の**同期入り計時**であり、非 profile の wall ではない。
+★**構成をまたいだ resnet の直接比較はしない** (`default` は 1 step = 2 forwards、
+batch2 系は 1 step = 1 forward で、1 走行あたりの forward 数が 40 対 20 と桁が合わない。
+forward 数はログ本文の `unet forwards (launch_unet_impl calls)=` に印字されている)。
+
+| 構成 (20 step) | forwards | A: 2026-09-04 warmup / 本走 (s) | B: 2026-09-09 warmup / 本走 (s) |
+|---|---|---|---|
+| default | 40 | 1.058 / 1.057 | 1.061 / 1.062 |
+| attn+batch2 (合成・**CLI から到達不可**) | 20 | 0.971 / 0.972 | 0.972 / 0.973 |
+| fast+epilogue (出荷 `--fast`) | 20 | 0.853 / 0.854 | 0.856 / 0.857 |
+
+出典 (すべて `docs/logs/g10k-baseline/` 配下):
+A = `t2c_0904_db2bench.log:380, :404, :430, :454, :480, :504` /
+B = `t2c_0909_db2bench_profile.log:402, :426, :452, :476, :502, :526`。
+
+★**warmup 側は lazy init を含むので判定には使わない (記録には残す)** — §6 T7 行の規律を T2c にも適用した。
+
+#### T2c 採取値 — e2e (harness `steady_clock` の min ms)
+
+| 構成 | A: 2026-09-04 | B: 2026-09-09 |
+|---|---|---|
+| default | 13999.6 | 14053.4 |
+| attn+batch2 (合成・CLI 到達不可) | 10879.7 | 10929.8 |
+| fast+epilogue (出荷 `--fast`) | 10735.9 | 10815 |
+
+出典: A = `t2c_0904_db2bench.log:513` / B = `t2c_0909_db2bench_profile.log:535`。
+窓は `src/tests/test_diffusion_batch2.cu:588-596` の `steady_clock` (`cudaDeviceSynchronize` で挟み、
+`best = std::min(...)` = min-of-iters。warmup 1 回は `:584`)。
+★**§12 の残債 5 に書かれている行番号 `:470-475` / `:476` は T2b (`036cb94`) の 61 行追加で既にずれており、
+現在その位置は GATE4 (epilogue SSIM) である** — 本記録の作成時に現物を開いて確認した。
+§12 は決裁の履歴なので書き換えず、ここに訂正を残す。
+**この e2e 秒も `DOLLAMA_PROFILE=1` 下の走行のものである** (同期摂動が乗っている)。
+
+#### T2c 採取値 — セッション B の UNet 内訳 (20 step・BENCH 節・本走側のみ)
+
+| 欄 | default (:410-) | attn+batch2 (:460-) | fast+epilogue (:510-) |
+|---|---|---|---|
+| unet forwards | 40 | 20 | 20 |
+| UNet step total | 13.044 | 9.916 | 9.802 |
+| embed | 0.014 | 0.008 | 0.008 |
+| down | 4.576 | 3.449 | 3.427 |
+| mid | 1.174 | 0.861 | 0.857 |
+| up | 7.258 | 5.581 | 5.496 |
+| conv_out | 0.022 | 0.017 | 0.015 |
+| resnet (conv/groupnorm) | 1.062 | 0.973 | 0.857 |
+| transformer (attn/gemm) | 11.779 | 8.759 | 8.763 |
+| -> attention only (transformer の部分集合) | 9.239 | 6.409 | 6.413 |
+
+単位は秒。出典 = `docs/logs/g10k-baseline/t2c_0909_db2bench_profile.log` の該当 dump ブロック
+(`:410-431` / `:460-481` / `:510-531`)。`embed / down / mid / up / conv_out` は stage group、
+`resnet / transformer / attention only` は kernel category で、**両者は直交する別の切り口**
+(ログ本文の `[stage group, wall]` / `[kernel category, orthogonal to stage groups]` の表記どおり)。
+
+★**この表から引用してはいけない欄** (§6「T2b の禁止事項 4 件」の決裁どおり、**そもそも印字されない**):
+`%` 列 / `TOTAL` 行 / `weight upload+malloc` / `VAE decode` / `host roundtrip`。
+後ろ 3 つはログ上 **`n/a` と明示**されており (`t2c_0909_db2bench_profile.log:517` = `weight upload+malloc` /
+`:529-530` = `VAE decode` と `host roundtrip`。いずれも fast+epilogue 本走ブロックの該当行)、
+**0 でも実測値でもない**。`%` 列と `TOTAL` 行が意図的に無いことはログ本文にも明記されている
+(同 `:515-516`)。
+
+#### ★セッション間差 (2 走行の事実の記述であって、ドリフト分布の測定ではない)
+
+同一 exe・同一 env pin・同一 seed で、A (09-04) → B (09-09) の差:
+
+| 対象 | 差 (B − A) |
+|---|---|
+| resnet default warmup 1.058→1.061 | +0.28% |
+| resnet default 本走 1.057→1.062 | +0.47% |
+| resnet attn+batch2 warmup/本走 0.971→0.972 / 0.972→0.973 | +0.10% / +0.10% |
+| resnet fast+epi warmup/本走 0.853→0.856 / 0.854→0.857 | +0.35% / +0.35% |
+| e2e default 13999.6→14053.4 | +0.38% |
+| e2e attn+batch2 10879.7→10929.8 | +0.46% |
+| e2e fast+epi 10735.9→10815 | +0.74% |
+
+**この 2 走行間の差は resnet で +0.10%〜+0.47%、e2e で +0.38%〜+0.74% であった。** 以上が事実。
+
+★**ここから先を断定しないための注記 (必読)**
+
+- これは **2 セッション・各 1 プロセスの比較**である。**ドリフトの分布を取ったものではない。**
+  したがって「**ドリフトは 1% 未満である**」とは**言えない**。言えるのは上の 1 行だけである。
+- **§8 / §6 のアンカー 3 の帯 (= ±max(アンカー 1 の実測ドリフト幅, 10%)) をここで狭めない。**
+  帯の再設定は **PL 決裁事項**。本記録は **T7b の判断材料として提示するに留める**。
+  なお**アンカー 1 は「同一セッション内」の幅**であり、本節の値は**別セッション跨ぎ**なので、
+  そのままアンカー 1 の代用にはならない (§6 のアンカー節が `max()` を採る理由と同じ論点)。
+- 既存記録には **G-4k S3 で ~18% のドリフト**の記述がある
+  (`docs/fast-mode-plan.md:286-288` = 同一走行内で default の resnet バケットが
+  1.28564s→1.41299s = +9.9%、e2e は正典参照 20.93s に対し 24.66s)。
+  ★これは**既存 doc からの引用**であって、本セッションで生ログを開いて確かめた値ではない
+  (当該走行の生ログは repo に無い)。本 T2c と**条件が違う可能性はある**が、
+  **差が小さかった原因は断定しない** (機体状態・常駐・計測窓・被験ハーネスのいずれも比較していない)。
+

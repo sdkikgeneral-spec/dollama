@@ -1,0 +1,98 @@
+G-10k T2c 回収時 sha256 突合 (record-writer が回収後に採取)
+======================================================================
+突合の型は T2a README 「## 6. 回収経路」と同じ (研究機側の採取時記録 vs repo 側の実体)。
+本件は同一機内のコピーなので転送はしていない。
+
+  左  = repo 内のファイル名 (セッション別プレフィックス付き)
+  右  = 「一致」= 研究機側で採取時に記録された sha256 と byte 数の両方が一致
+        「採取時記録なし」= 採取時の sha256 リスト (t2c_0904_sha256.txt /
+        t2c_0909_sha256.txt) に元々その項目が無い。回収後の本ファイルの値が唯一の記録。
+
+結果: 一致 26 / 不一致 0 / 採取時記録なし 22 / 合計 48
+----------------------------------------------------------------------
+t2c_0904_artifacts.txt                            872  50741AE93B0FB743C4A3FE68490B19D00D79B4D4D87E500CB2EEBDFDCBF77C7D  -       (採取時記録なし)
+t2c_0904_db2bench.log                           32279  786C1FFC47BC19AEE7A751C3B1DBFFCDA7B86FECC052A56B7B4F610D1CACD4D6  一致
+t2c_0904_gpu_sample.csv                          4150  B15893948D5DFBDB5094FDA7269ADDA2B3E7D27672FBE0EC18A2866E9DAB4A8D  一致
+t2c_0904_launchcheck.log                          314  DE1DDD66F008FB31E974EA9F9F837B991D8A2501C8FEE54D45CB3F48697C5EB3  -       (採取時記録なし)
+t2c_0904_launchcheck_meta.log                     859  E6D0DADE6A943527B0D97500C285D62515578DF83FC5D37CE2149F900C919A6E  -       (採取時記録なし)
+t2c_0904_nsys2_cuda_api_sum.csv                  1874  DCA9D84CBC40D11D076DDD522C05B726D7033F93E0B3E6B9597CD5F53F5EA45A  一致
+t2c_0904_nsys2_cuda_gpu_kern_sum.csv             9199  8F1FED8CA9C7CEFF5525191AC37547F70801AA0CA0E36A0B5C0A480897021154  一致
+t2c_0904_nsys2_cuda_gpu_mem_time_sum.csv          389  B7B697309855316C19809236A51A062F1B63F9E1ACE28FB91FB9785CDB5422AA  一致
+t2c_0904_nsys2_gen_split.log                     4941  A8DA7B77E25B87EB87E38CF0DF8040222DE7A5FE63ED5345DDCFA357873F0DCE  一致
+t2c_0904_nsys2_meta.log                          1189  6D763DA17050156823621749F3D6D45EED0F4BE2B24017B56859F628671515F1  一致
+t2c_0904_nsys2_stats.log                        18715  A10CA37BE2BBDA4789F592544193C8DC2C4663D088630655281B2F60BBA06FA3  一致
+t2c_0904_nsys2_stats_csv.log                      778  9D798E18DD3244BD27EF2EA832FD8C40B803E6E09C9D6695718E4A4D5726B5C9  一致
+t2c_0904_nsys2_target_stdout.log                 1962  0DEA8897506C09C5F4EF46498BB880E6E16860B862747BC3A9827A10F2538882  一致
+t2c_0904_nsys2_unet_vae_split.log                3703  789C703EE3F5C6DF09DFD722C20A833A87BC4FC83EA2190A17DEF7936FFFA469  -       (採取時記録なし)
+t2c_0904_nsys_gen_split.log                      4940  FFD2C089A5F24A69E85D96AFC80DE5155EDAF5E8EE94C6465328F324DE45E612  一致
+t2c_0904_nsys_gpu_sample.csv                        0  E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855  一致
+t2c_0904_nsys_meta.log                           1537  06B5212064D8A6C03FDB410C5580DD69661EADAFBDDFBB8237F2B88202AC2F6C  一致
+t2c_0904_nsys_stats.log                         17960  0A7B343D6E5447D843846B4939490DF1899BF85C0786E7CEBFAED3C37C102A14  一致
+t2c_0904_nsys_stats_cuda_api_sum.csv             1900  ABFD5BB52A6A1554FCC38EF86727352DF5A6DDD402D143565DB44D707B466598  一致
+t2c_0904_nsys_stats_cuda_gpu_kern_sum.csv        9200  CA5A72D5477BDFACF2C53D8D651940F299D7DC3C300A74D7112CBED1A92CB7B3  一致
+t2c_0904_nsys_stats_cuda_gpu_mem_time_sum.csv     389  B7D91F31501B844580BD8DB255DBFBC8C4C56D3A252C03D433AD0FEEAB0B7812  一致
+t2c_0904_nsys_target_stdout.log                  1962  7CE227B3C7227F8A76318B01E3359D4B581B058AC923908D7DEECA60A6B618A5  一致
+t2c_0904_nsys_timeline.log                       4762  70A76B632EE0D30AB290B8529CEE87A35925727BE42470D3C096973720D19934  一致
+t2c_0904_run_meta.log                            1569  ED74D3B003DAD9264592DAC351D59B79429F6A43AAFE46F8BF674690246F52A8  一致
+t2c_0904_sha256.txt                              3223  A85DBDA967AF2D68F54CBE0CF398BCEFB499064C9C6CA980A4A0A0C5B2A088D7  -       (採取時記録なし)
+t2c_0904_stage_exe.log                           2301  DED2C95B975B45C938EB1740CF01C0B497CE0B4356BF73667A6AA3EC4D7B025E  一致
+scripts/t2c_0904_dump_stdout.py                   738  970935D556F31FFBA80362395FD26F3D4B88B1A35635908BDD797B2DC18DCC8F  -       (採取時記録なし)
+scripts/t2c_0904_env.ps1                         2393  7BAB66F86EBB6F234BB9B406A61869E54CA787C0D7D62969B36E4F2803DBBB18  -       (採取時記録なし)
+scripts/t2c_0904_finalize.ps1                    1769  1D7E7A7F2BD2F9F5DC8ABE3C182CDAF3F5D62CBA222C8EDAB19A82E7CC49515E  -       (採取時記録なし)
+scripts/t2c_0904_finalize2.ps1                   1496  A82B24A6EABC7AE2B21F705FEB540D73548C9850CADDE9DE4A3FCF601F5DE5EC  -       (採取時記録なし)
+scripts/t2c_0904_find_stdout.py                   867  55436DB84EDED0AA113022BCB0C4AC73CC4E02BA9CB1725CCE901B0AB07C0F79  -       (採取時記録なし)
+scripts/t2c_0904_launchcheck.ps1                 1362  E990A0EE2D15A42AE259691C8540DB6517C706C70A4D096B71BFB1F49F8E0F23  -       (採取時記録なし)
+scripts/t2c_0904_nsys.ps1                        3543  095CC8A846D6DA2485F79BC607DF8A1FC8CD92B102E27AF98252A416E1779C16  -       (採取時記録なし)
+scripts/t2c_0904_nsys2.ps1                       2489  188E2567BADCCBCE1394A86F9D1DE7FD297E112AA92BC79AAD9C154909443D8B  -       (採取時記録なし)
+scripts/t2c_0904_nsys_analyze.py                 4461  99842984A06E195A4D5EFE3B89C14961132374BDA3B5AF712D7401E5AD6272CF  -       (採取時記録なし)
+scripts/t2c_0904_nsys_analyze2.py                3298  163AA3673F831809525A1ED9DF8299F8AA521AA58CA0A6CB37399A5AF5E384DA  -       (採取時記録なし)
+scripts/t2c_0904_nsys_analyze3.py                2854  68A7ED6A69D34A4B89C6D96E259CFFA3E8AD334F2B6BB88A973D46659B29982A  -       (採取時記録なし)
+scripts/t2c_0904_nsys_stats2.ps1                 1315  605F8EB63B71AA99271EFAB8157D0CDD957BC45A872DD840C58E3BFDD340EE20  -       (採取時記録なし)
+scripts/t2c_0904_post.ps1                        1352  D3A479AD9F56B5652EDB4661CEE5B7619CC65D0B659A13B5E9E6C7FB14519851  -       (採取時記録なし)
+scripts/t2c_0904_run.ps1                         4358  A3A8CE7FF47AF238CE9C2BE66EE24CC9BB461F65FFABE2BC070DA5285071AFC8  -       (採取時記録なし)
+scripts/t2c_0904_stage_exe.ps1                   1517  B598531A88586E0D05A6A95FF4A9B0D65E7DB7E17FAA5E89D1F7B61E772B33FE  -       (採取時記録なし)
+scripts/t2c_0904_target_stdout.py                 900  9BF3AD5AC0042DBD394A67E57C79AFD2D35E9C3036D6F8ADCF4DA4603B520055  -       (採取時記録なし)
+t2c_0909_build.log                                502  5048E3984E84F973C5CF040044AB39DD67327B5BFB8602B95287716770EFA0E5  一致
+t2c_0909_db2bench_profile.log                   33504  69F18FD78AA412A4527E0236A7B89E0F4781AAFFF5D7D56B2B82AA1DCD5769F5  一致
+t2c_0909_env.log                                 5086  6DB4753B66619D1AD53D6B61CE4CD8073E47F0AC08B46D3A93AB4EA52C69750A  一致
+t2c_0909_exe_sha256.txt                          3673  E8BF5DA3CF9CF3F2A439A607920FE9224C029A376D3BCAD80D3C3E64DE7745B2  一致
+t2c_0909_sha256.txt                              1012  44AB9D0E3C1C37E2BE6113B0DB2977EBF32DF7414FD8FFBB5375C0C83B4ACCA1  -       (採取時記録なし)
+scripts/t2c_0909_run.ps1                         2984  FCB51C7318352BB33201647723C7DA5DD63362F5CD9E832829CF9D6DD514532F  一致
+----------------------------------------------------------------------
+[採取時記録があるのに実体を回収できなかったもの]
+  t2c_env.log (0904 セッション)  6409 bytes
+    72D882E2D39707697E1BBAE099516565A760830D216891F51A40A1E60FD112B1
+    → 2026-09-09 セッションが同名ファイルを同じディレクトリへ書いたことで上書き・消失。
+      復旧不能。研究機 E:\Develop\logs\g10k-t2c\ に実体は無い (回収時に不在を確認)。
+      この sha256 と byte 数だけが t2c_0904_sha256.txt に残っている。
+
+[採取時記録側の既知の欠損]
+  t2c_0904_sha256.txt の中の自分自身の行は sha256 が空・0 bytes で記録されている。
+  採取スクリプト (scripts/t2c_0904_finalize.ps1) が自分の出力ファイルを
+  Get-FileHash しようとして排他ロックに当たったため (エラー本文がそのまま同ファイルに残っている)。
+  改竄ではない。本ファイルの t2c_0904_sha256.txt 行が回収後の値である。
+
+[repo に入れていない大物 (所在のみ・t2c_0904_artifacts.txt の流儀を踏襲)]
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.nsys-rep    28513058 bytes  mtime=2026-09-04 23:16:24
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys.sqlite     289697792 bytes  mtime=2026-09-04 23:16:31
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.nsys-rep   28167601 bytes  mtime=2026-09-04 23:30:43
+  E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite    282767360 bytes  mtime=2026-09-04 23:30:50
+  計 4 本・約 629MB。これらの sha256 は研究機側でも採取されていない。
+  ★t2c_0904_nsys_gpu_sample.csv は 0 bytes (中身なし) だが、採取時記録にも 0 bytes として
+    載っているため、そのまま回収した。nsys 走行中の nvidia-smi サンプリングが 1 行も
+    書けなかったという事実の記録であって、欠落ではない。
+
+[保存 exe (repo 外・永続)]
+  E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe  1401344 bytes
+    3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+  E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe         1388544 bytes
+    9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+  同ディレクトリに OpenVINO / TBB の dll 21 本を同梱 (t2c_0909_exe_sha256.txt に全件の sha256)。
+[★sha256 を後から検証する人への注記 (改行コードの扱い)]
+  本 repo は .gitattributes を持たず core.autocrlf=true である (本記録の作成時に確認)。
+  したがって git は commit 時に CRLF を LF へ、checkout 時に LF を CRLF へ変換する。
+  ★上の表の sha256 は「回収直後・研究機の作業ツリー上の実体」に対する値であって、
+    git の blob や、別環境で checkout し直したファイルに対する値ではない。
+    改行コードが変換された時点で sha256 は当然変わる。改竄ではない。
+  研究機側の採取時記録と一致することを確認したのは、この作業ツリー上の実体に対してである。
+=== end ===

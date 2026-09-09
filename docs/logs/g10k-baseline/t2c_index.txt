@@ -1,0 +1,188 @@
+G-10k T2c 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走・2 セッション分)
+採取のみ・判定と考察は含めない。数値の位置づけは docs/g10k-plan.md の T2c 実施記録を見ること。
+
+★T2c は 2 回・別セッションで実行された。両方を回収してある。
+  ファイル名が全面的に衝突する (両方が t2c_sha256.txt / t2c_env.log 等を持つ) ため、
+  repo 側では日付プレフィックス t2c_0904_* / t2c_0909_* で分けた。
+  ★サブディレクトリではなくプレフィックスにした理由: 本ディレクトリの既存の流儀が
+  「フラット + 段プレフィックス (baseline_* / t2a_* / t2b_*) で、サブディレクトリは
+  scripts/ の 1 つだけ」だから。既存の T2a / T2b 分のファイル名は 1 つも変更していない。
+
+======================================================================
+[セッション A = 2026-09-04 (先行)]
+======================================================================
+  実行主体   : 先行セッション (本記録を書いた時点では repo に 1 バイトも回収されていなかった)
+  時刻       : exe ステージ 23:02 → 本走 23:03:25〜23:06:01 → nsys #1 23:15〜23:16
+               → nsys #2 23:29〜23:30 → 事後解析 23:41〜23:43 → launchcheck 23:44
+               (出典: t2c_0904_run_meta.log / t2c_0904_nsys_meta.log / t2c_0904_nsys2_meta.log /
+                t2c_0904_launchcheck_meta.log の各 start_local)
+  HEAD       : 全走行後の git re-check (23:41) で
+               f58ba2c10649806c11c3c36f5f5bd314975cdbb6 / porcelain 空
+               (出典: t2c_0904_sha256.txt の "=== git re-check (after all runs) ===")
+               ★走行の瞬間の HEAD を直接記録したログはセッション A 側には無い。
+                 記録されているのは走行後の re-check だけである。
+  exe        : E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe
+               sha256 3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+               (build/src からステージし、両側 IDENTICAL を確認 = t2c_0904_stage_exe.log)
+  cwd        : C:\Users\sdkik  (重み・IO のパスは harness 側が絶対パスで持つ =
+               t2c_0904_db2bench.log:1-3)
+  env (set)  : DB2_BENCH=1 DB2_BENCH_ITERS=1 DB2_BENCH_STEPS=20 DOLLAMA_PROFILE=1
+  env (unset を明示): DB2_BENCH_G / DB2_STEPS / DB2_UNCOND_ZERO / DOLLAMA_POOL /
+               DOLLAMA_EPILOGUE / DOLLAMA_FAST / DOLLAMA_CONV_BATCH / DOLLAMA_GEMM /
+               DOLLAMA_ARENA_RELEASE / DOLLAMA_G8K_DUMP
+  seed       : 1234 (harness ハードコード) / guidance は DB2_BENCH_G 未設定 = 既定 7.5
+  結果       : exit 0 / プロセス wall 154.96s
+
+  t2c_0904_db2bench.log
+      ★セッション A の本走 (T2c 本体)。全 stdout+stderr。1 プロセス。
+      parity 節 (steps=4) → BENCH 節 (steps=20・"BENCH steps=20" は :362) の順。
+  t2c_0904_run_meta.log
+      本走のメタ (env の set / unset 明示・nvidia-smi 前後・exit code・elapsed・
+      ログの bytes と sha256)。
+  t2c_0904_gpu_sample.csv
+      本走中の nvidia-smi サンプリング (2 秒間隔・54 行)。
+  t2c_0904_stage_exe.log
+      build/src → E:\Develop\logs\g10k-t2c\exe\ への exe ステージ記録。
+      test_diffusion_batch2.exe と prof_arena_e2e.exe の両方について
+      build/src 側と staged 側の sha256 が IDENTICAL であることを印字している。
+  t2c_0904_launchcheck.log / t2c_0904_launchcheck_meta.log
+      保存先ディレクトリから prof_arena_e2e.exe が起動できるかの確認
+      (PROF_IMAGES=0 PROF_STEPS=1・画像は生成しない)。exit 0。
+      ★これは prof_arena_e2e の起動確認であって、T2c の被験である
+        test_diffusion_batch2 の再走ではない。
+
+  --- nsys プロファイル (T2c の DoD 外・セッション A が追加で採取したもの) ---
+  対象は prof_arena_e2e.exe (sha256 9D420AB1...1140)。
+  env = PROF_IMAGES=2 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 / DOLLAMA_PROFILE は未設定。
+  ★被験 exe が本走 (test_diffusion_batch2) と別物であることに注意。
+
+  t2c_0904_nsys_meta.log            capture #1 のメタ (nsys 2026.1.3 / exit 0 / 59.52s)
+  t2c_0904_nsys_stats.log           capture #1 の nsys stats 出力
+  t2c_0904_nsys_timeline.log        capture #1 の sqlite からのカーネル/memcpy 集計
+  t2c_0904_nsys_gen_split.log       capture #1: D2H マーカーで 2 枚目の生成窓を切り出した集計
+  t2c_0904_nsys_target_stdout.log   capture #1: nsys sqlite の ProcessStreams から復元した
+                                    ターゲットの stdout ([S4] 行)
+  t2c_0904_nsys_gpu_sample.csv      ★0 bytes。capture #1 中の nvidia-smi サンプリングが
+                                    1 行も書けていない。中身なしという事実の記録として回収した
+                                    (採取時の sha256 記録にも 0 bytes で載っている)。
+  t2c_0904_nsys2_meta.log           capture #2 のメタ (exit 0 / 53.49s)
+  t2c_0904_nsys2_stats.log          capture #2 の nsys stats 出力
+  t2c_0904_nsys2_stats_csv.log      capture #2 の stats を csv へ書き出したときの nsys 出力
+  t2c_0904_nsys2_gen_split.log      capture #2: 2 枚目の生成窓の集計
+  t2c_0904_nsys2_unet_vae_split.log capture #2: 生成窓を UNet 部 / VAE 部へ分割した集計
+  t2c_0904_nsys2_target_stdout.log  capture #2: 復元したターゲット stdout
+  t2c_0904_nsys_stats_cuda_{api_sum,gpu_kern_sum,gpu_mem_time_sum}.csv
+  t2c_0904_nsys2_cuda_{api_sum,gpu_kern_sum,gpu_mem_time_sum}.csv
+                                    nsys stats が書き出した csv 実体 (capture #1 / #2)
+
+  t2c_0904_artifacts.txt   repo に入れない大物の所在 + 走行ログの grep 結果
+                           ("reserve shortage" 0 hits / 例外・SAC ブロック 0 hits)
+  t2c_0904_sha256.txt      セッション A が研究機側で採取した sha256 一覧
+                           (★自分自身の行だけは採取スクリプトが排他ロックに当たって
+                             採れておらず 0 bytes で残っている。下記 [事故] とは別件)
+
+======================================================================
+[セッション B = 2026-09-09 (本日・再実行)]
+======================================================================
+  実行主体   : gpu-benchmarker。★セッション A の存在を知らずに T2c を再実行したもの。
+  時刻       : 環境採取 21:08:48 → 本走 21:10:22〜21:12:50
+               (出典: t2c_0909_env.log:2 / t2c_0909_db2bench_profile.log:2 と末尾フッタ)
+  HEAD       : f58ba2c10649806c11c3c36f5f5bd314975cdbb6 / porcelain 空
+               (走行ログのヘッダ自身に記録あり = t2c_0909_db2bench_profile.log:4-5)
+  exe        : build\src\test_diffusion_batch2.exe
+               sha256 3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+               = ★セッション A がステージした exe と同一 sha256。
+               本走前の meson compile -C build は "ninja: no work to do." (t2c_0909_build.log)。
+  cwd        : E:\Develop\Projects\dollama  (= セッション A と異なる。重み・IO のパスは
+               絶対パスなので読む対象は同一 = t2c_0909_db2bench_profile.log:23-25)
+  env (set)  : DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1 DOLLAMA_PROFILE=1
+  env (unset を明示): DB2_BENCH_G / DOLLAMA_CONV_BATCH / DOLLAMA_POOL / DOLLAMA_EPILOGUE /
+               DOLLAMA_ARENA_RESERVE_MB / DOLLAMA_GEMM
+               ★A と B で「set した 4 本」は同一。「unset を明示的に検証した一覧」の方は
+                 顔ぶれが違う (A は 10 本 / B は 6 本)。両者に共通して載っているのは
+                 DB2_BENCH_G / DOLLAMA_POOL / DOLLAMA_EPILOGUE / DOLLAMA_CONV_BATCH /
+                 DOLLAMA_GEMM の 5 本。
+  seed       : 1234 (harness ハードコード) / guidance 既定 7.5
+  結果       : exit 0 / プロセス wall 148.24s
+
+  t2c_0909_db2bench_profile.log
+      ★セッション B の本走。全 stdout+stderr。1 プロセス。
+      ヘッダ/フッタ (走行条件・nvidia-smi・exit code) をログ自身に埋めてある。
+      BENCH 節は "BENCH steps=20" 行 (:384) 以降。それより前は parity 節 (steps=4)。
+      BENCH 節の内訳 dump は出現順に
+        #1 default warmup (:386-) / #2 default 本走 (:410-) /
+        #3 attn+batch2 warmup (:436-) / #4 attn+batch2 本走 (:460-) /
+        #5 fast+epilogue warmup (:486-) / #6 fast+epilogue 本走 (:510-)。
+      構成の切れ目は [ALLOC] arena=... 行 (パイプライン破棄)。
+  t2c_0909_env.log       環境スナップショット (日時 / OS / shell / git / nvcc / meson /
+                         meson compile 出力 / nvidia-smi フル)
+  t2c_0909_build.log     meson compile -C build の出力。"ninja: no work to do."
+  t2c_0909_exe_sha256.txt
+                         E:\Develop\logs\g10k-t2c\exe\ に置いた exe + dll 21 本の sha256 一覧
+  t2c_0909_sha256.txt    セッション B が研究機側で採取した sha256 一覧
+  scripts/t2c_0909_run.ps1  セッション B の実走スクリプト実体
+
+======================================================================
+[スクリプト]
+======================================================================
+  scripts/t2c_0904_*.ps1 / *.py   セッション A の実行・解析スクリプト一式
+      env.ps1 / stage_exe.ps1 / run.ps1 / nsys.ps1 / nsys2.ps1 / nsys_stats2.ps1 /
+      post.ps1 / finalize.ps1 / finalize2.ps1 / launchcheck.ps1 /
+      nsys_analyze{,2,3}.py / dump_stdout.py / find_stdout.py / target_stdout.py
+      ★セッション A 側の sha256 採取一覧にスクリプトは含まれていない。
+        したがって回収後の値 (t2c_collect_sha256.txt) が唯一の記録である。
+  scripts/t2c_0909_run.ps1        セッション B の実走スクリプト
+
+======================================================================
+[★事故 3 件 (事実として記録する・隠さない)]
+======================================================================
+セッション B が、セッション A の採取物と同じディレクトリ
+E:\Develop\logs\g10k-t2c\ へ書き込んだことで起きた。
+
+(1) ★t2c_env.log (セッション A 版・6409 bytes) を上書きして失った。復旧不能。
+    - 失われたファイルの sha256 は
+      72D882E2D39707697E1BBAE099516565A760830D216891F51A40A1E60FD112B1
+      として t2c_0904_sha256.txt に残っている。実体は無い。
+      (回収時に E:\Develop\logs\g10k-t2c\t2c_env.log が存在しないことを確認した。)
+    - 同種の情報 (HEAD / porcelain / exe sha256 / nvidia-smi など) の大半は
+      生き残った t2c_0904_run_meta.log と t2c_0904_stage_exe.log に重複記録されている。
+      ★「大半」であって同一ではない。失われた 6409 bytes の中身そのものは検証できない。
+
+(2) セッション B が exe\prof_arena_e2e.exe を「余計なコピー」と誤認して削除した。
+    その後 build\src から復元済み。
+    - 復元物は 1388544 bytes / sha256
+      9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140 で、
+      セッション A の記録 (t2c_0904_stage_exe.log / t2c_0904_sha256.txt) と一致する。
+      本索引の作成時に再ハッシュして確認した。復旧完了。
+
+(3) 以後の衝突を避けるため、セッション B の新規ファイルは
+    E:\Develop\logs\g10k-t2c\run_20260909\ へ隔離した。
+    セッション A の他のファイルは無改変 (t2c_collect_sha256.txt の突合で、
+    採取時記録があるセッション A の 21 件すべて一致・不一致 0)。
+
+======================================================================
+[repo に入れなかったもの]
+======================================================================
+  nsys の .nsys-rep / .sqlite 計 4 本 (約 629MB)。所在・bytes・mtime のみ
+  t2c_0904_artifacts.txt と t2c_collect_sha256.txt に記録した
+  (t2c_0904_artifacts.txt が既に採っていた流儀を踏襲)。
+  これらの sha256 は研究機側でも採取されていない。
+
+  保存 exe (T7 の 3 段手順 2 段目で隣接再走するために残すもの):
+    E:\Develop\logs\g10k-t2c\exe\test_diffusion_batch2.exe
+      3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43
+    E:\Develop\logs\g10k-t2c\exe\prof_arena_e2e.exe
+      9D420AB189EDA9224FB440703A8151485F33A11366CB816CFAE02400F9961140
+  ★セッション ID 付き temp ではない永続パスである (g10k-plan.md の T2c 行の要求)。
+
+======================================================================
+[注意]
+======================================================================
+  - 本 T2c では src/ を一切変更していない (conv2d.cu 未変更・両セッションとも porcelain 空)。
+  - 秒はすべて DOLLAMA_PROFILE=1 の同期入り計時であり、非 profile の wall ではない。
+  - dump に % 列と TOTAL 行は無い。weight upload+malloc / VAE decode /
+    host roundtrip は n/a であって実測値ではない (g10k-plan.md 「T2b の禁止事項 4 件」)。
+  - unet forwards の数え方は構成依存 (batch2 は 1 step = 1 forward /
+    default は 1 step = 2 forwards)。構成をまたいだ resnet 秒の直接比較はしない。
+  - nsys 系の被験 exe は prof_arena_e2e であり、T2c 本走の test_diffusion_batch2 とは別物。
+  - t2c_collect_sha256.txt = 回収後に record-writer が採った両側突合の結果。
