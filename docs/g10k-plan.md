@@ -858,10 +858,30 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
 **走行条件 (両セッション共通の部分)**
 
 - HEAD `f58ba2c` / `git status --porcelain` 空 / `src/kernels/conv2d.cu` **未変更** (T3・T4 未着手)。
+  ★**この HEAD 記録の証拠の格は A と B で違う**: B は**走行ログ自身のヘッダ**に記録あり
+  (`t2c_0909_db2bench_profile.log:4-5`)。**A は走行の瞬間の HEAD を記録したログが無い** —
+  `t2c_0904_run_meta.log` に HEAD 欄は無く (`:1-22` を参照)、`t2c_0904_db2bench.log` にもヘッダが無い。
+  A 側で HEAD を示すのは `t2c_0904_sha256.txt:38-41` の
+  `=== git re-check (after all runs) ===` = **本走 (`t2c_0904_run_meta.log:31` end_local 23:06:01) より後**に
+  採取された事後確認だけである。**A については「走行時の HEAD」ではなく「走行後の re-check」として扱うこと。**
+  (詳細な留保は `docs/logs/g10k-baseline/t2c_index.txt:19-23` にも記載。)
+  なお**本ブランチで `src/kernels/conv2d.cu` が未変更であること自体**は別途成立する
+  (`git log --oneline -3 -- src/kernels/conv2d.cu` の最新は G-8k の `88b3ae7`)。
+  ★**ここで格が落ちるのは「A の走行時 HEAD の記録」であって、conv2d 未変更という事実ではない。**
 - exe sha256 `3649AF0B7968BE303B4D393AAD734AC6ECC7B89263426F322117108711A6CE43`
   (`test_diffusion_batch2.exe`) — **両セッションで同一**。
 - env (set) = `DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1 DOLLAMA_PROFILE=1`、
   `DB2_BENCH_G` 未設定 = 既定 guidance 7.5、seed 1234 (harness ハードコード)、1 プロセス。
+  ★**「同一 env pin」と丸めないこと**: **set した 4 本は A・B 同一**だが、
+  **unset を明示的に検証した一覧は顔ぶれが違う** — A は 10 本
+  (`t2c_0904_run_meta.log:13-22`: `DB2_BENCH_G` / `DB2_STEPS` / `DB2_UNCOND_ZERO` / `DOLLAMA_POOL` /
+  `DOLLAMA_EPILOGUE` / `DOLLAMA_FAST` / `DOLLAMA_CONV_BATCH` / `DOLLAMA_GEMM` /
+  `DOLLAMA_ARENA_RELEASE` / `DOLLAMA_G8K_DUMP`)、B は 6 本
+  (`t2c_0909_db2bench_profile.log:12-17`: `DB2_BENCH_G` / `DOLLAMA_CONV_BATCH` / `DOLLAMA_POOL` /
+  `DOLLAMA_EPILOGUE` / `DOLLAMA_ARENA_RESERVE_MB` / `DOLLAMA_GEMM`)。
+  両者に共通して載っているのは 5 本 (`DB2_BENCH_G` / `DOLLAMA_POOL` / `DOLLAMA_EPILOGUE` /
+  `DOLLAMA_CONV_BATCH` / `DOLLAMA_GEMM`)。**「片側にしか無い変数が実際に unset だったか」は、
+  ログに無い以上どちらの側も未検証**である (`t2c_index.txt:101-104` と同旨)。
 - ★**差異**: cwd はセッション A が `C:\Users\sdkik`・B が `E:\Develop\Projects\dollama`
   (重み・IO は harness が絶対パスで持つ)。exe の起動元パスも A は保存先 `…\g10k-t2c\exe\`・
   B は `build\src\`。**「同一 sha256 の同一バイナリだが、起動元パスと cwd は違う」**。
@@ -909,9 +929,36 @@ B = `t2c_0909_db2bench_profile.log:402, :426, :452, :476, :502, :526`。
 出典: A = `t2c_0904_db2bench.log:513` / B = `t2c_0909_db2bench_profile.log:535`。
 窓は `src/tests/test_diffusion_batch2.cu:588-596` の `steady_clock` (`cudaDeviceSynchronize` で挟み、
 `best = std::min(...)` = min-of-iters。warmup 1 回は `:584`)。
-★**§12 の残債 5 に書かれている行番号 `:470-475` / `:476` は T2b (`036cb94`) の 61 行追加で既にずれており、
-現在その位置は GATE4 (epilogue SSIM) である** — 本記録の作成時に現物を開いて確認した。
-§12 は決裁の履歴なので書き換えず、ここに訂正を残す。
+★**台帳の 3 箇所に残っている行番号 `test_diffusion_batch2.cu:470-475` / `:476` は既にずれている。
+ずれは T2b の 2 commit の合算であって、単独 commit でも「61 行追加」でもない** (本節の初版が
+commit 帰属と行数を取り違えていたので、ここで訂正する):
+
+- `036cb94` の numstat は **2 行**あり、`src/infer/diffusion.cu` **+61/-0** と
+  `src/tests/test_diffusion_batch2.cu` **+84/-3**。**行番号がずれた側は後者**で、
+  61 は別ファイルの値である。
+- 続く `de34ec6` も同じ `src/tests/test_diffusion_batch2.cu` を **+47/-9** 触っている。
+- 実際の `steady_clock` t0/t1 の位置: `036cb94^` `:470`/`:473` → `036cb94` `:551`/`:554`
+  → `de34ec6` `:589`/`:592` → 現 HEAD `:589`/`:592`。
+- 出典 (本記録の是正時に実行): `git show --numstat --format="" 036cb94` /
+  `… de34ec6` と、`git show <c>:src/tests/test_diffusion_batch2.cu | grep -n "steady_clock::now"`
+  を `036cb94^` / `036cb94` / `de34ec6` / `HEAD` の 4 点で。
+
+現 HEAD で `:470-475` が指すのは **GATE4 (epilogue SSIM) の FAIL ブロック**
+(`:472` は `std::cerr << "FAIL: [GATE4]…"`)、`:469` は guidance ループの閉じ `}` である。
+
+★**同じ stale 番号は本節の外にも残っている (3 箇所)**。いずれも PL 決裁物なので**書き換えず**、
+訂正を本節に集約する — 本節を読んで「訂正済み」と理解したまま元の表を素で引くと、
+**GATE4 のコードを BENCH の計時窓だと誤認する**:
+
+| 箇所 | 記述 |
+|---|---|
+| §12 残債 5 (`total_sec` を将来追加するときの注記) | `:470-475` の `steady_clock` 窓 / min は `:476` |
+| §6「T2b の禁止事項 1」の決裁理由本文 | 同上 |
+| §11 一次証拠の対応表「DB2_BENCH の wall 窓 (`total_sec` を却下した根拠)」 | 同上 + `cudaDeviceSynchronize` を `:469`,`:472` と記載 |
+
+**現 HEAD の正しい値は、本小節「T2c 採取値 — e2e」の出典段落**のとおり
+(warmup `:584` / `cudaDeviceSynchronize` `:588`,`:591` / `steady_clock` `:589`,`:592` /
+`std::min` `:595`)。
 **この e2e 秒も `DOLLAMA_PROFILE=1` 下の走行のものである** (同期摂動が乗っている)。
 
 #### T2c 採取値 — セッション B の UNet 内訳 (20 step・BENCH 節・本走側のみ)
@@ -943,7 +990,12 @@ B = `t2c_0909_db2bench_profile.log:402, :426, :452, :476, :502, :526`。
 
 #### ★セッション間差 (2 走行の事実の記述であって、ドリフト分布の測定ではない)
 
-同一 exe・同一 env pin・同一 seed で、A (09-04) → B (09-09) の差:
+同一 exe・同一 seed で (env は上記のとおり **set 4 本が同一**・unset 明示の一覧は非対称)、
+A (09-04) → B (09-09) の差:
+
+★**下表の e2e の `min ms` は `DB2_BENCH_ITERS=1` なので n=1 である。** harness の
+`best = std::min(...)` は 1 回分の値をそのまま返すだけで、**min によるノイズ低減は効いていない**。
+「min を取った安定値どうしの差」と読むと差の意味を過大評価する。resnet の各値も同一走行 1 回分。
 
 | 対象 | 差 (B − A) |
 |---|---|
