@@ -362,8 +362,8 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 | **T2b** | S0a | cuda-kernel-dev | `src/infer/diffusion.cu` (**`generate_txt2img` = `:732-981` のみ**) | **F3 の解消 = reset + 内訳 dump の追加** (`generate` 側の `:554` reset / `:686-714` dump と同種)。**`conv2d` には触らない。単独コミット。** DoD: ①`DOLLAMA_PROFILE=1` で `generate_txt2img` が内訳を印字する ②**同一プロセスで `generate_txt2img` を連続 2 回呼び、2 回目の `cat_resnet_sec` が 1 回目の ~2 倍にならないこと** (= reset が効いている) を検査する。置き場所は **`test_diffusion_batch2` の parity 節 (steps=4 = `src/tests/test_diffusion_batch2.cu:236`) 内**。★**語を間違えないこと**: `generate` (`src/infer/diffusion.cu:533`) は**実在する別メソッドで既に reset を持つ** (`:554`) ので、「連続 2 回の `generate`」と書いて字義どおり実装すると**被験 (txt2img 側に新設する reset) を一度も通らずに緑になる** (F1 / T6② / F3 に続く **4 回目の同型**。この文言ミスは PL 自身が作りかけ、Fable 監査が実装前に捕まえた)。置き場所の根拠 (現物確認): parity 節は `gen` ラッパ (同 `:247-253`) 経由で 1 プロセス内から `generate_txt2img` を呼ぶ。`run_config` の呼出は **4 箇所** (`:284` off / `:289` batch2 単独 / `:294` fst / `:300` epi = fast+epi)。**`g1_again` 付きで呼ばれるのは off と epi の 2 構成**で、その 2 つが **1 構成あたり 4 回** — guidance 3 本 (`:267-270` の `guids[]` ループ) + **g=1.0 の再走** (`:273-276` の `g1_again`・同一構成/同一 seed/同一 guidance)。on / fst は `nullptr` = 3 回。**同一構成・同一 guidance の 2 連走がすでに存在する** (GATE1 / GATE3 がそれを使う) ので、そこに ② を載せられる。★★**負のコントロールを必須にする**: **T2b 着手前のツリー (= 研究機セッションの開始状態) で ② が赤になることを先に確認し、報告に含める。** これが「検査が被験を通っている」ことの一次証拠。T2b は研究機セッションの最初のタスクなので着手前ツリーがそのまま手元にあり、**追加コストはほぼゼロ**。★**負のコントロールの出力はファイルへ落として `docs\logs\g10k-baseline\` へ退避する** — 前例 (G-8k S6 **F1** の `test_http` 直列化ゲート) では負のコントロールが「**空撃ちでないことを支える唯一の証拠**」だったのに**走行出力がコンソールのみでファイルに落ちておらず**、セッション ID 付き temp ごと消える状態だった (出典 `docs/measurements-log.md:223-230`)。(★PL は「G-8k S6 の **F5**」を空撃ち疑義の前例に挙げたが、**F5 は「既存 exe 内にゲートを増やす / 新規 meson test 0 本」の前例** (`docs/g8k-review-fix-plan.md:161`, `:285`) であって、負のコントロールで空撃ちを潰した前例は **F1** である。出典を訂正した。)③**profile OFF 時の出力バイト列が変わらない**: 比較対象は **T2b コミット前後の同 seed 生成物**、手段は **sha256 突合** (G-8k S6 で確立した型・CLAUDE.md G-8k 行「出力 sha256 全一致」)。★**「同一ツリーの二連走 bit 一致」で代用してはいけない — それは determinism 検査であって無改変証明ではない**。この罠は `src/tests/test_diffusion_batch2.cu:377-380` の GATE3 注記が明文化している (「二連走は同一バイナリ内の再実行ゆえ、epilogue を壊しても壊れた同じコードが 2 回走って bit 一致する」)。④`meson test` 全緑。★**新規 meson test ターゲットは作らなくてよい** (既存 exe 内のゲートで足りる = G-8k S6 F5 と同じ型)。★**印字してよい欄 / いけない欄は下記「T2b の禁止事項」を必読** |
 | **T2c** | S0b | gpu-benchmarker | 実走のみ | **T2b 適用直後・`conv2d` 未変更のツリー**で DB2_BENCH (profile ON) を **1 プロセス**走らせ、**batch2 の resnet バケットを史上初採取**。★**env を T7 と完全一致で pin する**: `DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1 DOLLAMA_PROFILE=1`・`DB2_BENCH_G` は**既定 7.5 のまま**・**seed 同一**・**1 プロセス**。**既定値に依存させない** — 条件が 1 つでも違えば per-generation 値の比較が成立せず、**アンカー 3 の偽陽性を自作することになる**。★★**ビルド成果物 (exe) を保存する**: アンカー 3 が帯を外れたときの手順 2 段目 (T7 のセッション内で隣接再走して**同一セッション比較へ変換**する) は、**T2c 時の exe が残っていないと実行不能**で、**帯超過が永久に未解決のまま記録に残る**。保存先は生ログと同じ `docs\logs\g10k-baseline\` の隣で可 (repo に入れない大きさなら**研究機の永続パス**に置いて所在をログに明記する)。★**セッション ID 付き temp は不可** — T2b 行で引用した F1 の教訓 (`docs/measurements-log.md:223-230` = 唯一の証拠がセッション ID 付き temp ごと消える状態だった) は **exe にも適用される**。temp に置くと T2c → T7 が別セッションになった時点で 3 段手順の 2 段目 (T2c exe の隣接再走) が実行不能になり、**帯超過が永久に未解決のまま記録に残る**。**判定なし・採取と提出のみ。** 生ログを `docs\logs\g10k-baseline\` へ (`2>&1`)。★**位置づけ = 第 3 のアンカー**: 下記「T2c を T4 に混ぜない理由」を参照 |
 | T3 | S1 | cuda-kernel-dev | `src/kernels/gemm.cu` / `src/kernels/gemm.cuh` / `src/tests/test_gemm.cu` (+ **`src/meson.build` は `timeout : 600` の 1 行のみ** = 2026-09-10 決裁 5) | batched GEMM ラッパを**純追加** — 既存 `gemm_cublas` (`src/kernels/gemm.cu:405-`) と `launch_gemm_fp16` (同 `:516-`) は**無改変**。★**新規 meson ターゲットは作らない** (**2026-09-10 決裁 4**。既存 `test_gemm` の中にゲートを増やす = G-8k S6 F5 と同じ型)。★**`src/meson.build` の例外は 1 行だけ (2026-09-10 決裁 5・D5-1)**: `src/meson.build:591` の `test('gemm', test_gemm_exe)` (= **timeout 未指定 = 既定 30 秒**) を **`test('gemm', test_gemm_exe, timeout : 600)` にする 1 行変更のみ許可** (§7b ケース 1 の floor / θ の CPU 時間への保険。★**timeout は保険であって設計の一部ではない** — 「600 に伸ばしたから全走査で回せる」は不許可)。★**それ以外の `src/meson.build` の変更 (exe 新設 / sources 追加 / env 追加を含む) が必要だと判明したら、勝手に編集せず BLOCK して PL へ上げる** (「触るファイルは 3 本 + meson の 1 行のみ」を自分の判断で広げない。§7b 末尾にも同旨)。DoD: ①**§7b の 7 ゲート [H1]〜[H7] + floor を `src/tests/test_gemm.cu` に実装して緑** (ケース構成・θ の導出・報告義務はすべて §7b) ②**既存 5 ケース (`test_identity` `:154` / `test_small_square` `:176` / `test_rectangular` `:192` / `test_transB` `:208` / `test_alpha_beta` `:224`) が無改変で緑** ③**`DOLLAMA_GEMM=wmma` を付けて同じ exe を 1 回手動実行**し、**[H1]〜[H5] / [H7] / floor は緑**であること、**[H6] は下記の目視判定方式で §7b の期待値表 (B) と一致する**ことを確認、**生ログを `docs\logs\g10k-t3\` へ** (`2>&1`)。★**この走行では [H6] は red (FAIL) で終わるのが設計上正常**であり、**生ログに [H6] の FAIL 行が残る**のが正しい姿である — [H6] は表 (A) (既定経路) を判定する hard ゲートとして実装コードに固定されており、wmma では `cublas_disabled()` (getenv キャッシュ型 = プロセス単位固定・`src/kernels/gemm.cu:376-386`) が `use_cublas` の**先頭**で効く (同 `:392-403` の `if (transA || cublas_disabled())` = `:394`) ため**全ケースがフォールバック枝に落ち、表 (A) は原理的に不一致になる**からである (§9-7 = 既定経路と wmma 経路は同一プロセス内で両方取れない)。★**したがってこの走行の合否は exe の終了状態 (exit code / assert) では判定しない。print されたカウンタ実数値が表 (B) と一致するかを人が目視で判定する** (§7b「経路検査」末尾)。★**報告書式 (義務)**: 「**[H6] は (A) 判定のため red・ただしカウンタ実数値は (B) と一致**」のように**両方を書く**こと。**単に「緑」「全ゲート緑」とだけ書くのは禁止** (未達を達成と書く事故の再生産)。★**red を消すために env 分岐 / [H6] のスキップ / 期待値の緩和へ逃げない** (§7b で禁止)。**これは wmma 走行という特殊状況での [H6] の扱い方を決めるものであって、[H6] が hard ゲートであること・その判定基準そのものは一切緩めない** ④**負のコントロール 2 件が red になることを確認**し、コンソール出力をファイルへ落として `docs\logs\g10k-t3\` へ退避する (内容は §7b 末尾。★**temp 不可** = G-8k S6 F1 の教訓・**一時改変は stage しない**) ⑤**単独コミット**。★**stride 写像は本書に無い** (§1 の非交渉)。`gemm.cu:423` の `cublasGemmEx` 呼出を読んで自分で導出し、上記ゲートで実測検証すること |
-| T4 | S2+S3 | cuda-kernel-dev | `src/kernels/conv2d.cu` / `src/tests/test_conv2d.cu` | conv2d の N>1 枝差し替え + キルスイッチ `DOLLAMA_CONV_BATCH=0` + **7 ゲート [G1] / [G2a] / [G2b] / [G2] / [G3] / [G4] / [G5] (§7) を追加して緑**。**加えて T6① で使う `bench_batch_vs_persample` の呼出を代表形状 3 つ (§5) へ拡充する** — 現物の呼出は `test_conv2d.cu:899` の 320ch/64² **1 本だけ**なので、実走担当 (T6) には追加できない (T6 は実走のみ)。★★**構造保存の要件 (2026-08-24 決裁・レビュー可能な形で満たすこと)**: **`DOLLAMA_CONV_BATCH=0` のとき、現行 `src/kernels/conv2d.cu:487-507` の per-n ループが構造的にそのまま実行される**こと。**新設の N 対応関数を経由しない・`rows_cap` の N 分割 (`:354` / 不変条件 3) を通らない。****差分レビューで「キルスイッチ経路が旧コードへ分岐している」ことが読み取れること。**理由: 不変条件 3 の「`rows_cap` を N で割る」設計が**キルスイッチ経路にも漏れる**と、`CONV_BATCH=0` は **bit 一致 ([G1] 緑) のまま帯分割回数だけ増えて秒が悪化する** — **これを秒で検出しようとしたのがアンカー 3 の設計の誤りで、構造で封じるのが正しい**。★**stride 契約 (2026-09-12・T3 レビュー是正で追加)**: **conv2d から `GemmBatchedDesc` に渡す stride はすべて非負 (0 または正) であること。** 負 stride は **T4 のスコープ外**であり、**validator の負 stride 分岐 (`src/kernels/gemm.cu:611-612`) は T4 でも未発火のまま残る** (T3 で一度も通っていない = §6「T8 の記録スコープ」18-②)。負 stride が要ると判明したら**勝手に通さず BLOCK して PL へ** (§7b エスカレーションと同じ扱い) |
-| T5 | S4a | gpu-benchmarker | 実走のみ | ① `meson test -C build` 全緑 (**現状 53 本** + 追加分。53 は `src/meson.build` の `test(` 定義数を本セッションで実数カウント) ② `test_diffusion_batch2` GATE1-4 (**主 = GATE2** batch2 vs off @g=1.0 SSIM≥0.999) ③ `prof_arena_e2e` で G-8k 回帰 = step ループ内 **実 cudaMalloc 0 / cudaFree 0 / chunk_alloc 0** (`d_cudaMalloc` / `d_cudaFree` / `d_chunkAlloc` は `prof_arena_e2e.cu:135-137` が同じ行で出す) / peak delta は**同一セッションの `DOLLAMA_POOL=0` 比** / **`[ALLOC] reserve shortage:` が出ていないことの明示確認** ④ **生ログを `docs\logs\g10k-*\` へ退避** (§10 規律) |
+| T4 | S2+S3 | cuda-kernel-dev | `src/kernels/conv2d.cu` / `src/tests/test_conv2d.cu` (+ **`src/meson.build`** は `test('conv2d_batch_off', test_conv2d_exe, env : ['DOLLAMA_CONV_BATCH=0'])` の 1 行のみ = 2026-09-12 決裁 6・§7b 決裁表) | conv2d の N>1 枝差し替え + キルスイッチ `DOLLAMA_CONV_BATCH=0` + **7 ゲート [G1] / [G2a] / [G2b] / [G2] / [G3] / [G4] / [G5] (§7) を追加して緑**。**加えて T6① で使う `bench_batch_vs_persample` の呼出を代表形状 3 つ (§5) へ拡充する** — 現物の呼出は `test_conv2d.cu:899` の 320ch/64² **1 本だけ**なので、実走担当 (T6) には追加できない (T6 は実走のみ)。★★**構造保存の要件 (2026-08-24 決裁・レビュー可能な形で満たすこと)**: **`DOLLAMA_CONV_BATCH=0` のとき、現行 `src/kernels/conv2d.cu:487-507` の per-n ループが構造的にそのまま実行される**こと。**新設の N 対応関数を経由しない・`rows_cap` の N 分割 (`:354` / 不変条件 3) を通らない。****差分レビューで「キルスイッチ経路が旧コードへ分岐している」ことが読み取れること。**理由: 不変条件 3 の「`rows_cap` を N で割る」設計が**キルスイッチ経路にも漏れる**と、`CONV_BATCH=0` は **bit 一致 ([G1] 緑) のまま帯分割回数だけ増えて秒が悪化する** — **これを秒で検出しようとしたのがアンカー 3 の設計の誤りで、構造で封じるのが正しい**。★**stride 契約 (2026-09-12・T3 レビュー是正で追加)**: **conv2d から `GemmBatchedDesc` に渡す stride はすべて非負 (0 または正) であること。** 負 stride は **T4 のスコープ外**であり、**validator の負 stride 分岐 (`src/kernels/gemm.cu:611-612`) は T4 でも未発火のまま残る** (T3 で一度も通っていない = §6「T8 の記録スコープ」18-②)。負 stride が要ると判明したら**勝手に通さず BLOCK して PL へ** (§7b エスカレーションと同じ扱い) |
+| T5 | S4a | gpu-benchmarker | 実走のみ | ① `meson test -C build` 全緑 (**現状 53 本** + 追加分。53 は `src/meson.build` の `test(` 定義数を本セッションで実数カウント) ② `test_diffusion_batch2` GATE1-4 (**主 = GATE2** batch2 vs off @g=1.0 SSIM≥0.999) ③ `prof_arena_e2e` で G-8k 回帰 = step ループ内 **実 cudaMalloc 0 / cudaFree 0 / chunk_alloc 0** (`d_cudaMalloc` / `d_cudaFree` / `d_chunkAlloc` は `prof_arena_e2e.cu:135-137` が同じ行で出す) / peak delta は**同一セッションの `DOLLAMA_POOL=0` 比** / **`[ALLOC] reserve shortage:` が出ていないことの明示確認** ④ **生ログを `docs\logs\g10k-*\` へ退避** (§10 規律) ⑤ (2026-09-12 T4 レビュー 中-1 是正) **`test_diffusion_batch2` / `test_unet_fast` / `test_conv2d`** (`DOLLAMA_CONV_BATCH` 既定と `=0` の**両 env**) を **exe 直接実行**し `2>&1` でファイルへ落として `docs\logs\g10k-t5\` へ退避する (GATE2 / GATE4 / `test_unet_fast` の bit-exact 行を含む一次証拠)。★**`build\meson-logs\testlog.txt` はセッション env 秘匿情報を含むため commit 不可・使わない** ⑥ (2026-09-12 T4 レビュー 中-3 + code-review 低-1 是正) **`prof_arena_e2e` を `DOLLAMA_CONV_BATCH` 既定 (batched ON) で走らせ**、`[ALLOC] live_peak ≤ 5914MiB` (`kArenaLivePeakUnetMiB` = `src/infer/diffusion.cu:203-210`) の**実数値**と `reserve shortage` 不在を明示記録する。新経路の 1 call ピークは T4 実測 `[G4:G4_band_640to320_128]` **270MiB** (`docs/logs/g10k-t4/t4_default_run2_final.log:177`) — 旧同形状 (N=1・帯分割なし) の im2col col サイズ **188MB** (`src/tests/test_conv2d.cu:448` のコメント・decimal MB→MiB 換算で ≈179MiB) との比で **+90MiB 相当**・headroom 128MiB (`kArenaHeadroomUnetMiB` = 同 `:203-210`)。**shortage が出た / live_peak が 5914MiB を超えたら判定せず BLOCK して PL へ** |
 | T6 | S4b | perf-profiler | 実走のみ | **先行必須ゲート (合否あり)・これ 1 本に縮小** (2026-08-24 決裁で旧 ② = e2e resnet の独立走行は廃止)。`bench_batch_vs_persample` (`test_conv2d.cu:725-795`) で **batched median / seq median ≤ 0.95**。形状は §5 の代表形状 3 つ + [G4] の帯分割ケース。**合否集約 = 全形状で ≤ 0.95** (1 形状でも超えたら赤。形状ごとの実数値を必ず併記)。**赤なら T7 を走らせず T4 へ差し戻す** (conv 単体で速くなっていない = 実装側の問題)。**この順序は強制**。★per-call ms なので **e2e 秒には翻訳できない** — 秒の主張には使わない。★**`prof_unet_fast_warm` は使わない** (§2 F1)。**使わなかったことと理由を報告に明記する**。★**生ログを `docs\logs\g10k-resnet\` へ** (`2>&1`)。 |
 | T7 | S4c | gpu-benchmarker | 実走のみ | **数値採取と生ログ提出のみ・判定しない**。`DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1` を **`CONV_BATCH` 既定 → `=0` → 既定 の 3 プロセス連続**。各プロセスは 1 プロセス内で 3 構成 (default / attn+batch2 合成 / fast+epilogue = 出荷 `--fast`) を回す (`test_diffusion_batch2.cu:483-486`)。★**構成ごとに `generate_txt2img` が warmup 1 + iters 回**呼ばれる (同 `:465-477`) = ITERS=1 なら **1 構成あたり 2 回**。warmup 側は lazy init を含むので**判定に使わない(記録には残す)**。★**`DOLLAMA_PROFILE=1` で走らせる** (T2b 適用後は構成ごとに resnet バケットが印字される = §2 F3)。同期摂動は A/B 両側に等しく乗るので**比は保たれる**が、**絶対秒は非 profile の wall ではない** (正典 e2e 倍率は T7c で別に採る)。★**アンカー 3 の窓**: 本走行の `CONV_BATCH=0` の resnet バケット絶対秒が **T2c (conv2d 変更前) の値の帯内か**を**記録する** (帯 = ±max(アンカー 1 の実測ドリフト幅, 10%))。★**帯外でも結論を書かない** — 下記「帯を外れたときの 3 段」に従い、まず T2c の exe を**このセッション内で隣接再走**する。**採取中は間に他の GPU 負荷を挟まない**。**全 stdout+stderr を `docs\logs\g10k-e2e\` へ** (`2>&1`)。 |
 | T7b | S4d | perf-profiler | **書き込みなし・実走なし (両機可)** | **T7 の生ログを読んで判定する**。① `default` 構成の**プロセス間変動 = ドリフト幅の直接測定値** (default は B=1 × 2 forward/step で `DOLLAMA_CONV_BATCH` の影響を**原理的に受けない**ので、動いた分はドリフト) ② `fast+epilogue` 構成の **プロセス A/C (既定) vs プロセス B (`=0`)** の差 ③ ②が①を超えているか ④動かなかった場合の律速診断 (im2col 帯域 / bias パス / launch 数)。★**合否は resnet バケットの削減率 (§8 ケース B の 3 帯)** で出す。分母は同一セットの **プロセス B (`CONV_BATCH=0`) の `fast+epilogue`**、被験は **プロセス A / C (既定) の `fast+epilogue`**。⑤ **アンカー 3 (参考対照・hard ではない)**: `CONV_BATCH=0` の絶対秒が **T2c の帯内か** (帯 = ±max(アンカー 1 の実測幅, 10%))。**帯外なら断定せず 3 段手順へ** — 復元性の hard 担保は **[G1] の memcmp** と **T4 の構造保存要件**が持つ。★**判定は絶対秒と削減率のみ。`%` は使わない (そもそも印字されない = T2b 禁止事項 1 の決裁)。**★**resnet バケットの比較は同一構成・プロセス間のみ** (`fast+epilogue` の `CONV_BATCH` 既定 vs `=0`)。**構成をまたいだ resnet の直接比較は禁止** — default は 1 step あたり 2 forward なので桁が合わない(危険 2)。**`default` 行の役割はプロセス間不変性 = ドリフト対照に限る。**★**`weight_upload=0` と `n/a` 欄は引用しない** (T2b 禁止事項 2・3)。**T7b が実走から独立していること自体が成果物**: 生ログが repo に入るので**後から誰でも追試できる** = G-8k 残債⑤ (`docs/measurements-log.md:202`「S3・S3b・S4・S6 (T2) の生ログは依然として無し」) の**再発防止形として G-10k の既定にする**。 |
@@ -587,6 +587,32 @@ T2c と T7 は**別セッション**なので、アンカー 1 (同一セッシ�
     case1 (同 `:37`) の 2 本だけ**である。case4 / case5 のカウンタ行は **`(参考)` と明示**されており
     (同 `:24` / `:30`)、**期待値との突合は人が読む形でしか行っていない**。
     **「[H6] が case4 / case5 でも合否を判定した」と書かない。**
+21. ★**GATE2 は SSIM だけでなく MAE / GATE4 の値も併記する** (2026-09-12 T4 レビュー中-1 是正)。
+    GATE2 の SSIM は T4 前後で **0.999474 のまま** (数字が一致するのは偶然であり、conv2d が
+    e2e に無関係だった証拠ではない) だが、**MAE は 0.0304753→0.0303612 と動いている**
+    (出典: T4 前 = `docs/logs/g10k-baseline/t2c_0909_db2bench_profile.log:374`、T4 後は
+    **T5 で `docs\logs\g10k-t5\` へ退避するログ**を出典とする)。**GATE4 (epilogue vs fast) の SSIM も
+    0.999477→0.999467 と動いている**(T4 前 = 同ログ `:378`)。この 2 点 (MAE の変化・GATE4 の変化) が
+    「新経路が実際に e2e 経路を通っている」ことの証拠であり、**SSIM 一致だけを見て「変化なし」と
+    書かない**。
+22. ★**小形状 [G2] floor の MAE は G-2k S2 の 6.4e-5 と「同オーダー」と書かない・実比を書く**。
+    `small_1x1_bias_17x19` の MAE **2.7e-4** / `small_3x3_s2_33to17` の MAE **6.2e-4**
+    (出典 `docs/logs/g10k-t4/t4_default_run2_final.log:104`, `:114`) は、CLAUDE.md 計測表
+    「UNet バッチ (G-2k S2)」行の per-sample MAE **6.4e-5** と比べて **約 4.2 倍 / 約 9.7 倍大きい**
+    (K が違う形状どうしの比較であることに注意)。「同オーダー」という丸めた表現は使わず、この実比を書く。
+23. ★**`grid_blocks_for(long)` への `static_cast<long>` は既知事項として 1 行残す**。
+    `src/kernels/conv2d.cu:279` の `grid_blocks_for(long total)` は呼出側 (同 `:347`, `:415`, `:433`,
+    `:443`, `:628`, `:700`, `:729`, `:741` 等) で `static_cast<long>` を経由して渡される。
+    MSVC の `long` は 32bit だが、SDXL の最大形状 (~10.5M 要素) では十分安全域であり、**旧経路
+    (N=1 呼出) と同型のキャストである** (T4 で新設したものではない)。実害はないが、次に形状レンジが
+    大きく変わる Pkg のために「long は 32bit という前提が乗っている」ことを記録しておく。
+24. ★**NC2 (T3 の負のコントロール 2 の [G1] 版) の発見を記録する**: T4 の負のコントロール 2
+    (キルスイッチ経路をバイパスする一時改変) で、[G1] は **memcmp 単独では 5 ケース中 2 のみ red**
+    (`batch2_1x1_bias` / `batch2_3x3_s2` = MISMATCH、残り 3 ケースは BIT-EXACT で memcmp 単独では
+    見逃す) だが、**計器 (wrapper +0 の path counter) を併用すると 5/5 が red になる**
+    (出典 `docs/logs/g10k-t4/t4_negctrl2_killswitch_bypass.log` の `[G1:*]` 行 5 本
+    = 行 65, 70, 75, 80, 85)。**「memcmp だけでは空撃ちしうる・計器の併用が [G1] の検出力を担保する」**
+    実例として、ゲート設計資産の記録に残す。
 
 **T3 を T4 から分離したのが要**: stride 写像の正誤を **GEMM 単体で確定させてから** conv に載せる。
 混ぜると「conv の出力が違う」ときに ①写像バグ ②im2col の n 対応バグ ③帯分割バグ の切り分けができず、
@@ -608,6 +634,24 @@ G-2k S3c と同じノイズ床切り分けを最初からやり直すことに�
 | **[G3]** | 新経路で**同一設定 3 runs が memcmp 一致**すること。方式は G-8k S1b の `test_g8k_arena_bitexact` (`test_conv2d.cu:692-719`・設計コメントは `:548-564`) と同型 | **hard**。「たまたま同じ」の排除 |
 | **[G4]** | `rows_cap` (`conv2d.cu:354`) を N で割った結果**帯分割が発動する形状**を 1 ケース。**具体形状は実装者が `rows_cap` の実値から選ぶ** (§5 末尾)。帯分割 (`banded` = `conv2d.cu:366`) + batched + scatter (`scatter_band_to_out`・設計は `conv2d.cu:31-40` / `:162-170`) の組み合わせが未検査で残るのを防ぐ | **hard** ([G2a]/[G2b]/[G3] と同じ性質をこの形状でも通す) |
 | **[G5]** | GEMM 下限割れの N=2 形状 = 既存 5. `test_conv_batch_multi` (`test_conv2d.cu:384-387`・N=2 / Cin=5 / 14×18 / Cout=7 / 3x3) が **direct 経路のまま**通ること。(`use_gemm_path` の下限は `Cout < 16 \|\| Ncol < 16 \|\| K < 16` で false = `conv2d.cu:299-302`。この形状は Cout=7 で下限割れ) | **hard** |
+
+### ★[G3] への poison 追加 (2026-09-12・Opus 監査 中-4 是正)
+
+上表の [G3] 行は「方式は `test_g8k_arena_bitexact` (設計は `test_conv2d.cu:1049-` の
+`run_case_g8k_arena` / 定義は `:1134`) と同型」と規定するが、T4 実装 (`8707472`) の [G3]
+(`test_conv2d.cu:862-871`) は **poison を伴わない素の 3 連走 memcmp のみ**で、規定を未充足のまま
+緑になっていた (Opus 監査 中-4)。参照実装 `test_g8k_arena_bitexact` は `poison_arena`
+(`test_conv2d.cu:1009`) で確保直後の領域に 0xFF/0x00 を書き込んでから再実行し、**アリーナ再利用で
+前走の書き残しが混入していないか**を検査する設計であり、現物は `:1095` の
+`poison_arena(poison_bytes, patterns[r])` 呼出と `:1116-1117` の
+`run0==run1(0xFF poisoned)` / `run0==run2(0x00 poisoned)` 判定 (すべて本セッションで確認)。
+
+poison の追加は §7 が既に規定している性質を満たす行為であり、**§5「ゲートの自己成就」(実測を見て
+ゲートを新設・緩和する) には当たらない** (締める方向のみ・ゲート強度は据え置き・実測値で θ や閾値を
+新たに決めるものではない)。実施は `src/tests/test_conv2d.cu` のみへの追加とする
+(`src/kernels/conv2d.cu` を含む他ファイルは不可)。**負のコントロール (poison を効かせない一時改変で
+[G3] が red になることを確認・コミットしない一時改変) を必須**とする (T2b / §7b「負のコントロール」節と
+同型の規律)。
 
 ---
 
@@ -641,6 +685,36 @@ G-2k S3c と同じノイズ床切り分けを最初からやり直すことに�
 | **決裁 3** | 分岐カウンタ (公開 統計 struct) | 「経路検査」節・[H6] |
 | **決裁 4** | `src/meson.build` を触らない・新規 meson ターゲットを作らない (★**射程は 2026-09-10 決裁 5・D5-1 で明確化 = 新規ターゲット禁止が本体。既存 `test()` への `timeout : 600` 追加は射程外**。この欄の文言は決裁 4 当時のものを史料として残してある) | §6 T3 行・「`DOLLAMA_GEMM=wmma` の扱い」節 |
 | **決裁 5** | floor / θ の CPU 計算量対策 = **`test('gemm', …)` への `timeout : 600` 1 行追加のみ許可** + **走査範囲の事前縮小** (floor は固定 4 行 × 全 N・θ の Σ 項は分離上界) | 本節のゲート表 floor 行・θ 節・ケース構成表・§6 T3 行・「`DOLLAMA_GEMM=wmma` の扱い」節 |
+| **決裁 6** (2026-09-12・T4 文脈) | [G1] を `meson test` 自動枠へ入れる env 変種ターゲット 1 行の許可 (`test('conv2d_batch_off', test_conv2d_exe, env : ['DOLLAMA_CONV_BATCH=0'])`) | §6 T4 行・本節末尾「決裁 6 の関係」 |
+
+★**決裁 6 は日付が違う (2026-09-10 ではなく 2026-09-12)**: 本表は元来 2026-09-10 決裁シリーズ
+(T3 = `test_gemm` 文脈) を指すが、決裁 6 は Opus 監査 中-2 を受けて 2026-09-12 に出た
+**T4 (`test_conv2d`) 向けの決裁**であり、番号だけを続けて本表に同居させてある。
+**§7b 冒頭の「読み分けの規則」(裸の「決裁 N」は 2026-08-24 シリーズ) は決裁 6 には適用しない** —
+決裁 6 は自らの節でこのとおり日付を明示している。
+
+**決裁 6 の内容**: `src/meson.build:626` の `test('conv2d', test_conv2d_exe)` (env 未指定・timeout 未指定
+= 既定 30 秒・2026-09-12 本セッションで確認) に対し、**`test('conv2d_batch_off', test_conv2d_exe,
+env : ['DOLLAMA_CONV_BATCH=0'])` を 1 行追加**することのみを許可する
+(sources 追加・exe 新設は不可・timeout 追加も不要)。前例は同 `:713` の
+`test('device_arena_pool_off', test_device_arena_exe, env : ['DOLLAMA_POOL=0'])`
+(本セッションで確認・env のみ差し替え・timeout 未指定) と**完全同型**。
+
+**背景 (Opus 監査 中-2)**: [G1] (`DOLLAMA_CONV_BATCH=0` プロセスでの 9b 5 ケース memcmp + wrapper +0 計器)
+は既定プロセスでは `n/a` 印字のみで (`src/tests/test_conv2d.cu:696-699` の
+`t4_conv_batch_off() ? … : "default (batched path; [G1] n/a here)"`)、**`meson test` 自動枠に一度も
+入らない** (`src/meson.build:626` は env 引数なしで既定プロセスのみを起動する)。
+
+**2026-09-10 決裁 4 (新規 meson ターゲット禁止) との関係**: 決裁 4 は T3 (`test_gemm`) 文脈の決裁であり、
+決裁 6 は T4 文脈の**例外**である。決裁 6 が許可するのは既存 exe (`test_conv2d_exe`) への env 変種
+ターゲット追加 1 行のみで、sources 追加・exe 新設は引き続き不許可 (「新規ターゲットを増やさない」という
+決裁 4 の趣旨は維持したまま、「既存 exe の env 変種を 1 本足す」前例 (`device_arena_pool_off`) の型に
+限定して踏襲する)。
+
+★**§8 ケース B が成立し `CONV_BATCH=0` が既定へ振り替わった場合の裏返し**: そのときは逆に
+[G2a]〜[G5] (既定経路のゲート) 側が自動枠から落ちるので、ターゲット名・env 値を
+`conv2d_batch_on` / `DOLLAMA_CONV_BATCH=1` へ振り替える必要がある。**これは T7b 判定後に別発注**
+(今回の決裁のスコープではない)。
 
 **2026-09-10 決裁 5 の全文 (計算量対策)**:
 
@@ -966,6 +1040,44 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 - ただし**陰性でも revert はしない**。opt-in として残し、「conv が batch されても秒が動かなかった律速は
   どこか (im2col 帯域 / bias パス / launch 数)」の診断を記録に残す。G-4k S2/S3 と同じ扱いで、
   次の Pkg (G-9k / G-12k) の入力にする。
+
+### ケース B' と T6r: T6 が赤のときの事前固定分岐 (2026-09-12 決裁・T6 未実走の時点で固定)
+
+**背景**: T4 の conv 単体 bench (`bench_batch_vs_persample`) の実測で、batched/seq 比が
+**320ch/128² 1.026 / 640ch/64² 1.027 / 1280ch/32² 1.013 / [G4] 帯分割ケース (G4_band) 1.076**
+(いずれも batched が seq より**遅い**方向。出典 `docs/logs/g10k-t4/t4_default_run2_final.log:186-189`
+= `rep_320_128` `rep_640_64` `rep_1280_32` `G4_band_640to320_128` の `batch median / seq median`)。
+実装者の診断 (申告のみ・実走内訳なしで得た所見) は「代表形状の GEMM が単発で既に ~100 TFLOPS 帯へ
+飽和しており batch 化の利得が乗らない / 帯分割形状は N 込み 256MB 上限のため N=1 では不要だった
+帯分割+散布が新たに発生する」というもの。この実測から、**T6 の `≤0.95` は届かない公算が高い**。
+
+**T6 の閾値 `≤0.95` は動かさない** (§5「ゲートの自己成就」の禁止)。T6 は perf-profiler が §6 の規定
+どおり走らせ、赤なら赤と記録する。**§6 の「T6 赤 = 実装側の問題 → T4 差し戻し」という既定分岐は
+事前仮定であり**、実装者の診断が正しければこの前提が崩れている。ただし**申告だけでは確定させない**。
+
+**固定する分岐 (実走前に固定・実走を見て動かさない)**:
+
+1. **T6 緑** → 規定どおり T7 → T7b → T7c → T8 と進む (§6 の既定どおり)。
+2. **T6 赤 → T6r (律速診断・1 ラウンド限定・src コミットなし) を挟む**。
+   担当は **perf-profiler 主・cuda-kernel-dev 協働・研究機**。
+   - 成果物: **代表形状 3 つ + [G4] 帯の計 4 形状**について、**batched / seq それぞれの per-call 内訳**
+     (im2col / GEMM / bias / band scatter) の表。
+   - 計装は**コミットしない作業ツリー、または nsys** で取る (`src/` への恒久追加はしない・T6r 自体は
+     src コミットなし)。
+   - 判定は 1 点のみ: 「**`conv2d.cu` の範囲内の変更で 4 形状すべて `≤0.95` に届く具体的レバーが
+     あるか (Yes/No)**」。
+     - **Yes** → **T4'' 修正を 1 回だけ許可** → T6 を再走。再走でも赤なら **No 扱い**とし次項へ。
+     - **No** (GEMM 飽和が内訳で裏付けられる / 帯分割増加が N=2 固有の構造コストと確認できる) →
+       **ケース B' = 「T6 赤 + 律速診断つき陰性」として T7 / T7b へ進む**。T7b の削減率で
+       **§8 ケース B の 3 帯どおり最終判定**する (帯の定義は変えない)。**T7c は T7b 合格時のみ**
+       (§6 T7c 行のとおり)。
+3. **T8 の記録**: T6 は「**赤 (実数値併記)**」と書く。「実装側の問題ではなかった」という認定は
+   **T6r の内訳表を出典にしてのみ**書ける — T6r を経ずに実装者の申告だけでこの認定を書かない。
+   ケース B 成立時の既定 `=0` 化の `src/` 変更は **T7b 判定後に別発注** (§8 ケース B と同じ扱い)。
+
+★**この分岐は「ゲートを緩める」のではなく「赤のときに何をするかを事前固定する」ものである**。
+§8 冒頭の「事前に固定・実走後に決めない」の趣旨に沿う。**T6 の `≤0.95` 自体・§8 ケース B の
+削減率 3 帯 (−22% / −15%) 自体は本節でも一切動かしていない。**
 
 ---
 
