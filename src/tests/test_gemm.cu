@@ -842,9 +842,12 @@ static bool case4_transb()
     // (docs/logs/g10k-t3/t3_default_run.log:37 = case1 / :19 = case3)。
     // case4 の値は「[H6] が case4 でも合否を判定した」と読んではならない。
     //
-    // 実数値 (t3_default_run.log:24) は §7b 表 (B) の期待値と一致する:
+    // 実数値 (t3_default_run.log:24) は §7b 表 (A)「conv 実使用形態」行と同型
+    // (cuBLAS batched +1 / フォールバック +0):
     //   wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
     // = 既定経路 (cuBLAS 有効) で cuBLAS batched 枝を通ったことを示す。
+    // ただし表 (A)/(B) に case4/case5 の行は無く、この「同型」は hard 判定ではない。
+    // (DOLLAMA_GEMM=wmma 走行では表 (B) どおり反転し、cuBLAS batched +0 / フォールバック +1 になる)
     print_delta("H6:case4(参考)");
 
     // ---- [H3] 決定性 ----
@@ -923,9 +926,12 @@ static bool case5_beta()
     // [H6] の hard 判定は §7b 表 (A) の case1 / case3 の 2 行のみ
     // (docs/logs/g10k-t3/t3_default_run.log:37 / :19)。
     //
-    // 実数値 (t3_default_run.log:30) は §7b 表 (B) の期待値と一致する:
+    // 実数値 (t3_default_run.log:30) は §7b 表 (A)「conv 実使用形態」行と同型
+    // (cuBLAS batched +1 / フォールバック +0):
     //   wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
     // = 既定経路 (cuBLAS 有効) で cuBLAS batched 枝を通ったことを示す。
+    // ただし表 (A)/(B) に case4/case5 の行は無く、この「同型」は hard 判定ではない。
+    // (DOLLAMA_GEMM=wmma 走行では表 (B) どおり反転し、cuBLAS batched +0 / フォールバック +1 になる)
     print_delta("H6:case5(参考)");
 
     {
