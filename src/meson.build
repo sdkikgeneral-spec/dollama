@@ -624,6 +624,7 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('conv2d', test_conv2d_exe)
+  test('conv2d_batch_off', test_conv2d_exe, env : ['DOLLAMA_CONV_BATCH=0'])
 
   # Attention テスト + ベンチ (Phase 2 マイルストーン 2-2-5)
   test_attention_exe = executable('test_attention',

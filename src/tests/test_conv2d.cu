@@ -208,8 +208,11 @@ static std::vector<__half> run_gpu_conv_raw(const std::vector<__half>& in,
                                             int stride_h, int stride_w,
                                             int pad_h, int pad_w,
                                             int dilation_h, int dilation_w,
-                                            bool force_direct)
+                                            bool force_direct,
+                                            int out_fill = -1)
 {
+    // out_fill >= 0 のときは出力バッファをそのバイト値で汚してから conv を呼ぶ
+    // (G-10k T4 [G3] poison 用。書き残しがあれば検出できる。既定 -1 = 汚さない)。
     const int Hout = out_dim(H, pad_h, dilation_h, KH, stride_h);
     const int Wout = out_dim(W, pad_w, dilation_w, KW, stride_w);
     const size_t out_n = static_cast<size_t>(N) * Cout * Hout * Wout;
@@ -230,6 +233,10 @@ static std::vector<__half> run_gpu_conv_raw(const std::vector<__half>& in,
                               cudaMemcpyHostToDevice));
     }
     CUDA_CHECK(cudaMalloc(&d_out, out_n * sizeof(__half)));
+    if (out_fill >= 0)
+    {
+        CUDA_CHECK(cudaMemset(d_out, out_fill, out_n * sizeof(__half)));
+    }
 
     if (force_direct)
     {
@@ -725,7 +732,15 @@ static bool test_conv_batch_gemm()
 //     [G2b] (X,Y) と (Y,X) の出力が入れ替えで memcmp 一致 (hard)。非対称バグ。
 //     [G2]  batched vs per-sample 参照を既存 compare(..., K, ...) で判定 (floor・超えたら BLOCK)。
 //           MAE / max_abs / max_rel / exact 率を print (characterization)。
-//     [G3]  同一設定 3 runs が memcmp 一致 (hard)。
+//     [G3]  同一設定 3 runs が memcmp 一致 (hard)。方式は 9d `test_g8k_arena_bitexact` と同型:
+//           run1 / run2 の前にアリーナを 0xFF / 0x00 で汚染 (poison_arena) してから rewind し、
+//           次の run が同じ領域 (col + 帯バッファ) を再利用するよう仕向ける。出力バッファも
+//           0xCD で汚す。poison 量は「新経路の実使用量を覆う上限」を形状から先験的に決め
+//           (col <= min(N*K*Hout*Wout*2B, IM2COL_TILE_BYTES) + 帯 <= N*Cout*Hout*Wout*2B
+//           + 整列余裕 1MiB)、実走の arena peak_request がその中に収まることを同時に hard 化する
+//           (収まらなければ汚染が実使用域を覆っておらず、[G3] は空撃ちになるため)。
+//           ★poison 無しの素の 3 連走では「前走の書き残しをそのまま読む」種類のバグを
+//             捕まえられない (T4 初版の [G3] がそうだった・台帳 §7「[G3] への poison 追加」)。
 //     [G4]  rows_cap を N で割った結果、帯分割が発動する形状で [G2a]/[G2b]/[G3] を通す (hard)。
 //           帯分割が「実際に発動した」ことは計器で示す: アリーナ alloc が 1 call あたり
 //           +2 (col + 帯バッファ) / batched GEMM 発行が 1 call あたり >= 2 (帯の数)。
@@ -752,6 +767,9 @@ static bool test_conv_batch_gemm()
 //       端数の小さい最終帯 (8 行) を含む 3 帯を踏む。
 //     代表形状 3 つ (320/128^2・640/64^2・1280/32^2) は N=2 でも rows_cap=182 >= Hout で帯分割なし。
 // ----------------------------------------------------------------
+
+// 9d (G-8k S1b) のアリーナ汚染ヘルパ (定義は後方)。[G3] の poison に共用する。
+static void poison_arena(size_t bytes, int pattern);
 
 struct T4Shape
 {
@@ -783,13 +801,14 @@ static bool run_case_t4_batched(const T4Shape& sh)
         bias_h = bb.h;
     }
 
-    auto run2 = [&](const std::vector<__half>& in2, T4PathDelta* d) -> std::vector<__half>
+    auto run2 = [&](const std::vector<__half>& in2, T4PathDelta* d,
+                    int out_fill = -1) -> std::vector<__half>
     {
         const T4PathSnapshot s0 = t4_snapshot();
         std::vector<__half> o = run_gpu_conv_raw(in2, w.h, bias_h, 2, sh.Cin, sh.H, sh.W,
                                                  sh.Cout, sh.KH, sh.KW,
                                                  sh.stride, sh.stride, sh.pad, sh.pad, 1, 1,
-                                                 /*force_direct=*/false);
+                                                 /*force_direct=*/false, out_fill);
         if (d != nullptr)
         {
             *d = t4_delta(s0, t4_snapshot());
@@ -860,13 +879,43 @@ static bool run_case_t4_batched(const T4Shape& sh)
         ok = path_ok(tag.c_str(), dxy) && ok;
     }
     {
-        const std::vector<__half> r2 = run2(t4_concat(X.h, Y.h), nullptr);
-        const std::vector<__half> r3 = run2(t4_concat(X.h, Y.h), nullptr);
-        const bool g3 = t4_half_range_equal(o_xy, 0, r2, 0, 2 * per_out)
-                        && t4_half_range_equal(o_xy, 0, r3, 0, 2 * per_out);
+        // poison 量 = この形状の中間バッファの先験的上限 (実測から決めない):
+        //   col  <= min(N*K*Hout*Wout*2B, IM2COL_TILE_BYTES=256MiB)  (新経路・旧経路とも)
+        //   帯   <= N*Cout*Hout*Wout*2B                              (tile_rows <= Hout)
+        //   + 1MiB (alloc 2 本の個別整列の余裕)
+        // 1x1 経路はアリーナ alloc 0 なので poison は素通り (害なし)。
+        const size_t kTileCap = static_cast<size_t>(256) << 20;
+        const size_t col_bound  = std::min(static_cast<size_t>(2) * K * Hout * Wout * sizeof(__half),
+                                           kTileCap);
+        const size_t band_bound = static_cast<size_t>(2) * per_out * sizeof(__half);
+        const size_t poison_bytes = col_bound + band_bound + (static_cast<size_t>(1) << 20);
+
+        // run1: 0xFF 汚染 (FP16 では NaN) / run2: 0x00 汚染。出力バッファは 0xCD で汚す。
+        // 各 run の前にアリーナ計数を reset し、その run の peak_request が poison に
+        // 収まっているか (= 汚染が実使用域を覆っているか) を採る。
+        const int patterns[2] = {0xFF, 0x00};
+        std::vector<__half> runs[2];
+        size_t peaks[2] = {0, 0};
+        for (int r = 0; r < 2; ++r)
+        {
+            poison_arena(poison_bytes, patterns[r]);
+            device_arena_reset_counters(DeviceArenaId::UNet);
+            runs[r] = run2(t4_concat(X.h, Y.h), nullptr, /*out_fill=*/0xCD);
+            peaks[r] = device_arena_stats(DeviceArenaId::UNet).peak_request_bytes;
+        }
+        const bool eq01 = t4_half_range_equal(o_xy, 0, runs[0], 0, 2 * per_out);
+        const bool eq02 = t4_half_range_equal(o_xy, 0, runs[1], 0, 2 * per_out);
+        const bool covered = (peaks[0] <= poison_bytes) && (peaks[1] <= poison_bytes);
+        const bool g3 = eq01 && eq02 && covered;
         tag = std::string("G3:") + sh.name;
-        std::cout << "[" << tag << "] 3 runs memcmp: "
-                  << (g3 ? "BIT-EXACT PASSED" : "MISMATCH FAILED") << "\n";
+        std::cout << "[" << tag << "] 3 runs memcmp: run0==run1(0xFF poisoned): "
+                  << (eq01 ? "BIT-EXACT" : "DIFF")
+                  << " / run0==run2(0x00 poisoned): " << (eq02 ? "BIT-EXACT" : "DIFF")
+                  << " | poison=" << (poison_bytes >> 20) << "MiB"
+                  << " (col_bound " << (col_bound >> 20) << " + band_bound " << (band_bound >> 20)
+                  << " + 1) covers peak_request " << (peaks[0] >> 20) << "/" << (peaks[1] >> 20)
+                  << "MiB: " << (covered ? "yes" : "NO")
+                  << " -> " << (g3 ? "PASSED" : "FAILED") << "\n";
         ok = g3 && ok;
     }
 

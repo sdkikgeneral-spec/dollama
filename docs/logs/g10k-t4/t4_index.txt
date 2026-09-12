@@ -78,3 +78,48 @@ G-10k T4 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走)
     合否判定は T6 の担当。本索引は判定しない。
   ・t4_meson_test_full.log は meson の非 verbose 出力で、各 test の stdout は build/meson-logs/testlog.txt 側にある
     (repo には入れていない)。走行時の GATE 行は本 T4 の報告本文に転記した。
+
+======================================================================
+[T4 是正 (2026-09-12・Opus 監査 中-4 / 中-2 の是正): [G3] poison 追加 + meson `conv2d_batch_off` 1 行]
+======================================================================
+  走行時 HEAD: faa0eada2604f0608a50f4a5f86d6a167c3a9979 (= 97aa092 の直後に載った docs 専用コミット。
+               src/ は 8707472 のまま。是正の変更は working tree に載った状態で実走した。
+               porcelain は src/tests/test_conv2d.cu / src/meson.build の 2 本 + 未追跡の本ログ群)
+  SAC        : VerifiedAndReputablePolicyState = 0 (OFF) を各ログのヘッダで採取 (セッション開始時点で既に OFF)
+  走行スクリプト: scripts/t4_run_conv2d.ps1 (T4 と同一・無改変)
+  変更ファイル (src/kernels/conv2d.cu は無改変 = 31F6C8C6 のまま):
+    566f487307c109e33da1d25625cb5dfa5e5e3d079c5ccfb3be10adab9d579a82  src/tests/test_conv2d.cu
+    253dc1c9daf9417025c442c26f85f9aeedc2c05f3b43e422e3ac638505034f37  src/meson.build
+    31f6c8c6923acf8a35a3e47985f8f97e953397da867de9b8386636cd1a89a183  src/kernels/conv2d.cu (無改変)
+  最終ツリーの exe sha256:
+    1fef7939a5d3597f412ce752cfe646fd1f72f94dda810cf5716eca937ac66504  build/src/test_conv2d.exe
+
+  [G3] の poison 方式 (9d test_g8k_arena_bitexact と同型):
+    run0 = 汚染なし (既存 o_xy) / run1 = poison 0xFF (FP16 NaN) / run2 = poison 0x00。
+    各 run の前に poison_arena(poison_bytes, pattern) で alloc→memset→rewind し、出力バッファも 0xCD で汚す。
+    poison_bytes = min(N*K*Hout*Wout*2B, 256MiB) [col 上限] + N*Cout*Hout*Wout*2B [帯 上限] + 1MiB [整列余裕]
+      = 形状から先験的に決める (実測から決めない)。実走の arena peak_request (各 run 前に reset) が
+      poison_bytes 以下であることも hard (覆っていなければ空撃ちなので FAILED)。
+    形状別 (既定プロセス・poison / peak_request): rep_320_128 201/180MiB, rep_640_64 101/90MiB,
+      rep_1280_32 51/45MiB, G4_band_640to320_128 277/270MiB, G4_band_960to320_128 277/262MiB
+      (T4 の t4_default_run2_final.log:177 の 270/262MiB を覆う)。=0 プロセスは per-n なので peak は半分程度
+      (G4_band_960to320_128 のみ 264MiB = N=1 の帯分割 2 帯 (rows_cap=121) で col ≈255MiB + 帯 ≈9MiB)。1x1 形状は alloc 0 (素通り)。
+
+  # | ログ                                          | env                  | exe sha256 (先頭 8) | conv2d.cu sha256 (先頭 8) | exit | 位置づけ
+  9 | t4_g3poison_default_run1.log                  | 既定                 | 9DFB6191            | 31F6C8C6 (無改変)         | 0    | poison 追加後 既定経路 初回。[G3] 8/8 PASSED (coverage yes)
+ 10 | t4_negctrl3_g3_poison_col_unwritten.log       | 既定                 | 46465F3A            | C3402D77 (一時改変)       | 1    | 負のコントロール 3 (下記)。[G3] red
+ 11 | t4_g3poison_default_run2_final.log            | 既定                 | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | 最終ツリー再ビルド後の取り直し。[G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] 全 PASSED
+ 12 | t4_g3poison_convbatch0_run2_final.log         | DOLLAMA_CONV_BATCH=0 | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | 同上 (=0)。[G1] 5/5 + [G3] 8/8 PASSED
+ 13 | t4fix_meson_compile_full.log                  | -                    | -                   | -                         | 0    | 最終ツリーで全ターゲット再ビルド (compile_exit=0)
+ 14 | t4fix_meson_test_full.log                     | (meson が付与)       | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | `meson test -C build` 54/54 OK / Fail 0 (conv2d 12.78s / conv2d_batch_off 12.00s・既定 timeout 30s 内)
+
+  NC3 (#10): src/kernels/conv2d.cu launch_conv2d_im2col_gemm_batched の im2col 起動 grid を
+            dim3(blocks, N) から dim3(blocks, 1) に改変 = item 1 の col 領域を書かずに残す
+            (汚染が出力へ混入する方向の一時改変。poison を外す方向ではない)。既定プロセスで実行。
+            結果: [G3] は im2col 経路の 6 形状すべて FAILED (small_3x3_s2 / rep_320_128 / rep_640_64 /
+                  rep_1280_32 / G4_band_640to320_128 / G4_band_960to320_128)。1x1 経路の 2 形状 (改変の射程外)
+                  は PASSED のまま = 検査が射程どおり。[G2a]/[G2b] も同 6 形状で MISMATCH。exit=1。
+                  ★small_3x3_s2 は run0==run2(0x00) が BIT-EXACT で run0==run1(0xFF) のみ DIFF
+                    = 未書き領域がたまたま 0 だと素の 3 連走 (T4 初版) では捕まらないことの実証。
+            一時改変は stage しておらず revert 済 (最終ツリーの conv2d.cu sha256 は T4 最終と同一 31F6C8C6・
+            "NEGCTRL" 文字列 grep 実数 0)。
