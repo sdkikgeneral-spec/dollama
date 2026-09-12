@@ -51,6 +51,29 @@ G-10k T3 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走)
       最終ツリーでの `meson test -C build` 全体。53/53 OK / Fail 0。
       dollama:gemm の所要は 6.14s。
 
+  ---- 以下 2 本は T3 コミット後の「コメントのみ是正」の検証走行 (追記 2026-09-12) ----
+  ★[共通条件] の「走行時 HEAD 646cc66」はこの 2 本には当てはまらない (各ログ内のヘッダが一次証拠)。
+
+  t3_fix_comments_run.log                  exit=0 (ログ末尾行)
+      `e15b658` + コメント差分 (後に `e84a92a` としてコミット) のツリーで
+      `meson test -C build gemm -v` を 1 回実行した生ログ (ヘッダ `commit_base=e15b658`)。
+      ★exe sha256 / ソース sha256 は未採取 (record-auditor 中3 指摘)。走行 exe と `e84a92a` の
+        同一性は「差分がコメントのみ」であることの機械確認で担保する:
+        `git show e84a92a -- src/` の `+` 行から `//` 始まりの行と空行を除くと 0 行。
+        (ログ内の meson は "ninja: no work to do" = このログ採取時点で再ビルドは走っていない。)
+
+  t3_fix_comments_run2.log                 exit=0 (ログ末尾行)
+      `e84a92a` を HEAD にし、working tree に test_gemm.cu のコメント行訂正
+      (表 (B) -> 表 (A) conv 実使用形態行と同型) を載せた状態で
+      `meson compile -C build && meson test -C build gemm -v` を実行した生ログ。
+      ログ内に `git rev-parse HEAD` (= e84a92a) / `git status --porcelain` / compile_exit=0 /
+      走行 exe とソース 3 本 (test_gemm.cu / gemm.cuh / gemm.cu) の sha256 を採取済み。
+      ★このログとソース訂正は `a227635` (test: e84a92a のコメントの表 (A)/(B) 取り違えを訂正)
+        でコミット済み (`git ls-files` で追跡を確認)。ログ内 sha256 のうち test_gemm.cu
+        (63e80c9f...) は `a227635` の現物と一致する = 走行ソースは a227635 のツリーと同一。
+        (走行自体は a227635 のコミット前・HEAD=e84a92a に訂正を載せた working tree で実施 =
+         ログ内 `git status --porcelain` 節のとおり。)
+
 ======================================================================
 [注意]
 ======================================================================

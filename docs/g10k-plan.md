@@ -565,6 +565,11 @@ T2c と T7 は**別セッション**なので、アンカー 1 (同一セッシ�
       `Ok` 以外を返したときに stderr へ理由を出して `std::abort()` する枝)。**踏まれないのは設計どおり**で、
       [H7] は validator を**単体で直接呼ぶ**形 (`src/tests/test_gemm.cu:1044`) で red / green を確認している
       (§7b「重なり検査」の「validator を単体で呼べる公開関数にしておくことが要件」)。
+      (行番号の注: `:1044` は `e15b658` 時点。`e84a92a` が同ファイルの `:839` / `:922` にコメント計 16 行を
+      挿入したため、`e84a92a` の現物では同じ呼出行が **`:1060`** へ移動している (`git show e84a92a:src/tests/test_gemm.cu`
+      で確認)。さらに `a227635` (コメント行のみ訂正・+8/−2) 後の現物では **`:1066`** (`git show a227635:src/tests/test_gemm.cu`
+      で確認)。以降もコメントのみの訂正コミットで行番号はずれ得るので、**行番号非依存の指し方 = [H7] 節の
+      validator 直接呼出行 (`src/tests/test_gemm.cu` 内で `gemm_batched_validate(` を grep すると出る唯一の行) を正とする**。)
       **確定しているのは「validator が期待どおりの戻り値を返すこと」までで、abort 経路の挙動はコード上の推論に依拠する。**
     - ② **`batched_span` の負 stride 分岐** (`src/kernels/gemm.cu:611-612` の
       `const long long off_lo = (last < 0) ? last : 0;` 側)。T3 のケース構成に負 stride は 1 件も無く
