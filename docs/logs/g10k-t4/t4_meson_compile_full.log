@@ -1,0 +1,25 @@
+# G-10k T4 meson compile (全ターゲット) 2026-09-12T18:05:05+09:00 host=KIK-WIN-RTX58
+HEAD=e40cce4d08348eca3faf510997db891c2aed5bf3
+porcelain=[ M src/kernels/conv2d.cu| M src/tests/test_conv2d.cu|?? docs/logs/g10k-t4/|]
+'vswhere.exe' は、内部コマンドまたは外部コマンド、
+操作可能なプログラムまたはバッチ ファイルとして認識されていません。
+ninja: Entering directory `E:/Develop/Projects/dollama/build'
+[14/27] Linking target src/test_unet_fast.exe
+[15/27] Linking target src/test_vae_decode.exe
+[16/27] Linking target src/test_unet.exe
+[17/27] Linking target src/prof_arena_e2e.exe
+[18/27] Linking target src/test_diffusion_batch2.exe
+[19/27] Linking target src/test_cli_generate.exe
+[20/27] Linking target src/test_diffusion.exe
+[21/27] Linking target src/test_lora_runtime.exe
+[22/27] Linking target src/test_pipeline_factory.exe
+[23/27] Linking target src/test_pipeline_generator.exe
+[24/27] Linking target src/test_txt2img.exe
+[25/27] Linking target src/prof_unet_fast_warm.exe
+[26/27] Linking target src/dollama.exe
+[27/27] Generating src/copy_openvino_dlls with a custom command (wrapped by meson to set PATH)
+Activating VS 18.9.3
+INFO: automatically activated MSVC compiler environment
+INFO: autodetecting backend as ninja
+INFO: calculating backend command to run: "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.EXE" -C E:/Develop/Projects/dollama/build
+compile_exit=0

@@ -38,12 +38,32 @@
 //     その後 scatter_band_to_out で全体テンソルの正しい stride (= Hout*Wout) へ
 //     チャネル行ごとに散布コピーする。帯が 1 つ (= 分割なし) のときは帯幅が
 //     Hout*Wout に一致するので、d_out へ直接 GEMM してコピーを省く。
+//
+// G-10k T4 (conv2d 真の batch2) のメモ:
+//   - N>1 枝 (launch_conv2d 末尾) を「im2col の n 次元対応 + strided batched GEMM
+//     (launch_gemm_fp16_batched)」へ置き換えた。N==1 分岐・direct・N==1 用ヘルパ
+//     (launch_conv2d_1x1_gemm / launch_conv2d_im2col_gemm) は 1 バイトも変えていない。
+//   - キルスイッチ DOLLAMA_CONV_BATCH=0 (getenv キャッシュ型・プロセス単位固定) で、
+//     G-2k S1 の per-n 直列ループ (旧コード) がそのまま実行される。旧ループは新設の
+//     N 対応関数を経由せず、rows_cap の N 分割も通らない (構造保存)。
+//   - VRAM: IM2COL_TILE_BYTES (256MB) は「N 込みの合計上限」として扱い、rows_cap を
+//     N で割る。col バッファの同時生存量は N によらず 256MB 以下に据え置かれる。
+//   - bias: 出力 [N, Cout, HW] では row = idx / Ncols の 1 段分解 (conv_bias_add_rows)
+//     が使えないため、co = (idx / Ncols) % Cout の 2 段分解を持つ別カーネル
+//     (conv_bias_add_rows_batched) を用意した。要素ごとの演算 (h2f+h2f -> f2h) は同一。
+//   - 1x1 経路に帯分割は無い (N=HW の単一 GEMM で C を全体テンソルへ直接書く)。
+//     N 対応でも 1x1 に band 経路を持ち込まない。
+//   - GemmBatchedDesc へ渡す stride はすべて非負 (stride_a=0 の重み共有 / stride_b・
+//     stride_c は正)。負 stride は T4 スコープ外。
 #include "kernels/conv2d.cuh"
 #include "kernels/device_arena.cuh"
 #include "kernels/gemm.cuh"
 #include "kernels/utils.cuh"
 
 #include <cuda_fp16.h>
+
+#include <cstdlib>
+#include <cstring>
 
 namespace dollama
 {
@@ -428,6 +448,304 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
     // d_col / d_out_band の解放は arena のデストラクタ (rewind) が行う。
 }
 
+// ================================================================
+// G-10k T4: N>1 用の真 batch 経路 (ここから launch_conv2d の直前までは純追加)。
+//   上の N==1 用ヘルパ (launch_conv2d_1x1_gemm / launch_conv2d_im2col_gemm) と
+//   direct は 1 バイトも変更していない。
+// ================================================================
+
+// ----------------------------------------------------------------
+// キルスイッチ: DOLLAMA_CONV_BATCH=0 で N>1 の真 batch 経路を無効化し、
+//   G-2k S1 の per-n 直列ループ (旧コード) をそのまま実行する。
+//   作法は gemm.cu の cublas_disabled() / device_arena.cu の
+//   device_arena_pool_enabled() と同型 (getenv は初回のみ・以後キャッシュ =
+//   プロセス単位固定。同一プロセス内で切り替えることはできない)。
+//   未設定 / 空 / "0" 以外 は既定 (新経路 ON)。"0" のときだけ旧経路。
+// ----------------------------------------------------------------
+static bool conv_batch_enabled()
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char* v = std::getenv("DOLLAMA_CONV_BATCH");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        cached = (v != nullptr && std::strcmp(v, "0") == 0) ? 0 : 1;
+    }
+    return cached == 1;
+}
+
+// ----------------------------------------------------------------
+// N 次元対応 im2col (行帯対応)。grid.y = n (バッチ index)。
+//   入力 in : [N, Cin, H, W] row-major。item n の先頭は in + n*in_batch_stride。
+//   出力 col: [N][Cin*KH*KW, tile_rows*Wout]。item n の先頭は col + n*col_batch_stride
+//             (= K*Ncol・item 内は N==1 版と同一の [K, Ncol] row-major)。
+//   item 内の要素写像 (row / col 列 / ゼロパディング) は im2col_fp16 と完全同一。
+//   同一データを 2 item に入れれば col の両 item はビット一致する ([G2a] の前提)。
+// ----------------------------------------------------------------
+__global__ void im2col_fp16_batched(const __half* in,
+                                    __half*       col,
+                                    long long     in_batch_stride,
+                                    long long     col_batch_stride,
+                                    int           Cin,
+                                    int           H,
+                                    int           W,
+                                    int           KH,
+                                    int           KW,
+                                    int           Hout,
+                                    int           Wout,
+                                    int           ho_base,
+                                    int           tile_rows,
+                                    int           stride_h,
+                                    int           stride_w,
+                                    int           pad_h,
+                                    int           pad_w,
+                                    int           dilation_h,
+                                    int           dilation_w)
+{
+    const __half* in_n  = in  + static_cast<long long>(blockIdx.y) * in_batch_stride;
+    __half*       col_n = col + static_cast<long long>(blockIdx.y) * col_batch_stride;
+
+    const int K = Cin * KH * KW;        // col の行数
+    const long Ncol = static_cast<long>(tile_rows) * Wout; // col の列数
+    const long total = static_cast<long>(K) * Ncol;
+
+    for (long idx = static_cast<long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long>(gridDim.x) * blockDim.x)
+    {
+        // idx を (row, col_idx) に分解。
+        const long col_idx = idx % Ncol;
+        const int  krow    = static_cast<int>(idx / Ncol);
+
+        // col_idx を (ho_local, wo) に分解。
+        const int wo        = static_cast<int>(col_idx % Wout);
+        const int ho_local  = static_cast<int>(col_idx / Wout);
+        const int ho        = ho_base + ho_local;
+
+        // krow を (ci, kh, kw) に分解。
+        const int kw = krow % KW;
+        int        tk = krow / KW;
+        const int  kh = tk % KH;
+        const int  ci = tk / KH;
+
+        const int hi = ho * stride_h - pad_h + kh * dilation_h;
+        const int wi = wo * stride_w - pad_w + kw * dilation_w;
+
+        __half v = __float2half(0.0f);
+        if (hi >= 0 && hi < H && wi >= 0 && wi < W)
+        {
+            v = in_n[(static_cast<long>(ci) * H + hi) * W + wi];
+        }
+        col_n[idx] = v;
+    }
+}
+
+// ----------------------------------------------------------------
+// N 次元対応の行ごとブロードキャスト bias 加算: out[n, co, j] += bias[co]
+//   out は [N, Cout, Ncols] row-major。
+//   ★conv_bias_add_rows (N==1 用) は co = idx / Ncols の 1 段分解を前提にしており、
+//     Ncols に N*HW を渡すと bias index が壊れる。ここでは
+//     co = (idx / Ncols) % Cout の 2 段分解で [N, Cout, Ncols] を正しく分解する。
+//   要素ごとの演算 (h2f(out) + h2f(bias) -> f2h) は conv_bias_add_rows と同一。
+// ----------------------------------------------------------------
+__global__ void conv_bias_add_rows_batched(__half* out, const __half* bias,
+                                           int N, int Cout, long long Ncols)
+{
+    const long long total = static_cast<long long>(N) * Cout * Ncols;
+    for (long long idx = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long long>(gridDim.x) * blockDim.x)
+    {
+        const int co = static_cast<int>((idx / Ncols) % Cout);
+        const float v = __half2float(out[idx]) + __half2float(bias[co]);
+        out[idx] = __float2half(v);
+    }
+}
+
+// ----------------------------------------------------------------
+// N 次元対応の帯 GEMM 出力散布コピー。grid.y = n。
+//   src: [N][Cout, band_cols] (batched GEMM の C・item stride = Cout*band_cols)
+//   dst: [N][Cout, dst_row_stride] (全体出力・item stride = Cout*dst_row_stride)
+//     dst_n[co * dst_row_stride + band_col_off + j] = src_n[co * band_cols + j]
+//   item 内の写像は scatter_band_to_out と同一。
+// ----------------------------------------------------------------
+__global__ void scatter_band_to_out_batched(const __half* src,
+                                            __half*       dst,
+                                            int           Cout,
+                                            long long     band_cols,      // = rows*Wout
+                                            long long     dst_row_stride, // = Hout*Wout
+                                            long long     band_col_off)   // = ho_base*Wout
+{
+    const __half* src_n = src + static_cast<long long>(blockIdx.y) * Cout * band_cols;
+    __half*       dst_n = dst + static_cast<long long>(blockIdx.y) * Cout * dst_row_stride;
+
+    const long long total = static_cast<long long>(Cout) * band_cols;
+    for (long long idx = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+         idx < total;
+         idx += static_cast<long long>(gridDim.x) * blockDim.x)
+    {
+        const long long co = idx / band_cols;
+        const long long j  = idx % band_cols;
+        dst_n[co * dst_row_stride + band_col_off + j] = src_n[idx];
+    }
+}
+
+// ----------------------------------------------------------------
+// 1x1 conv → batched GEMM 経路 (N>1)。
+//   item n: out_n[Cout, HW] = weight[Cout, Cin] @ in_n[Cin, HW] (transB=false)。
+//   GemmBatchedDesc 写像: A=weight (stride_a=0 = 全 item 共有) /
+//   B=in (stride_b=Cin*HW) / C=out (stride_c=Cout*HW)。いずれも非負。
+//   帯分割は無い (N==1 版と同じく HW の単一 GEMM で全体テンソルへ直接書く)。
+// ----------------------------------------------------------------
+static void launch_conv2d_1x1_gemm_batched(const __half* d_in, const __half* d_weight,
+                                           const __half* d_bias, __half* d_out,
+                                           int N, int Cin, int H, int W, int Cout)
+{
+    const long long HW = static_cast<long long>(H) * W;
+
+    GemmBatchedDesc desc;
+    desc.batch    = N;
+    desc.M        = Cout;
+    desc.N        = static_cast<int>(HW); // SDXL の HW は最大 128*128=16384 で int に収まる
+    desc.K        = Cin;
+    desc.stride_a = 0;                                 // 重み共有
+    desc.stride_b = static_cast<long long>(Cin) * HW;  // in の item stride
+    desc.stride_c = static_cast<long long>(Cout) * HW; // out の item stride
+    desc.alpha    = 1.0f;
+    desc.beta     = 0.0f;
+    desc.trans_b  = false;
+    launch_gemm_fp16_batched(d_weight, d_in, d_out, desc);
+
+    if (d_bias != nullptr)
+    {
+        const int blocks =
+            grid_blocks_for(static_cast<long>(static_cast<long long>(N) * Cout * HW));
+        conv_bias_add_rows_batched<<<blocks, CONV_THREADS>>>(d_out, d_bias, N, Cout, HW);
+        CUDA_CHECK_KERNEL();
+    }
+}
+
+// ----------------------------------------------------------------
+// 一般 conv → N 次元対応 im2col + batched GEMM 経路 (N>1)。
+//   col[N][K, Ncol_tile] = im2col(in)、out_n[Cout, Ncol_tile] = weight[Cout,K] @ col_n。
+//   IM2COL_TILE_BYTES は N 込みの合計上限: rows_cap = 256MB / (bytes_per_row * N)。
+//   帯分割時は N==1 版と同じく帯連続バッファ (item stride = Cout*Ncol) へ書き、
+//   scatter_band_to_out_batched で全体テンソルへ散布する。
+//   GemmBatchedDesc 写像: A=weight (stride_a=0) / B=col (stride_b=K*Ncol) /
+//   C=帯バッファ (stride_c=Cout*Ncol) または d_out (stride_c=Cout*full_ncol・
+//   分割なしのとき Ncol==full_ncol なので同値)。いずれも非負。
+// ----------------------------------------------------------------
+static void launch_conv2d_im2col_gemm_batched(const __half* d_in, const __half* d_weight,
+                                              const __half* d_bias, __half* d_out,
+                                              int N, int Cin, int H, int W, int Cout,
+                                              int KH, int KW, int Hout, int Wout,
+                                              int stride_h, int stride_w, int pad_h, int pad_w,
+                                              int dilation_h, int dilation_w)
+{
+    const int K = Cin * KH * KW; // col 行数 = GEMM の K
+    const long long full_ncol = static_cast<long long>(Hout) * Wout; // 全体出力の行 stride
+    // 1 行 (ho=1) あたりの col バイト数 (全 N item 分)。これで帯の高さを決める。
+    const long long bytes_per_row_all =
+        static_cast<long long>(K) * Wout * sizeof(__half) * N;
+    int tile_rows = Hout;
+    if (bytes_per_row_all > 0)
+    {
+        long long rows_cap = static_cast<long long>(IM2COL_TILE_BYTES) / bytes_per_row_all;
+        if (rows_cap < 1)
+        {
+            rows_cap = 1; // 1 行でも上限超過する巨大形状でも最低 1 行ずつ進める
+        }
+        if (rows_cap < tile_rows)
+        {
+            tile_rows = static_cast<int>(rows_cap);
+        }
+    }
+
+    // 帯分割が発生するか (= tile_rows が Hout 未満)。
+    const bool banded = (tile_rows < Hout);
+
+    // 中間バッファはデバイスアリーナの bump 確保 (G-8k と同じ配管)。
+    // 数値的な正当性: d_col は帯ごとに im2col が全 item の K*Ncol 要素を全書き、
+    // d_out_band は GEMM が beta=0 で全 item の Cout*Ncol 要素を全書きするため、
+    // 再利用領域の残留値は読まれない。
+    DeviceArenaScope arena(DeviceArenaId::UNet);
+
+    // 帯 col バッファ確保 (最大帯サイズ × N item 分・合計 <= IM2COL_TILE_BYTES)。
+    const long long col_elems = static_cast<long long>(N) * K * tile_rows * Wout;
+    __half* d_col = arena.alloc<__half>(static_cast<size_t>(col_elems));
+
+    // 帯分割時のみ、GEMM 出力先の連続バッファ (item stride = Cout*帯幅) を確保。
+    __half* d_out_band = nullptr;
+    if (banded)
+    {
+        const long long band_out_elems = static_cast<long long>(N) * Cout * tile_rows * Wout;
+        d_out_band = arena.alloc<__half>(static_cast<size_t>(band_out_elems));
+    }
+
+    const long long in_stride  = static_cast<long long>(Cin) * H * W;   // in の item stride
+    const long long out_stride = static_cast<long long>(Cout) * full_ncol; // out の item stride
+
+    for (int ho_base = 0; ho_base < Hout; ho_base += tile_rows)
+    {
+        const int rows = (ho_base + tile_rows <= Hout) ? tile_rows : (Hout - ho_base);
+        const long long Ncol = static_cast<long long>(rows) * Wout; // この帯の GEMM N
+
+        // im2col (この帯・全 item)。grid.y = N。
+        const int blocks = grid_blocks_for(static_cast<long>(K) * static_cast<long>(Ncol));
+        const dim3 grid(static_cast<unsigned>(blocks), static_cast<unsigned>(N));
+        im2col_fp16_batched<<<grid, CONV_THREADS>>>(d_in, d_col, in_stride,
+                                                    static_cast<long long>(K) * Ncol,
+                                                    Cin, H, W, KH, KW,
+                                                    Hout, Wout, ho_base, rows,
+                                                    stride_h, stride_w, pad_h, pad_w,
+                                                    dilation_h, dilation_w);
+        CUDA_CHECK_KERNEL();
+
+        // batched GEMM: out_n[Cout, Ncol] = weight[Cout, K] @ col_n[K, Ncol]。
+        GemmBatchedDesc desc;
+        desc.batch    = N;
+        desc.M        = Cout;
+        desc.N        = static_cast<int>(Ncol);
+        desc.K        = K;
+        desc.stride_a = 0;                                  // 重み共有
+        desc.stride_b = static_cast<long long>(K) * Ncol;   // col の item stride
+        desc.stride_c = banded ? static_cast<long long>(Cout) * Ncol : out_stride;
+        desc.alpha    = 1.0f;
+        desc.beta     = 0.0f;
+        desc.trans_b  = false;
+        __half* d_gemm_out = banded ? d_out_band : d_out;
+        launch_gemm_fp16_batched(d_weight, d_col, d_gemm_out, desc);
+
+        if (banded)
+        {
+            // 帯バッファ (item stride=Cout*Ncol) を全体テンソル (行 stride=full_ncol・
+            // item stride=Cout*full_ncol) の列オフセット (ho_base*Wout) へ散布コピー。
+            const int sblocks = grid_blocks_for(static_cast<long>(Cout) * static_cast<long>(Ncol));
+            const dim3 sgrid(static_cast<unsigned>(sblocks), static_cast<unsigned>(N));
+            scatter_band_to_out_batched<<<sgrid, CONV_THREADS>>>(
+                d_out_band, d_out, Cout, Ncol, full_ncol,
+                static_cast<long long>(ho_base) * Wout);
+            CUDA_CHECK_KERNEL();
+        }
+    }
+
+    if (d_bias != nullptr)
+    {
+        const int blocks =
+            grid_blocks_for(static_cast<long>(static_cast<long long>(N) * Cout * full_ncol));
+        conv_bias_add_rows_batched<<<blocks, CONV_THREADS>>>(d_out, d_bias, N, Cout, full_ncol);
+        CUDA_CHECK_KERNEL();
+    }
+
+    // d_col / d_out_band の解放は arena のデストラクタ (rewind) が行う。
+}
+
 // ----------------------------------------------------------------
 // ホストラッパー: 形状に応じて 1x1=GEMM / 3x3 等=im2col+GEMM / direct を選択。
 // ----------------------------------------------------------------
@@ -486,6 +804,33 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
     // ----------------------------------------------------------------
     if (N > 1 && use_gemm_path(1, Cin, Cout, KH, KW, Hout, Wout))
     {
+        // ------------------------------------------------------------
+        // G-10k T4: 真の batch 経路 (既定 ON)。im2col の n 次元対応 + strided batched
+        // GEMM で N item を 1 発で回す。数値は per-n 直列と bit 一致を狙わない
+        // (batched のタイル選択差 = FP16 tol 内・G-2k S2 と同種)。
+        // キルスイッチ DOLLAMA_CONV_BATCH=0 のときはこのブロックに入らず、下の
+        // G-2k S1 per-n 直列ループ (旧コード・無改変) がそのまま実行される。
+        //   ★構造保存: 旧ループは新設の N 対応関数を経由せず、rows_cap の N 分割も
+        //     通らない (N==1 ヘルパをそのまま N 回呼ぶ)。
+        // ------------------------------------------------------------
+        if (conv_batch_enabled())
+        {
+            if (is_1x1)
+            {
+                launch_conv2d_1x1_gemm_batched(d_in, d_weight, d_bias, d_out,
+                                               N, Cin, H, W, Cout);
+            }
+            else
+            {
+                launch_conv2d_im2col_gemm_batched(d_in, d_weight, d_bias, d_out,
+                                                  N, Cin, H, W, Cout,
+                                                  KH, KW, Hout, Wout, stride_h, stride_w,
+                                                  pad_h, pad_w, dilation_h, dilation_w);
+            }
+            return;
+        }
+
+        // ---- ここから下は G-2k S1 の per-n 直列ループ (DOLLAMA_CONV_BATCH=0 の旧経路・無改変) ----
         const long in_stride  = static_cast<long>(Cin) * H * W;
         const long out_stride = static_cast<long>(Cout) * Hout * Wout;
         for (int n = 0; n < N; ++n)
