@@ -1,0 +1,159 @@
+G-10k T5 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走・実走のみ・src 無改変)
+採取と結果の所在のみ。数値の位置づけ・合否設計は docs/g10k-plan.md §4 不変条件 3 / §6 T5 行 / §9-2 / §10 を見ること。
+判定は §6 T5 行 (①〜⑥) の数値どおりに機械的に行い、それ以外の解釈は加えない。
+
+======================================================================
+[共通条件]
+======================================================================
+  実行日     : 2026-09-12 (JST)  ※各ログのヘッダ start(local) / end(local) が一次証拠
+  ホスト     : KIK-WIN-RTX58 (RTX5080 / Blackwell / sm_120)
+  nvcc       : CUDA 13.3 V13.3.33 (T3/T4 と同一ツールチェーン)
+  ブランチ   : feat/g10k-conv-true-batch2
+  走行時 HEAD: e16b7008995987a6d9164c45af70439681996ab7
+               (= T4 本体 8707472 + T4 是正 e16b700。src/ はコミット済・全走行で porcelain は
+                 未追跡の docs/logs/g10k-t5/ のみ = ソースは clean)
+  ビルド     : 走行前に `meson compile -C build` を実行し "ninja: no work to do." を確認 (t5_meson_compile_full.log)
+               = exe は HEAD e16b700 のソースから生成済みのもの (T4 是正の最終ツリーと同一 exe。
+                 test_conv2d.exe sha256 1FEF7939… は docs/logs/g10k-t4/t4_index.txt の「最終ツリーの exe」と一致)
+  SAC        : VerifiedAndReputablePolicyState = 0 (= Smart App Control OFF) を各ログのヘッダで採取
+               (セッション開始時点で既に OFF・ユーザーへの OFF 依頼は不要だった)
+  env        : 各ログのヘッダ "--- env ---" 節が一次証拠 (DOLLAMA_* / PROF_* / DB2_* の 19 変数を毎回列挙)。
+               既定走行 = すべて <unset>。★DOLLAMA_CONV_BATCH は全走行で <unset> (= batched ON) が既定で、
+               =0 を入れたのは #6 の 1 プロセスのみ。
+  GPU 直列   : すべてフォアグラウンドで 1 本ずつ実走 (並列なし)。各ログのヘッダ/末尾に nvidia-smi
+               (memory.used / temp / SM clock / power) の pre/post サンプルあり。
+  走行スクリプト: docs/logs/g10k-t5/scripts/t5_run.ps1 (T4 の t4_run_conv2d.ps1 と同型。ヘッダ = HEAD /
+               porcelain / exe と対象ソース 10 本の sha256 / SAC / nvidia-smi / env を採り、stdout+stderr を
+               2>&1 で落とし、末尾に exit=<code> を書く)。
+               ★スクリプト改訂: 初版は -EnvSet を [string[]] で受けていたが、`pwsh -File` 越しに複数要素が
+                 落ちて全 <unset> になった (= DISCARDED 走行・下記)。';' 区切りの単一文字列に改訂して以降の
+                 走行 (#7 以降) を採った。#3〜#6 は初版で走らせたが、-EnvSet 無指定 (#3/#4/#5) または
+                 単要素 (#6 = 'DOLLAMA_CONV_BATCH=0') であり、ヘッダ env 節で意図どおりの env を確認済み。
+  ①の meson test / compile は Bash から直接実行 (スクリプト非経由・ヘッダは同等項目を手書き)。
+  ★build/meson-logs/testlog.txt は使わない (§6 T5 ⑤ = セッション env の秘匿情報を含む)。
+
+  走行時ツリーのソース sha256 (全ログのヘッダに同値・HEAD e16b700 と一致):
+    31f6c8c6923acf8a35a3e47985f8f97e953397da867de9b8386636cd1a89a183  src/kernels/conv2d.cu      (T4 最終と同一)
+    4eec27b5175ac4cc011fa924e3f162e079236b080b25c7146490dae072944203  src/kernels/gemm.cu        (T3 のまま)
+    a64ce46ccbb83fafcce3e75e18367e7ec234e5fee07851b376e18056a346d91a  src/kernels/gemm.cuh       (T3 のまま)
+    d792e94c0f9d05362379f763d7558815a63e5c1fc4c5794afe4155e1df6256c1  src/kernels/device_arena.cu
+    8f0f80da043a590b732c37caa307aa31d263e5a5fda5f666ada4efb76c2a474d  src/infer/diffusion.cu
+    4d3d8411ba391be2447a8b3c377107614f16af96688a104222e54feec1564ffb  src/infer/unet.cu
+    566f487307c109e33da1d25625cb5dfa5e5e3d079c5ccfb3be10adab9d579a82  src/tests/test_conv2d.cu   (T4 是正最終と同一)
+    b4a24ab26a4173e96df43ffa850c8f7d857b4586fc0f11ab15da1267099e1012  src/tests/test_diffusion_batch2.cu
+    d2b2cd02a2ca2ddeea97acc28ca8a642023c397f2c34a725ea659a66c703bb1c  src/tests/test_unet_fast.cu
+    ba81564087dfcce6ab37310110e5b0080babb4b6658a56827b9c1b0eb0c8b7c8  src/tests/prof_arena_e2e.cu
+  exe sha256:
+    1fef7939a5d3597f412ce752cfe646fd1f72f94dda810cf5716eca937ac66504  build/src/test_conv2d.exe
+    87ea4c3af0fcc8064388cfcd52d995caf655cc181633eeea521511a7ed3c271b  build/src/test_diffusion_batch2.exe
+    98c03a0073d51dfaac61b50a080bc1d17458b2cac9df492ce3148278fc28d78c  build/src/test_unet_fast.exe
+    68f65f00c0160078ac8f0e604a912aa3e88f14149755e2c286a817da8d8adc90  build/src/prof_arena_e2e.exe
+
+======================================================================
+[走行一覧]  (順序 = 実走順・すべて exit=0)
+======================================================================
+  # | ログ                                     | 対応   | env (ヘッダ env 節が一次証拠)                                        | exe sha256 (先頭 8) | exit | 位置づけ / 結果
+  1 | t5_meson_compile_full.log                | ①前提 | -                                                                    | -                   | 0    | `meson compile -C build` → "ninja: no work to do." (exe は HEAD のソース由来)
+  2 | t5_meson_test_full.log                   | ①     | 全 <unset> (meson が test 定義の env を付与: conv2d_batch_off のみ =0)  | (4 本を冒頭に記載)  | 0    | `meson test -C build` **Ok 54 / Fail 0 / Timeout 0** (conv2d 12.30s / conv2d_batch_off 11.46s / unet_fast 13.96s / diffusion_batch2 68.44s)
+  3 | t5_diffusion_batch2_default.log          | ②⑤   | 全 <unset>                                                            | 87EA4C3A            | 0    | GATE1〜4 全 PASS (下記)。GATE5 は DOLLAMA_PROFILE unset のため SKIP (設計どおり・#9 で採取)
+  4 | t5_unet_fast_default.log                 | ⑤     | 全 <unset>                                                            | 98C03A00            | 0    | ALL PASSED (下記)
+  5 | t5_conv2d_default.log                    | ⑤     | 全 <unset> (DOLLAMA_CONV_BATCH 既定 = batched ON)                     | 1FEF7939            | 0    | ALL PASSED。PASSED 75 / FAILED 0。[G1] は本プロセスでは n/a (設計どおり)
+  6 | t5_conv2d_convbatch0.log                 | ⑤     | DOLLAMA_CONV_BATCH=0 のみ set                                          | 1FEF7939            | 0    | ALL PASSED。PASSED 80 / FAILED 0。[G1] 5/5 PASSED (memcmp BIT-EXACT + wrapper +0)
+  7 | t5_arena_e2e_pool0.log                   | ③基準 | PROF_IMAGES=3 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 PROF_SAMPLE_MS=5 DOLLAMA_PROFILE=1 **DOLLAMA_POOL=0** | 68F65F00 | 0 | 同一セッションの基準 (pool_enabled=0)。PEAK_USED **13281MB** / 3 枚 sec 16.78/16.40/16.45
+  8 | t5_arena_e2e_default.log                 | ③⑥   | 同上・DOLLAMA_POOL <unset> (reserve ON)・DOLLAMA_CONV_BATCH <unset> (batched ON) | 68F65F00 | 0 | 既定。PEAK_USED **13627MB** / 3 枚 sec 11.62/11.28/11.27 (下記)
+  9 | t5_diffusion_batch2_profile1_gate5.log   | 補走   | DOLLAMA_PROFILE=1 のみ set                                             | 87EA4C3A            | 0    | T5 行の要求外の補走。GATE5 (T2b reset) 2 構成とも PASS・GATE1〜4 は #3 と同値 (下記)
+  - | DISCARDED_arena_e2e_pool0_envset_not_applied.log | (棄却) | ★全 <unset> (DOLLAMA_POOL も PROFILE も入らなかった)             | 68F65F00            | 0    | **採用しない**。初版スクリプトの -EnvSet 配列が落ちた走行 (ラベル pool0 だが実体は既定・PROFILE なし)。
+                                                                                                                                       条件がラベルと不一致なので棄却し #7 として撮り直した。中身 (PEAK_USED 13623MB・
+                                                                                                                                       d_cudaMalloc/d_cudaFree/d_chunkAlloc=0・live_peak 5914MiB) は #8 と整合するが結論は本走行に依存しない。
+                                                                                                                                       env が効いたかは必ずヘッダ env 節で読むこと (g8k-s4b README の DISCARDED と同じ扱い)。
+
+  ①の env 付与について: #2 の meson test は src/meson.build の test() 定義に従い conv2d_batch_off にのみ
+  DOLLAMA_CONV_BATCH=0 を付与する。起動シェル側の DOLLAMA_* 6 変数は unset を明示した (ログ冒頭に記載)。
+
+======================================================================
+[① meson test]  (#2)
+======================================================================
+  Ok: 54 / Expected Fail: 0 / Fail: 0 / Unexpected Pass: 0 / Skipped: 0 / Timeout: 0  → exit=0
+  (§6 T5 ① は「現状 53 本 + 追加分」。T4 是正で conv2d_batch_off が 1 本増えて 54 本 = t4fix_meson_test_full.log と同数)
+
+======================================================================
+[② test_diffusion_batch2 GATE1〜4]  (#3。#9 も同値)
+======================================================================
+  steps=4 / guidance sweep {1.0, 3.0, 7.5} / gate=g1.0
+  GATE1  noise floor (off@g=1.0 x2)         : MAE=0 max_abs=0 (bit-exact)
+  GATE2  batch2 vs off @g=1.0  (主ゲート)    : MAE=0.0303612 max_abs=2  SSIM=**0.999474**  (>=0.999 PASS)
+  GATE3  epi determinism (fast+epi@g=1.0 x2): MAE=0 max_abs=0 (bit-exact)
+  GATE4  (fast+epi) vs fast @g=1.0          : MAE=0.0307191 max_abs=2  SSIM=**0.999467**  (>=0.999 PASS)
+  characterization (合否なし): batch2-vs-off g=3 SSIM 0.998789 / g=7.5 0.996698 ; (fast+epi)-vs-fast g=3 0.9988 / g=7.5 0.996795
+  → "[test_diffusion_batch2] parity PASSED" / "ALL PASSED" / exit=0
+  参考: G-4k S3 (conv2d 変更前・CLAUDE.md 計測表) の GATE2 0.999474 / GATE4 0.999477 と比べ GATE2 は同値・GATE4 は 0.999477→0.999467。
+        本索引は比較の解釈をしない (§6 T5 は「>=0.999」の機械判定のみ)。
+  GATE5 (#9・補走・T5 行の要求外): off(default) cat_resnet_sec run1=0.217572s rerun=0.218545s ratio=1.00447 /
+        fast+epi run1=0.177446s rerun=0.179845s ratio=1.01352 (required: sentinel cleared and ratio<1.5) → 両方 PASS。
+        ★この cat_resnet_sec は steps=4・profile ON の値で、T6/T7 の resnet バケットの代わりには使わない。
+
+======================================================================
+[⑤ test_unet_fast]  (#4)
+======================================================================
+  default vs golden : MAE=7.83832e-05 max_abs=0.000465386 bad=0 SSIM=0.999996
+  fast vs default   : MAE=0 max_abs=0 bad=0 SSIM=1  (**bit-exact** = default 無改変維持) (fast vs golden SSIM=0.999996)
+  epilogue vs default: MAE=6.57082e-05 max_abs=0.000488281 bad=0 SSIM=0.999999 (epilogue vs golden SSIM=0.999996)
+  [g8k_s2] default / fast / epilogue: run0==run1(0xFF poisoned) BIT-EXACT / run0==run2(0x00 poisoned) BIT-EXACT ・ pool=on last-run cudaMalloc +0 cudaFree +0
+  1step latency median (warm) default=356.968ms fast=254.449ms fast+epilogue=248.802ms (characterization・本索引は判定しない)
+  → ALL PASSED / exit=0
+
+======================================================================
+[⑤ test_conv2d 2 プロセス]  (#5 既定 / #6 =0)
+======================================================================
+  #5 既定 (batched ON): PASSED 75 / FAILED 0 / ALL PASSED。[G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] 全 PASSED。
+     [G4:G4_band_640to320_128] arena peak_request during one launch_conv2d(N=2) = 270 MiB (T4 t4_default_run2_final.log:177 と同値)
+     [G4:G4_band_960to320_128] = 262 MiB (同上)
+  #6 =0 (キルスイッチ): PASSED 80 / FAILED 0 / ALL PASSED。[G1] 5/5 PASSED (memcmp vs per-sample BIT-EXACT / batched wrapper +0)。
+     [G2a]/[G2b] path check (=0: wrapper +0) 全形状 PASSED。[G3] 8/8 PASSED。
+  ★2 プロセス体制 (T4 と同じ): DOLLAMA_CONV_BATCH は getenv キャッシュ型 = プロセス単位固定。同一プロセス内で切り替えたのではない。
+
+======================================================================
+[③⑥ prof_arena_e2e G-8k 回帰]  (#7 基準 POOL=0 → #8 既定・同一セッション・連続実走・間に他の GPU 負荷なし)
+======================================================================
+  共通: images=3 steps=20 g=7.5 fast=1 sample_ms=5 / DOLLAMA_PROFILE=1 / DOLLAMA_CONV_BATCH <unset> (= batched ON・⑥の条件)
+  ★§9-2 の誤読注意: `[ALLOC] reserve: unet=6080MiB unet_persist=176MiB` の行は #7 (POOL=0) でも出る。判定は終了時サマリの cap/reserved/chunks。
+
+  #8 既定 (reserve ON / batched ON):
+    used_after_ctx=1290MB total=16275MB / used_after_weight_load=13296MB free=2979MB
+    image=1: d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=24362 | cap=6080MiB chunks=1 live_peak=5914MiB cursor_peak=5914MiB  peak_used_delta_this_image=331MB
+    image=2: d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=24362 | 同上  delta=0MB
+    image=3: d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=24362 | 同上  delta=0MB
+    unet_persist: d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 (3 枚とも) | cap=176MiB live_peak=137MiB
+    終了時: [ALLOC] arena=unet cap=6080MiB reserved=6080MiB **live_peak=5914MiB** cursor_peak=5914MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=73086
+            [ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB chunks=1 cudaMalloc=1 cudaFree=0
+    PEAK_USED=**13627MB** (FINAL_PEAK_USED 同値) / used_after_destroy=1362MB / 3 枚 sec 11.6226 / 11.2779 / 11.2728 / rgb_hash 3 枚とも 0x64b97f4d8832b6af
+    `[ALLOC] reserve shortage:` の行: **0 件** (grep -c "reserve shortage" = 0。stderr も 2>&1 で同一ファイルに落ちている)
+  #7 基準 (POOL=0):
+    pool_enabled=0 / used_after_weight_load=7040MB / 各枚 d_cudaMalloc=24362 d_cudaFree=24362 d_chunkAlloc=0 (= 実 malloc/free 経路) /
+    終了時 [ALLOC] arena=unet cap=0MiB reserved=0MiB live_peak=5914MiB chunks=0 cudaMalloc=73086 cudaFree=73086
+    PEAK_USED=**13281MB** / 3 枚 sec 16.7798 / 16.4048 / 16.4544 / rgb_hash 3 枚とも 0x64b97f4d8832b6af (= #8 と同一ハッシュ)
+    `reserve shortage` 0 件
+  ③ の機械判定:
+    step ループ内 実 cudaMalloc = 0 / cudaFree = 0 / chunk_alloc = 0 (3 枚すべて d_* = 0)          → 満たす
+    peak delta (同一セッション POOL=0 比) = 13627 − 13281 = **+346MB**                             → (参考: G-8k S6 +340MB / S4b +380MB・S4b ゲート G4 は ≤ 基準+512MB)
+    `[ALLOC] reserve shortage:` 不在                                                                → 明示確認 (0 件)
+  ⑥ の機械判定:
+    `[ALLOC] live_peak=` 実数値 = **5914MiB** (arena=unet・終了時サマリ・3 枚の image 行も 5914MiB)
+    5914MiB ≤ 5914MiB (kArenaLivePeakUnetMiB)                                                        → 満たす (等号・超過なし)
+    `reserve shortage` 不在                                                                          → 明示確認 (0 件)
+    → BLOCK 条件 (shortage あり / live_peak > 5914MiB) には該当しない。
+  ★注意 (解釈は加えない・事実のみ): live_peak は #7 (POOL=0) / #8 (既定) / G-8k S4b (conv2d 変更前・docs/logs/g8k-s4b) のいずれも 5914MiB で
+    同値。d_alloc は S4b の 25082 → 本走行 24362 に変化 (1 枚あたりの arena alloc 回数)。rgb_hash は S4b (0x8a96690109d2b253) と
+    本走行 (0x64b97f4d8832b6af) で異なる (prof_arena_e2e は conv2d 変更前後で出力 bit 一致を要求するゲートではない。
+    数値パリティは ② GATE2/GATE4 と test_conv2d [G1]〜[G5] が担う)。
+  ★PEAK_USED は cudaMemGetInfo の total−free = device-wide (他プロセス分を含む)。「プロセス GPU peak」と呼ばない (g8k-s4b README と同じ注意)。
+    本走行の nvidia-smi pre は 1062〜1066MiB (他プロセス常駐) で #7/#8 ともほぼ同じ。
+
+======================================================================
+[注意]
+======================================================================
+  ・本索引は判定を §6 T5 行の数値条件に限る。秒 (sec / 1step latency / cat_resnet_sec) はすべて characterization で、
+    T6 (bench_batch_vs_persample) / T7 (DB2_BENCH) の代わりには使わない。
+  ・#7/#8 の sec 差 (16.5s vs 11.3s) は POOL=0 が実 cudaMalloc/cudaFree 経路であることによる既知の差 (G-8k S4 の G6 と同種)。
+  ・meson test の各 test stdout は build/meson-logs/testlog.txt にあるが env 秘匿のため repo に入れない。
+    GATE 行・bit-exact 行の一次証拠は #3〜#6 の exe 直接実行ログ側にある。

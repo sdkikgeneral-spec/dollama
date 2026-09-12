@@ -1,0 +1,137 @@
+===== G-10k T5 実走ヘッダ (arena_e2e_pool0) =====
+note         = T5 (3): 同一セッションの基準 DOLLAMA_POOL=0 (env は G-8k S4b と同一に pin)・DOLLAMA_CONV_BATCH 既定 (batched ON)
+start(local) = 2026-09-12 23:43:32 +09:00
+hostname     = KIK-WIN-RTX58
+HEAD         = e16b7008995987a6d9164c45af70439681996ab7
+porcelain    = [?? docs/logs/g10k-t5/]  (空 = clean)
+exe          = build\src\prof_arena_e2e.exe
+exe sha256   = 68F65F00C0160078AC8F0E604A912AA3E88F14149755E2C286A817DA8D8ADC90
+src\kernels\conv2d.cu                sha256 = 31F6C8C6923ACF8A35A3E47985F8F97E953397DA867DE9B8386636CD1A89A183
+src\kernels\gemm.cu                  sha256 = 4EEC27B5175AC4CC011FA924E3F162E079236B080B25C7146490DAE072944203
+src\kernels\gemm.cuh                 sha256 = A64CE46CCBB83FAFCCE3E75E18367E7EC234E5FEE07851B376E18056A346D91A
+src\kernels\device_arena.cu          sha256 = D792E94C0F9D05362379F763D7558815A63E5C1FC4C5794AFE4155E1DF6256C1
+src\infer\diffusion.cu               sha256 = 8F0F80DA043A590B732C37CAA307AA31D263E5A5FDA5F666ADA4EFB76C2A474D
+src\infer\unet.cu                    sha256 = 4D3D8411BA391BE2447A8B3C377107614F16AF96688A104222E54FEEC1564FFB
+src\tests\test_conv2d.cu             sha256 = 566F487307C109E33DA1D25625CB5DFA5E5E3D079C5CCFB3BE10ADAB9D579A82
+src\tests\test_diffusion_batch2.cu   sha256 = B4A24AB26A4173E96DF43FFA850C8F7D857B4586FC0F11AB15DA1267099E1012
+src\tests\test_unet_fast.cu          sha256 = D2B2CD02A2CA2DDEEA97ACC28CA8A642023C397F2C34A725EA659A66C703BB1C
+src\tests\prof_arena_e2e.cu          sha256 = BA81564087DFCCE6AB37310110E5B0080BABB4B6658A56827B9C1B0EB0C8B7C8
+SAC VerifiedAndReputablePolicyState = 0
+nvidia-smi (pre) = 1063 MiB, 41, 547 MHz, 23.68 W
+--- env ---
+  DOLLAMA_CONV_BATCH = <unset>
+  DOLLAMA_GEMM = <unset>
+  DOLLAMA_POOL = 0
+  DOLLAMA_PROFILE = 1
+  DOLLAMA_EPILOGUE = <unset>
+  DOLLAMA_G8K_DUMP = <unset>
+  DOLLAMA_ARENA_RESERVE_MB = <unset>
+  DOLLAMA_ARENA_RELEASE = <unset>
+  PROF_IMAGES = 3
+  PROF_STEPS = 20
+  PROF_G = 7.5
+  PROF_FAST = 1
+  PROF_SAMPLE_MS = 5
+  DB2_BENCH = <unset>
+  DB2_BENCH_STEPS = <unset>
+  DB2_BENCH_ITERS = <unset>
+  DB2_BENCH_G = <unset>
+  DB2_STEPS = <unset>
+  DB2_UNCOND_ZERO = <unset>
+===== stdout+stderr (2>&1) =====
+[S4] config images=3 steps=20 g=7.5 fast=1 DOLLAMA_POOL=0 DOLLAMA_ARENA_RELEASE=(unset) pool_enabled=0 sample_ms=5
+[S4] used_after_ctx=1290MB total=16275MB
+[ALLOC] reserve: unet=6080MiB unet_persist=176MiB (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)
+[S4] used_after_weight_load=7040MB free=9235MB
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)      15.389 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             5.444 s
+      mid                              1.369 s
+      up                               8.542 s
+      conv_out                         0.025 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          2.120 s
+      transformer (attn/gemm)         10.351 s
+        -> attention only              6.573 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[S4] image=1 sec=16.7798 rgb_hash=0x64b97f4d8832b6af 1024x1024
+[S4] image arena=unet d_cudaMalloc=24362 d_cudaFree=24362 d_chunkAlloc=0 d_alloc=24362 | cap=0MiB chunks=0 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=24362 cum_cudaFree=24362 cum_chunkAlloc=0
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=0 | cap=0MiB chunks=0 live_peak=0MiB cursor_peak=0MiB cum_cudaMalloc=0 cum_cudaFree=0 cum_chunkAlloc=0
+[S4] image=1 peak_used_total=13241MB peak_used_delta_this_image=6201MB used_after_image=7106MB
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)      15.108 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             5.158 s
+      mid                              1.378 s
+      up                               8.539 s
+      conv_out                         0.024 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          2.118 s
+      transformer (attn/gemm)         10.355 s
+        -> attention only              6.601 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[S4] image=2 sec=16.4048 rgb_hash=0x64b97f4d8832b6af 1024x1024
+[S4] image arena=unet d_cudaMalloc=24362 d_cudaFree=24362 d_chunkAlloc=0 d_alloc=24362 | cap=0MiB chunks=0 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=48724 cum_cudaFree=48724 cum_chunkAlloc=0
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=0 | cap=0MiB chunks=0 live_peak=0MiB cursor_peak=0MiB cum_cudaMalloc=0 cum_cudaFree=0 cum_chunkAlloc=0
+[S4] image=2 peak_used_total=13241MB peak_used_delta_this_image=0MB used_after_image=7106MB
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)      15.158 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             5.192 s
+      mid                              1.373 s
+      up                               8.558 s
+      conv_out                         0.025 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          2.140 s
+      transformer (attn/gemm)         10.346 s
+        -> attention only              6.593 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[S4] image=3 sec=16.4544 rgb_hash=0x64b97f4d8832b6af 1024x1024
+[S4] image arena=unet d_cudaMalloc=24362 d_cudaFree=24362 d_chunkAlloc=0 d_alloc=24362 | cap=0MiB chunks=0 live_peak=5914MiB cursor_peak=5914MiB cum_cudaMalloc=73086 cum_cudaFree=73086 cum_chunkAlloc=0
+[S4] image arena=unet_persist d_cudaMalloc=0 d_cudaFree=0 d_chunkAlloc=0 d_alloc=0 | cap=0MiB chunks=0 live_peak=0MiB cursor_peak=0MiB cum_cudaMalloc=0 cum_cudaFree=0 cum_chunkAlloc=0
+[S4] image=3 peak_used_total=13281MB peak_used_delta_this_image=39MB used_after_image=7106MB
+[S4] PEAK_USED=13281MB (total=16275MB)
+[ALLOC] arena=unet cap=0MiB reserved=0MiB live_peak=5914MiB cursor_peak=5914MiB chunks=0 cudaMalloc=73086 cudaFree=73086 alloc=73086
+[ALLOC] arena=unet_persist cap=0MiB reserved=0MiB live_peak=0MiB cursor_peak=0MiB chunks=0 cudaMalloc=0 cudaFree=0 alloc=0
+[S4] used_after_destroy=1362MB
+[S4] FINAL_PEAK_USED=13281MB
+end(local)   = 2026-09-12 23:44:27 +09:00
+nvidia-smi (post) = 1058 MiB, 57, 2835 MHz, 168.76 W
+exit=0

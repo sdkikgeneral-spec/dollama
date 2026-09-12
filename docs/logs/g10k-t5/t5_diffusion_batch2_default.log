@@ -1,0 +1,60 @@
+===== G-10k T5 実走ヘッダ (diffusion_batch2_default) =====
+note         = T5 (2)(5): GATE1-4 一次証拠・DOLLAMA_* 全 unset (CONV_BATCH 既定=batched ON)
+start(local) = 2026-09-12 23:39:48 +09:00
+hostname     = KIK-WIN-RTX58
+HEAD         = e16b7008995987a6d9164c45af70439681996ab7
+porcelain    = [?? docs/logs/g10k-t5/]  (空 = clean)
+exe          = build\src\test_diffusion_batch2.exe
+exe sha256   = 87EA4C3AF0FCC8064388CFCD52D995CAF655CC181633EEEA521511A7ED3C271B
+src\kernels\conv2d.cu                sha256 = 31F6C8C6923ACF8A35A3E47985F8F97E953397DA867DE9B8386636CD1A89A183
+src\kernels\gemm.cu                  sha256 = 4EEC27B5175AC4CC011FA924E3F162E079236B080B25C7146490DAE072944203
+src\kernels\gemm.cuh                 sha256 = A64CE46CCBB83FAFCCE3E75E18367E7EC234E5FEE07851B376E18056A346D91A
+src\kernels\device_arena.cu          sha256 = D792E94C0F9D05362379F763D7558815A63E5C1FC4C5794AFE4155E1DF6256C1
+src\infer\diffusion.cu               sha256 = 8F0F80DA043A590B732C37CAA307AA31D263E5A5FDA5F666ADA4EFB76C2A474D
+src\infer\unet.cu                    sha256 = 4D3D8411BA391BE2447A8B3C377107614F16AF96688A104222E54FEEC1564FFB
+src\tests\test_conv2d.cu             sha256 = 566F487307C109E33DA1D25625CB5DFA5E5E3D079C5CCFB3BE10ADAB9D579A82
+src\tests\test_diffusion_batch2.cu   sha256 = B4A24AB26A4173E96DF43FFA850C8F7D857B4586FC0F11AB15DA1267099E1012
+src\tests\test_unet_fast.cu          sha256 = D2B2CD02A2CA2DDEEA97ACC28CA8A642023C397F2C34A725EA659A66C703BB1C
+src\tests\prof_arena_e2e.cu          sha256 = BA81564087DFCCE6AB37310110E5B0080BABB4B6658A56827B9C1B0EB0C8B7C8
+SAC VerifiedAndReputablePolicyState = 0
+nvidia-smi (pre) = 1066 MiB, 45, 1920 MHz, 33.58 W
+--- env ---
+  DOLLAMA_CONV_BATCH = <unset>
+  DOLLAMA_GEMM = <unset>
+  DOLLAMA_POOL = <unset>
+  DOLLAMA_PROFILE = <unset>
+  DOLLAMA_EPILOGUE = <unset>
+  DOLLAMA_G8K_DUMP = <unset>
+  DOLLAMA_ARENA_RESERVE_MB = <unset>
+  DOLLAMA_ARENA_RELEASE = <unset>
+  PROF_IMAGES = <unset>
+  PROF_STEPS = <unset>
+  PROF_G = <unset>
+  PROF_FAST = <unset>
+  PROF_SAMPLE_MS = <unset>
+  DB2_BENCH = <unset>
+  DB2_BENCH_STEPS = <unset>
+  DB2_BENCH_ITERS = <unset>
+  DB2_BENCH_G = <unset>
+  DB2_STEPS = <unset>
+  DB2_UNCOND_ZERO = <unset>
+===== stdout+stderr (2>&1) =====
+[test_diffusion_batch2] unet_weights=E:/Develop/Projects/dollama/src/tests/data/unet_weights.safetensors
+[test_diffusion_batch2] vae_weights=E:/Develop/Projects/dollama/src/tests/data/vae_weights.safetensors
+[test_diffusion_batch2] io=E:/Develop/Projects/dollama/src/tests/data/unet_io.safetensors
+[test_diffusion_batch2] steps=4 guidance sweep={1.0, 3.0, 7.5} (gate=g1.0)
+[test_diffusion_batch2] VRAM free=14913MB (after all parity pipelines destroyed)
+[test_diffusion_batch2] [GATE1] noise floor (off@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 batch2-vs-off: MAE=0.0303612 max_abs=2 SSIM=0.999474 [GATE2 >=0.999]
+[test_diffusion_batch2] sweep g=3 batch2-vs-off: MAE=0.0864604 max_abs=9 SSIM=0.998789 (characterization)
+[test_diffusion_batch2] sweep g=7.5 batch2-vs-off: MAE=0.290378 max_abs=19 SSIM=0.996698 (characterization)
+[test_diffusion_batch2] [GATE3] epi determinism (fast+epi@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 (fast+epi)-vs-fast: MAE=0.0307191 max_abs=2 SSIM=0.999467 [GATE4 >=0.999]
+[test_diffusion_batch2] sweep g=3 (fast+epi)-vs-fast: MAE=0.0857855 max_abs=6 SSIM=0.9988 (characterization)
+[test_diffusion_batch2] sweep g=7.5 (fast+epi)-vs-fast: MAE=0.288295 max_abs=17 SSIM=0.996795 (characterization)
+[test_diffusion_batch2] [GATE5] SKIP (DOLLAMA_PROFILE unset: cat_resnet_sec is only accumulated while profiling is enabled)
+[test_diffusion_batch2] parity PASSED (GATE2 batch2 g=1.0 SSIM=0.999474 / GATE4 epilogue g=1.0 SSIM=0.999467 >= 0.999・GATE1/GATE3 determinism bit-exact)
+[test_diffusion_batch2] ALL PASSED
+end(local)   = 2026-09-12 23:40:54 +09:00
+nvidia-smi (post) = 1066 MiB, 49, 2880 MHz, 162.49 W
+exit=0
