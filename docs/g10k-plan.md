@@ -598,7 +598,9 @@ T2c と T7 は**別セッション**なので、アンカー 1 (同一セッシ�
 22. ★**小形状 [G2] floor の MAE は G-2k S2 の 6.4e-5 と「同オーダー」と書かない・実比を書く**。
     `small_1x1_bias_17x19` の MAE **2.7e-4** / `small_3x3_s2_33to17` の MAE **6.2e-4**
     (出典 `docs/logs/g10k-t4/t4_default_run2_final.log:104`, `:114`) は、CLAUDE.md 計測表
-    「UNet バッチ (G-2k S2)」行の per-sample MAE **6.4e-5** と比べて **約 4.2 倍 / 約 9.7 倍大きい**
+    「UNet バッチ (G-2k S2)」行の per-sample MAE **6.4e-5** と比べて **約 4.2 倍 / 約 9.7 倍**
+    (2026-09-12 是正: 後者は `0.000615136 / 6.4e-5 = 9.61` = **正確には約 9.6 倍**。
+    `docs/logs/g10k-t4/t4_default_run2_final.log:114` の MAE 実測値で検算) **大きい**
     (K が違う形状どうしの比較であることに注意)。「同オーダー」という丸めた表現は使わず、この実比を書く。
 23. ★**`grid_blocks_for(long)` への `static_cast<long>` は既知事項として 1 行残す**。
     `src/kernels/conv2d.cu:279` の `grid_blocks_for(long total)` は呼出側 (同 `:347`, `:415`, `:433`,
@@ -631,7 +633,7 @@ G-2k S3c と同じノイズ床切り分けを最初からやり直すことに�
 | **[G2a]** (新設) | 新経路で **sample0 と sample1 に同一データ**を入れたとき、出力の前半と後半が **memcmp 一致**すること | **hard bit-exact**。両サンプルは同一 stride を通るのでタイル選択差が入らない。**stride / オフセット誤り・サンプル間の漏れを tol 無しで捕まえる** |
 | **[G2b]** (新設) | 新経路で (X,Y) を入れた出力と (Y,X) を入れた出力が、**入れ替えで memcmp 一致**すること | **hard bit-exact**。**非対称バグ (2 本目だけ壊れる形) を捕まえる** |
 | **[G2]** (既存維持) | batched vs per-sample 参照を既存 `compare(..., K, ...)` (`test_conv2d.cu:87-123`) で判定。形状は §5 の**代表形状 3 つ**を含める | **floor** (超えたら緩めず **BLOCK**)。MAE / max_abs / **max_rel** / exact 率を print し、G-2k S2 の per-sample MAE 6.4e-5 と同オーダーかを **characterization** として記録 |
-| **[G3]** | 新経路で**同一設定 3 runs が memcmp 一致**すること。方式は G-8k S1b の `test_g8k_arena_bitexact` (`test_conv2d.cu:692-719`・設計コメントは `:548-564`) と同型 | **hard**。「たまたま同じ」の排除 |
+| **[G3]** | 新経路で**同一設定 3 runs が memcmp 一致**すること。方式は G-8k S1b の `test_g8k_arena_bitexact` (`test_conv2d.cu:692-719`・設計コメントは `:548-564`。**2026-08-24 起草時の行番号。現物は 2026-09-12 確認で `poison_arena:1009` / `run_case_g8k_arena:1049` / `test_g8k_arena_bitexact:1134` — 行番号非依存の指し方は `grep -n "test_g8k_arena_bitexact\|run_case_g8k_arena" src/tests/test_conv2d.cu`。§7 末尾「★[G3] への poison 追加」節も見よ**) と同型 | **hard**。「たまたま同じ」の排除 |
 | **[G4]** | `rows_cap` (`conv2d.cu:354`) を N で割った結果**帯分割が発動する形状**を 1 ケース。**具体形状は実装者が `rows_cap` の実値から選ぶ** (§5 末尾)。帯分割 (`banded` = `conv2d.cu:366`) + batched + scatter (`scatter_band_to_out`・設計は `conv2d.cu:31-40` / `:162-170`) の組み合わせが未検査で残るのを防ぐ | **hard** ([G2a]/[G2b]/[G3] と同じ性質をこの形状でも通す) |
 | **[G5]** | GEMM 下限割れの N=2 形状 = 既存 5. `test_conv_batch_multi` (`test_conv2d.cu:384-387`・N=2 / Cin=5 / 14×18 / Cout=7 / 3x3) が **direct 経路のまま**通ること。(`use_gemm_path` の下限は `Cout < 16 \|\| Ncol < 16 \|\| K < 16` で false = `conv2d.cu:299-302`。この形状は Cout=7 で下限割れ) | **hard** |
 
@@ -1173,7 +1175,7 @@ T8 では「**G-10k 時点で初めて測れた batch2 resnet バケットの絶
 | **SDXL UNet は 128/64/32 の 3 段のみ (16² は不在)** | `src/infer/unet.cu:939` (`C0=320,C1=640,C2=1280`), `:1072-1074`, `:1076`, `:1090`, `:1094`, `:1115`, `:1119`, `:1144`, `:1167`, `:1204`, `:1241` |
 | N=1 の形状別 col サイズと 256MB 上限の関係 | `src/tests/test_conv2d.cu:421-428` (`:424` down_block_0 / `:425` 単帯 / `:426` 帯分割発動 / `:427` VAE) |
 | [G5] の形状が direct に落ちる | `src/tests/test_conv2d.cu:384-387` + `conv2d.cu:299-302` |
-| 3runs memcmp 方式の前例 | `src/tests/test_conv2d.cu:548-564`, `:692-719` |
+| 3runs memcmp 方式の前例 | `src/tests/test_conv2d.cu:548-564`, `:692-719` (**2026-08-24 起草時の行番号。現物は 2026-09-12 確認で `poison_arena:1009` / `run_case_g8k_arena:1049` / `test_g8k_arena_bitexact:1134` — 行番号非依存の指し方は `grep -n "test_g8k_arena_bitexact\|run_case_g8k_arena" src/tests/test_conv2d.cu`。§7 末尾「★[G3] への poison 追加」節も見よ**) |
 | **conv 単体 batch ベンチは同一ループ内で交互採取** (ドリフト耐性の根拠) | `src/tests/test_conv2d.cu:725-795`、とくに `:779` (warmup) と **`:782`** (`tb.push_back(time_ms(true)); ts.push_back(time_ms(false));`)・出力は `:785-787` |
 | 同ベンチの呼出は 1 本だけ (320ch/64²) | `src/tests/test_conv2d.cu:888-900`、とくに `:899` |
 | `test_gemm` に batched ケースが無い | `src/tests/test_gemm.cu:123`, `:154-239`, `:318-` (関数一覧) |
