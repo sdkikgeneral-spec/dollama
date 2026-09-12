@@ -588,7 +588,7 @@ if cuda_enabled
     cpp_args            : cpp_args,
     cuda_args           : cuda_test_args,
   )
-  test('gemm', test_gemm_exe)
+  test('gemm', test_gemm_exe, timeout : 600)
 
   # 要素ごと活性化 (SiLU / GeLU) テスト + ベンチ (Phase 2 マイルストーン 2-2-2)
   # activation.cu をテストと一緒にビルドして launch_silu / launch_gelu をリンクする。

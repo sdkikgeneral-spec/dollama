@@ -1,0 +1,48 @@
+[test_identity] PASSED (max_rel=0)
+[test_small_square] PASSED (max_rel=0.000414225)
+[test_rectangular] PASSED (max_rel=0.000478608)
+[test_transB] PASSED (max_rel=0.00222438)
+[test_alpha_beta] PASSED (max_rel=0.000437923)
+[H7] valid: got=Ok want=Ok -> PASSED
+[H7] stride_a=0 (weight share): got=Ok want=Ok -> PASSED
+[H7] A overlaps B: got=Ok want=Ok -> PASSED
+[H7] batch=0: got=BadBatch want=BadBatch -> PASSED
+[H7] M=0: got=BadDims want=BadDims -> PASSED
+[H7] K=-1: got=BadDims want=BadDims -> PASSED
+[H7] A=null: got=NullPointer want=NullPointer -> PASSED
+[H7] C=null: got=NullPointer want=NullPointer -> PASSED
+[H7] C items overlap (stride_c<M*N): got=OverlapC want=OverlapC -> PASSED
+[H7] C items overlap (stride_c=0): got=OverlapC want=OverlapC -> PASSED
+[H7] C overlaps A: got=OverlapCA want=OverlapCA -> PASSED
+[H7] C overlaps B: got=OverlapCB want=OverlapCB -> PASSED
+[H6:case3] counters delta: wrapper_calls=1 cublas_batched_calls=0 fallback_loops=1 fallback_items=2
+[H6:case3] expected (A) wrapper=1 cublas_batched=0 fallback_loops=1 fallback_items=2 -> PASSED
+[H4:case3] batched vs seq memcmp: BIT-EXACT PASSED
+[floor:case3:n0] PASSED (max_rel=0.000450886)
+[floor:case3:n1] PASSED (max_rel=0.000472003)
+[H1:case4] uniform item0 vs item1 memcmp: BIT-EXACT PASSED
+[H6:case4(参考)] counters delta: wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
+[H3:case4] 3 runs memcmp: BIT-EXACT PASSED
+[H5:case4] E=0.00018546 theta=0.00186188 E/theta=0.099609 MAE=1.04936e-06 max_abs=0.0078125 exact=99.8969% denom=42.125 S=407.35
+[H5:case4] PASSED
+[floor:case4:n0] PASSED (max_rel=0.00625434)
+[floor:case4:n1] PASSED (max_rel=0.00348787)
+[H6:case5(参考)] counters delta: wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
+[H5:case5] E=9.31723e-06 theta=0.00102227 E/theta=0.00911427 MAE=8.84756e-09 max_abs=6.10352e-05 exact=99.9634% denom=6.55078 S=39.2444
+[H5:case5] PASSED
+[floor:case5:n0] PASSED (max_rel=0.000471921)
+[floor:case5:n1] PASSED (max_rel=0.00048028)
+[H1:case1] uniform-B item0 vs item1 memcmp: BIT-EXACT PASSED
+[H6:case1] counters delta: wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
+[H6:case1] expected (A) wrapper=1 cublas_batched=1 fallback_loops=0 fallback_items=0 -> PASSED
+[H3:case1] 3 runs memcmp: BIT-EXACT PASSED
+[H5:case1] E=0 theta=0.00622342 E/theta=0 MAE=0 max_abs=0 exact=100% denom=96.9375 S=1481.46
+[H5:case1] PASSED
+[floor:case1] rows = {0, 1, 160, 319} x all N=16384
+[floor:case1:n0] PASSED (max_rel=0.0262199)
+[floor:case1:n1] PASSED (max_rel=0.0202931)
+[H2:case2] swap memcmp: item0<->item1' OK / item1<->item0' OK -> BIT-EXACT PASSED
+[batched_gates] ALL PASSED
+[bench_gemm] square M=1024 N=1024 K=1024 median=0.032672 ms (min=0.03216 max=0.034112) GFLOPS=65728.6 (N=50)
+[bench_gemm] sdxl_linear_transB M=4096 N=1280 K=1280 transB median=0.144224 ms (min=0.142688 max=0.155392) GFLOPS=93062 (N=50)
+[test_gemm] ALL PASSED
