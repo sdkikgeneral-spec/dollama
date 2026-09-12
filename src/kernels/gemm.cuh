@@ -85,6 +85,14 @@ void launch_gemm_f32(const float* d_A,
 // stride は「要素数」単位 (バイトではない)。stride_a = 0 は合法で、
 // 全 item が同一の A を共有する conv2d の重み共有形態を表す。
 //
+// 負 stride について (未発火経路):
+//   gemm.cu の batched_span (gemm.cu:611-612) は stride が負でも union 区間を畳めるよう
+//   min/max を取って書いてあるが、この負 stride 側 (off_lo = last) は
+//   【実走で確認した経路ではない】。T3 のケース構成に負 stride は 1 件も無く、
+//   docs/logs/g10k-t3/t3_default_run.log:6-17 の [H7] 12 件も含めすべて非負である。
+//   T4 の conv2d 側からも非負 stride しか渡さない契約 (docs/g10k-plan.md §6 T4 行) のため、
+//   この分岐は T4 完了後も未発火のまま残る。
+//
 // 数値: 既存 launch_gemm_fp16 と同じく FP16 入力 / FP32 蓄積 / FP16 出力。
 //       cuBLAS の compute type も既存 gemm_cublas と同じ CUBLAS_COMPUTE_32F で固定する
 //       (TF32 や COMPUTE_16F にすると蓄積の丸め単位が変わりゲートの前提が崩れる)。

@@ -836,6 +836,15 @@ static bool case4_transb()
     }
 
     const std::vector<__half> got = run_batched(A.h, B.h, Czero, desc);
+    // ここの print_delta は characterization (参考) であって hard ゲートではない。
+    // [H6] の hard 判定は §7b 表 (A) の 2 行 = case1 (conv 実使用形態) / case3 (cuBLAS 不適格形状)
+    // のみで、expected (A) -> PASSED を出すのもその 2 本だけ
+    // (docs/logs/g10k-t3/t3_default_run.log:37 = case1 / :19 = case3)。
+    // case4 の値は「[H6] が case4 でも合否を判定した」と読んではならない。
+    //
+    // 実数値 (t3_default_run.log:24) は §7b 表 (B) の期待値と一致する:
+    //   wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
+    // = 既定経路 (cuBLAS 有効) で cuBLAS batched 枝を通ったことを示す。
     print_delta("H6:case4(参考)");
 
     // ---- [H3] 決定性 ----
@@ -910,6 +919,13 @@ static bool case5_beta()
     bool ok = true;
 
     const std::vector<__half> got = run_batched(A.h, B.h, C.h, desc);
+    // case4 と同じく characterization (参考) であって hard ゲートではない。
+    // [H6] の hard 判定は §7b 表 (A) の case1 / case3 の 2 行のみ
+    // (docs/logs/g10k-t3/t3_default_run.log:37 / :19)。
+    //
+    // 実数値 (t3_default_run.log:30) は §7b 表 (B) の期待値と一致する:
+    //   wrapper_calls=1 cublas_batched_calls=1 fallback_loops=0 fallback_items=0
+    // = 既定経路 (cuBLAS 有効) で cuBLAS batched 枝を通ったことを示す。
     print_delta("H6:case5(参考)");
 
     {
