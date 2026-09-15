@@ -1,0 +1,16 @@
+===== T6r cudaEvent 直接実行 (nsys なし・同一 exe) =====
+start(local) = 2026-09-15 23:39:38 +09:00
+HEAD = 0ff28c951522c03d7b03258b14ffe70f86711fc6
+exe sha256 = 4E1B2B562617401233266EF7B20C6E29AB1885FF37867E1968943C1B07DFDC08
+nvidia-smi (pre) = 38, 727 MHz
+[prof_conv_breakdown] shape=rep_320_128 mode=batched iters=50 per-call median=1.155648 ms min=1.148512 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=rep_320_128 mode=seq iters=50 per-call median=1.129920 ms min=1.124320 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=rep_640_64 mode=batched iters=50 per-call median=0.889280 ms min=0.883776 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=rep_640_64 mode=seq iters=50 per-call median=0.867584 ms min=0.863744 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=rep_1280_32 mode=batched iters=50 per-call median=0.729440 ms min=0.724064 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=rep_1280_32 mode=seq iters=50 per-call median=0.722816 ms min=0.711008 ms gemm_flops_per_call(N=2)=6.039798e+10
+[prof_conv_breakdown] shape=G4_band_640to320_128 mode=batched iters=50 per-call median=2.484448 ms min=2.293664 ms gemm_flops_per_call(N=2)=1.207960e+11
+[prof_conv_breakdown] shape=G4_band_640to320_128 mode=seq iters=50 per-call median=2.146688 ms min=2.129184 ms gemm_flops_per_call(N=2)=1.207960e+11
+[prof_conv_breakdown] shape=unet_c320_64 mode=batched iters=50 per-call median=0.327328 ms min=0.324160 ms gemm_flops_per_call(N=2)=1.509949e+10
+[prof_conv_breakdown] shape=unet_c320_64 mode=seq iters=50 per-call median=0.315360 ms min=0.313312 ms gemm_flops_per_call(N=2)=1.509949e+10
+end(local) = 2026-09-15 23:39:45 +09:00

@@ -1,0 +1,14 @@
+WARNING: CPU context switches trace requires administrative privileges, disabling.
+WARNING: CPU sampling requires administrative privileges, disabling.
+Capture range started in the application.
+Capture range ended in the application.
+Generating 'C:\Users\sdkik\AppData\Local\Temp\nsys-report-fe30.qdstrm'
+
+[1/1] [0%                          ] G4_band_640to320_128_batched.nsys-repProcessing events...
+
+[1/1] [0%                          ] G4_band_640to320_128_batched.nsys-rep
+[1/1] [==========49%               ] G4_band_640to320_128_batched.nsys-rep
+[1/1] [========================100%] G4_band_640to320_128_batched.nsys-rep
+[1/1] [========================100%] G4_band_640to320_128_batched.nsys-rep
+Generated:
+	E:\Develop\Projects\dollama\docs\logs\g10k-resnet\t6r\G4_band_640to320_128_batched.nsys-rep

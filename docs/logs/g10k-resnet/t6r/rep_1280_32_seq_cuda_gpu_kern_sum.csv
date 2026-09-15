@@ -1,0 +1,4 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+75.9,26504216,100,265042.2,265096.5,263256,267160,860.2,nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+22.6,7880285,100,78802.9,76205.5,75742,314263,23793.6,"dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int)"
+1.5,540786,100,5407.9,5744.0,4575,7680,807.0,"dollama::conv_bias_add_rows(__half *, const __half *, int, long)"

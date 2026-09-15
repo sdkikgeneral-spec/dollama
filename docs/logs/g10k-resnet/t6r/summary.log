@@ -1,0 +1,25 @@
+===== G-10k T6r 実走ヘッダ =====
+start(local) = 2026-09-15 23:19:00 +09:00
+hostname     = KIK-WIN-RTX58
+HEAD         = 0ff28c951522c03d7b03258b14ffe70f86711fc6
+porcelain    = [ M src/meson.build|?? docs/logs/g10k-resnet/|?? src/tests/prof_conv_breakdown.cu]
+exe sha256   = 4E1B2B562617401233266EF7B20C6E29AB1885FF37867E1968943C1B07DFDC08
+src\kernels\conv2d.cu                sha256 = 31F6C8C6923ACF8A35A3E47985F8F97E953397DA867DE9B8386636CD1A89A183
+src\kernels\gemm.cu                  sha256 = 4EEC27B5175AC4CC011FA924E3F162E079236B080B25C7146490DAE072944203
+src\tests\prof_conv_breakdown.cu     sha256 = 29E1ED5662E1AF70857FEDFD0293BCC4226E3774E1FF4A022F3D27CB1B42838B
+SAC VerifiedAndReputablePolicyState = 0
+nvidia-smi (pre) = 1021 MiB, 37, 300 MHz, 19.26 W
+iters = 50
+===== runs =====
+[rep_320_128_batched] exit=0
+[rep_320_128_seq] exit=0
+[rep_640_64_batched] exit=0
+[rep_640_64_seq] exit=0
+[rep_1280_32_batched] exit=0
+[rep_1280_32_seq] exit=0
+[G4_band_640to320_128_batched] exit=0
+[G4_band_640to320_128_seq] exit=0
+[unet_c320_64_batched] exit=0
+[unet_c320_64_seq] exit=0
+end(local)   = 2026-09-15 23:19:28 +09:00
+nvidia-smi (post) = 1028 MiB, 41, 2617 MHz, 74.98 W

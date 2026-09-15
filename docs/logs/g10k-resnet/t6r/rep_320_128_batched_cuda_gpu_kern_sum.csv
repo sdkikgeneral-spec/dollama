@@ -1,0 +1,4 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+47.4,27132018,50,542640.4,542641.5,540498,546802,1318.0,"dollama::im2col_fp16_batched(const __half *, __half *, long long, long long, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int)"
+46.2,26441120,50,528822.4,528657.5,526898,531250,1116.3,void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::Params)
+6.5,3694786,50,73895.7,73918.0,73566,74238,161.6,"dollama::conv_bias_add_rows_batched(__half *, const __half *, int, int, long long)"

@@ -1,0 +1,15 @@
+WARNING: CPU context switches trace requires administrative privileges, disabling.
+WARNING: CPU sampling requires administrative privileges, disabling.
+Capture range started in the application.
+Capture range ended in the application.
+Generating 'C:\Users\sdkik\AppData\Local\Temp\nsys-report-2482.qdstrm'
+
+[1/1] [0%                          ] unet_c320_64_batched.nsys-repProcessing events...
+
+[1/1] [0%                          ] unet_c320_64_batched.nsys-rep
+[1/1] [==========48%               ] unet_c320_64_batched.nsys-rep
+[1/1] [==========49%               ] unet_c320_64_batched.nsys-rep
+[1/1] [========================100%] unet_c320_64_batched.nsys-rep
+[1/1] [========================100%] unet_c320_64_batched.nsys-rep
+Generated:
+	E:\Develop\Projects\dollama\docs\logs\g10k-resnet\t6r\unet_c320_64_batched.nsys-rep

@@ -1512,3 +1512,197 @@ A (09-04) → B (09-09) の差:
   (当該走行の生ログは repo に無い)。本 T2c と**条件が違う可能性はある**が、
   **差が小さかった原因は断定しない** (機体状態・常駐・計測窓・被験ハーネスのいずれも比較していない)。
 
+
+### T3 / T4 / T5 — 完了 (本節には未記載)
+
+本節には T3 / T4 / T5 の実施記録を書いていない。一次は各索引と commit 本文
+(`docs/logs/g10k-t3/` / `docs/logs/g10k-t4/t4_index.txt` / `docs/logs/g10k-t5/t5_index.txt`、
+commit `8707472` (T4) / `e16b700` (T4 是正) / `0ff28c9` (T5 生ログ))。**T6 は T5 (HEAD `e16b700` の
+ソース・exe sha256 `1FEF7939…`) と同一の `test_conv2d.exe` で走った** (下記)。
+
+### T6 (先行必須ゲート・実走のみ) — 完了・**赤**
+
+**走行条件 (両 run 共通・出典 = 各ログのヘッダ)**
+
+- 2026-09-12 研究機 `KIK-WIN-RTX58`・HEAD `0ff28c9`・porcelain = `?? docs/logs/g10k-resnet/` のみ
+  (= ソース clean)・SAC `VerifiedAndReputablePolicyState = 0`・env は `DOLLAMA_*` / `PROF_*` / `DB2_*`
+  全 `<unset>` (= `DOLLAMA_CONV_BATCH` 既定 = batched ON)。
+- exe `build\src\test_conv2d.exe` sha256 `1FEF7939A5D3597F412CE752CFE646FD1F72F94DDA810CF5716ECA937AC66504`
+  (= T5 `t5_index.txt` の exe と同一)。`src/kernels/conv2d.cu` sha256 `31F6C8C6…` / `gemm.cu` `4EEC27B5…`
+  (T4 最終と同一)。
+- 生ログ: `docs/logs/g10k-resnet/t6_conv2d_default_run1.log` / `t6_conv2d_default_run2.log`
+  (走行スクリプト `docs/logs/g10k-resnet/scripts/t6_run.ps1` = T5 の `t5_run.ps1` と同型)。
+  両 run とも `[test_conv2d] ALL PASSED` / `exit=0` (run1 `:210,:213` / run2 同)。
+- 計器 = `bench_batch_vs_persample` (cudaEvent・warmup 3・iters 50・中央値・batched と seq を交互に採取)。
+  ★§6 T6 行の `test_conv2d.cu:725-795` は**現 HEAD ではずれている** — 関数本体は `:1216-1290`、
+  呼出 5 本は `:1390-1397` (`:725-` は T4 ゲート [G2a]〜[G5] の説明コメント)。§6 は PL 決裁物なので書き換えず、
+  訂正を本節に置く (T2c の stale 番号と同じ扱い)。
+- ★**`prof_unet_fast_warm` は使っていない** (§2 F1 = B=1 経路しか叩かない・G-10k の観測点から除外済み)。
+- ★**per-call ms であり e2e 秒には翻訳しない** (§6 T6 行の規律どおり)。
+
+**採取値 (`[bench_batch]` 行・run1 `:205-209` / run2 `:205-209`)。比 = batch median / seq median (小数第 4 位で四捨五入)**
+
+| 形状 | 合否対象 | run1 batch / seq (ms) | run1 比 | run2 batch / seq (ms) | run2 比 |
+|---|---|---|---|---|---|
+| rep_320_128 (代表) | ○ | 1.16144 / 1.13469 | **1.024** | 1.16246 / 1.13741 | **1.022** |
+| rep_640_64 (代表) | ○ | 0.892608 / 0.86704 | **1.029** | 0.893376 / 0.868704 | **1.028** |
+| rep_1280_32 (代表) | ○ | 0.727424 / 0.719072 | **1.012** | 0.729184 / 0.72048 | **1.012** |
+| G4_band_640to320_128 ([G4] 帯分割) | ○ | 2.32125 / 2.15648 | **1.076** | 2.31789 / 2.15376 | **1.076** |
+| unet_c320_64 (G-2k 由来・参考) | × (参考) | 0.326016 / 0.315712 | 1.033 | 0.32656 / 0.316832 | 1.031 |
+
+**合否 = 赤**。閾値は全形状 `≤ 0.95` (§6 T6 行・§8 ケース B' で「動かさない」と固定) に対し、
+合否対象 4 形状すべてが run1 / run2 とも **> 1.0** (batched が seq より遅い方向)。1 形状も閾値に届いていない。
+run1 と run2 の差は比で ≤ 0.002 (再現性あり)。
+T4 実測 (§8 ケース B' の背景・`docs/logs/g10k-t4/t4_default_run2_final.log:186-189` = 1.026 / 1.027 / 1.013 / 1.076)
+とも同じ向き・同じ桁。
+
+**分岐**: §8 ケース B' の分岐 2 (T6 赤 → T6r) に従い T6r を実施した (下記)。§6 T6 行の既定「T4 差し戻し」は
+同分岐で上書き済み (T4'' は T6r が Yes の場合のみ)。
+
+### T6r (律速診断・1 ラウンド・src コミットなし) — 完了・判定 **No**
+
+**担当の規定との差異 (事実)**: §8 ケース B' は「perf-profiler 主・cuda-kernel-dev 協働」と規定しているが、
+本 T6r は **main thread (Claude) が perf-profiler 役を兼ねて単独で実施**した (cuda-kernel-dev の協働なし)。
+判定 (Yes/No) も同じ主体が出している。差異として記録し、規定は書き換えない。
+
+**走行条件 (出典 `docs/logs/g10k-resnet/t6r/summary.log` ヘッダ)**
+
+- 2026-09-15 23:19:00〜23:19:28 (+09:00) 研究機 `KIK-WIN-RTX58`・HEAD `0ff28c9` (T6 と同一)・SAC = 0。
+- porcelain = `M src/meson.build` / `?? docs/logs/g10k-resnet/` / `?? src/tests/prof_conv_breakdown.cu`。
+  ★**`src/` の改変 2 件はいずれも計測 exe のためのもので、コミットしない作業ツリー限定** (§8 ケース B' の
+  「計装はコミットしない作業ツリー、または nsys で取る」の規定どおり)。**`conv2d.cu` / `gemm.cu` は無改変**
+  (sha256 `31F6C8C6…` / `4EEC27B5…` = T6・T4 最終と同一・ヘッダで採取)。
+  改変内容の退避: `docs/logs/g10k-resnet/scripts/prof_conv_breakdown.cu` (sha256 `29E1ED56…` =
+  ヘッダの `src\tests\prof_conv_breakdown.cu` と同一) / 同 `prof_conv_breakdown.meson.diff`
+  (`src/meson.build` へ `prof_conv_breakdown` executable を 1 ブロック追加するだけ・`git diff src/meson.build` と
+  一致することを本記録作成時に確認)。
+- 計測 exe `build\src\prof_conv_breakdown.exe` sha256 `4E1B2B56…`。`launch_conv2d` を **batched = N=2 で 1 回 /
+  seq = N=1 を 2 回** (T6 の `bench_batch_vs_persample` と同じ呼び方) 呼び、warmup 3 の後 `cudaProfilerStart()` →
+  iters=50 → `cudaProfilerStop()`。5 形状 × 2 モード = 10 プロセス (`summary.log` の `[<tag>] exit=0` 10 本)。
+- nsys = Nsight Systems **2026.1.3** (`t6r_nsys.ps1` のパス)・`profile --capture-range=cudaProfilerApi
+  --capture-range-end=stop --trace=cuda` → `nsys stats --report cuda_gpu_kern_sum --format csv` で
+  カーネル名別集計 (`t6r/<tag>_cuda_gpu_kern_sum.csv`)。stdout ログには nsys の
+  「CPU sampling requires administrative privileges, disabling」警告が出ているが、集計対象は GPU カーネル時間のみで無関係。
+  ★**T6r は nsys 走行・直接実行とも env を採取していない** (監査 中-2 で是正): `t6r_nsys.ps1:11` は
+  `DOLLAMA_CONV_BATCH` / `DOLLAMA_GEMM` / `DOLLAMA_POOL` / `DOLLAMA_PROFILE` の 4 変数を Remove するだけで
+  ヘッダに書かず、`summary.log` / `cudaevent_direct.log` にも env 節は無い (T6 の `t6_run.ps1` は 19 変数を列挙する)。
+  **batched 経路が実際に効いたことの証拠は、CSV のカーネル名 (`im2col_fp16_batched` / `conv_bias_add_rows_batched` /
+  `scatter_band_to_out_batched` が batched 側にのみ現れ、seq 側は `im2col_fp16` / `conv_bias_add_rows`) に求める。**
+  直接実行 (`cudaevent_direct.log`) は経路を示すカーネル名が無いので、env が既定だったことは**未検証**。
+- ★**計測 exe 自身が印字する cudaEvent per-call 中央値 (`[prof_conv_breakdown] …` 行) は、nsys ラッパ経由の
+  stdout に載っておらず `summary.log` にも無い** (`t6r/*.stdout.log` は nsys のメッセージのみ)。
+  したがって「同一 exe 内での nsys 集計 vs cudaEvent の突合」は**取れていない**。下の突合は T6 (別 exe
+  `test_conv2d.exe`・3 日前) の `[bench_batch]` に対するものである。
+  → **是正 (同日 23:39・取得済)**: 同一 exe (sha256 `4E1B2B56…`・HEAD `0ff28c9`) を **nsys なしで直接実行**し
+  `[prof_conv_breakdown]` 行 10 本を `t6r/cudaevent_direct.log` に採取した (iters=50・5 形状 × batched/seq)。
+  同一 exe の cudaEvent 比は下記「留保」の 1 点目に記載。ヘッダは start/HEAD/exe sha256/nvidia-smi (pre) のみで、
+  porcelain・SAC・env・末尾 `exit=`・nvidia-smi (post) は採っていない (summary.log より格が落ちる)。
+- 内訳表は `docs/logs/g10k-resnet/scripts/t6r_table.py` で CSV から生成
+  (`Total Time (ns)` / 1e3 / 50 = **iters 平均の us/call・中央値ではない**)。出力 =
+  `t6r/breakdown_table.txt`。本記録作成時に再生成して同一であることを確認した。
+  カーネル→列の写像: 名前に `im2col` → im2col / `cutlass` `nvjet` `gemm` → GEMM / `bias` → bias /
+  `scatter` → scatter。
+
+**内訳表 (us/call・nsys GPU カーネル時間の合計・出典 `t6r/breakdown_table.txt`)**
+
+| 形状 | mode | im2col | GEMM | bias | scatter | 合計 | GEMM カーネル (発数/call) |
+|---|---|---|---|---|---|---|---|
+| rep_320_128 | batched | 542.6 | 528.8 | 73.9 | 0.0 | **1145.4** | cutlass `…64x64_32x6_nn_align8` ×1 |
+| rep_320_128 | seq | 550.9 | 543.3 | 42.3 | 0.0 | **1136.5** | 同 ×2 |
+| rep_640_64 | batched | 302.2 | 539.3 | 35.8 | 0.0 | **877.4** | 同 ×1 |
+| rep_640_64 | seq | 291.3 | 533.3 | 22.1 | 0.0 | **846.8** | 同 ×2 |
+| rep_1280_32 | batched | 164.2 | 535.7 | 18.4 | 0.0 | **718.2** | 同 ×1 |
+| rep_1280_32 | seq | 157.6 | 530.1 | 10.8 | 0.0 | **698.5** | `nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_N…` ×2 |
+| G4_band_640to320_128 | batched | 1098.8 | 1064.5 | 73.0 | 70.6 | **2307.0** | cutlass 同 ×2 (帯分割 2 本) |
+| G4_band_640to320_128 | seq | 1001.8 | 1088.3 | 44.1 | 0.0 | **2134.3** | 同 ×2 (n=0,1) |
+| unet_c320_64 (参考) | batched | 161.5 | 135.5 | 17.5 | 0.0 | **314.5** | cutlass `…64x64_32x6` ×1 |
+| unet_c320_64 (参考) | seq | 152.1 | 135.7 | 9.2 | 0.0 | **297.0** | cutlass `…256x64_32x4` ×2 |
+
+`other` 列は全行 0.0 (表から省略)。カーネル名: batched 側は `im2col_fp16_batched` / `conv_bias_add_rows_batched` /
+`scatter_band_to_out_batched`、seq 側は `im2col_fp16` / `conv_bias_add_rows` (各 CSV の `Name` 列)。
+G4_band batched の im2col / GEMM / scatter は Instances=100 (= 50 iters × 2 帯)、bias は 50 (1 発/call)。
+
+| 形状 | batched/seq (カーネル合計) | batch 固有の上乗せ (us) | 内訳: bias 差 / scatter / im2col 差 / GEMM 差 |
+|---|---|---|---|
+| rep_320_128 | **1.008** | +8.8 | +31.6 / +0.0 / −8.3 / −14.5 |
+| rep_640_64 | **1.036** | +30.6 | +13.7 / +0.0 / +10.9 / +6.0 |
+| rep_1280_32 | **1.028** | +19.7 | +7.5 / +0.0 / +6.6 / +5.6 |
+| G4_band_640to320_128 | **1.081** | +172.7 | +29.0 / +70.6 / +97.0 / −23.8 |
+| unet_c320_64 (参考) | 1.059 | +17.6 | +8.3 / +0.0 / +9.4 / −0.2 |
+
+**所見 (表から読めることだけ)**
+
+1. **GEMM**: batched の N=2 1 発 ≈ seq の N=1 2 発の合計 (rep_320_128 528.8 vs 543.3 / rep_640_64 539.3 vs 533.3 /
+   rep_1280_32 535.7 vs 530.1 / G4_band 1064.5 vs 1088.3 us)。rep_320_128 の GEMM は N=2 分 = 2·2·320·128²·(320·9) =
+   6.04e10 flop (計測 exe が印字式として持つ `gemm_flops_per_call(N=2)` と同式) / 528.8 us ≈ **114 TFLOPS**。
+   ~~N=1 の時点で既にこの帯域に達しており~~ → (監査 中-1(a) で是正) **表から言えるのは「GEMM 時間が N に比例
+   (528.8 vs 543.3 等) = 束ねても per-item 時間が減らない」まで**。「N=1 で既に HW 上限に飽和している」は
+   HW 上限 (RTX5080 の FP16 tensor 実効ピーク) との比較が本記録に無いため**推測**であり、114 TFLOPS は
+   実測値の提示に留める (「帯域」の語も TFLOPS には当てない)。rep_1280_32 のみ seq 側が cuBLAS の
+   別カーネル (`nvjet_sm120…`) を選んでいるが時間は同等 (530.1 vs 535.7)。unet_c320_64 (参考) も seq 側は別タイル
+   (`256x64_32x4`) だが同等 (135.7 vs 135.5)。
+2. **im2col**: batched ≈ seq ×2 発の合計 (差 −8.3 / +10.9 / +6.6 us = ~~帯域律速の同量コピー~~ **同量のコピーで
+   時間も同量**)。(監査 中-1(b) で是正) 「帯域律速」は CSV からは言えない — rep_320_128 batched の im2col は
+   col 書き 2·2880·16384·2B ≈ 188.7MB + 入力読み 2·320·128²·2B ≈ 21.0MB ≈ 210MB / 542.6 us ≈ **387 GB/s** で、
+   公称帯域の半分以下 (公称値は本記録で実測していない・推測)。律速の種類 (帯域 / レイテンシ / 占有率) は未診断。
+   G4_band は batched +97.0 us — 帯分割で im2col が 2 発/call になる分 (Instances=100)。
+3. **batch 固有の上乗せ** = ① bias カーネル: `conv_bias_add_rows_batched` 1 発が seq の 2 発合計の
+   **1.6〜1.9 倍** (73.9/42.3=1.75, 35.8/22.1=1.62, 18.4/10.8=1.70, 73.0/44.1=1.66, 参考 17.5/9.2=1.90) = +7.5〜+31.6 us
+   ② G4_band の `scatter_band_to_out_batched` +70.6 us (seq には無い・N=1 では帯分割が発動しないため)
+   ③ im2col_batched の差 (上記 2)。
+4. **上乗せ ①②③ をすべて seq と同じ値に置き換えても** (= GEMM だけ batched の値を残す) 比は
+   rep_320_128 (550.9+528.8+42.3)/1136.5 = **0.987** / rep_640_64 **1.007** / rep_1280_32 **1.008** / G4_band **0.989**
+   にしかならない。`≤ 0.95` に届くには **GEMM または im2col 自体が N=2 で N=1 の 2 発より速くなる**必要があるが、
+   表 1・2 のとおり両者とも ~~N=1 で飽和~~ **合計時間が N に比例** している (監査 中-1(a) の是正と同じ限定)。
+   (監査 中-1(c) で追記) **検討**: batched 側の im2col **だけ**を速くすれば数字上は届く — 必要な削減は
+   rep_320_128 −12% (542.6→477.0 us・例: 460 us なら (460+528.8+73.9)/1136.5 = 0.935) / rep_640_64 −24% (302.2→229.4) /
+   rep_1280_32 −33% (164.2→109.5) / G4_band −25% (1098.8→819.5)。**しかしそれは batch 固有ではなく im2col 一般の
+   最適化であり、seq 側の `im2col_fp16` にも等しく効くため比は動かない** (比の分母も同じだけ縮む)。
+   したがって No の根拠は §8 ケース B' の 2 条件 — **①GEMM/im2col の時間が N に比例し束ねても減らない
+   (所見 1・2) ②帯分割の N=2 固有コスト (所見 2・3②)** — に閉じる。
+
+**判定 (§8 ケース B' の 1 点): `conv2d.cu` の範囲内の変更で 4 形状すべて `≤ 0.95` に届く具体的レバーがあるか → No。**
+根拠は所見 4 (bias / scatter / im2col_batched の上乗せは `conv2d.cu` 内で削れるが、それを 0 にしても 0.99〜1.01 止まり)。
+~~GEMM 飽和 (所見 1)~~ **GEMM / im2col の時間が N に比例し束ねても減らないこと (所見 1・2)** と帯分割の N=2 固有コスト
+(所見 2・3②) が内訳で裏付けられたので、§8 ケース B' の No 条件
+(「GEMM 飽和が内訳で裏付けられる / 帯分割増加が N=2 固有の構造コストと確認できる」) に該当する。
+★(監査 中-1 で是正) §8 の条件文にある「飽和」の語は、本記録では「HW 上限に達している」の意味では**裏付けていない**
+(上限との比較は未実施)。本記録で裏付けたのは「N=2 に束ねても per-item 時間が減らない」という**計測事実**であり、
+No の認定はその事実と帯分割コストの 2 点に基づく。
+
+**次の分岐**: **ケース B' = 「T6 赤 + 律速診断つき陰性」として T7 / T7b へ進む**。T4'' は不発動。
+最終判定は T7b の resnet バケット削減率 3 帯 (§8 ケース B・−22% / −15%・**帯は変えない**) で出す。
+T7c は T7b 合格時のみ。§8 ケース B' の分岐 3 のとおり、T8 で「実装側の問題ではなかった」と書く出典は本 T6r の内訳表に限る。
+
+**留保**
+
+- nsys のカーネル時間合計 (iters 平均) と cudaEvent per-call 中央値は**別計器**。
+  **初版はこの突合を T6 (別 exe・別日) の `[bench_batch]` に対して書いていた** (T6 run1 1.024 / 1.029 / 1.012 / 1.076・
+  run2 1.022 / 1.028 / 1.012 / 1.076 vs T6r nsys 1.008 / 1.036 / 1.028 / 1.081)。**是正 (同日 23:39): 同一 exe の
+  cudaEvent 直接実行 `t6r/cudaevent_direct.log` を出典に置き換える**。比 = batched median / seq median
+  (括弧内は min 比):
+
+  | 形状 | cudaEvent median batched / seq (ms) | median 比 | min 比 | nsys カーネル合計比 |
+  |---|---|---|---|---|
+  | rep_320_128 | 1.155648 / 1.129920 | **1.023** | (1.022) | 1.008 |
+  | rep_640_64 | 0.889280 / 0.867584 | **1.025** | (1.023) | 1.036 |
+  | rep_1280_32 | 0.729440 / 0.722816 | **1.009** | (1.018) | 1.028 |
+  | G4_band_640to320_128 | 2.484448 / 2.146688 | **1.157** | (**1.077**) | 1.081 |
+  | unet_c320_64 (参考) | 0.327328 / 0.315360 | 1.038 | (1.035) | 1.059 |
+
+  **向き (全形状 > 1.0) と桁は同一 exe でも一致する**が、**数値の突合は「同オーダー」まで**。
+  ★(監査 中-3 で追記) **「同一 exe」であって同一プロセスではない** — nsys 走行 (23:19) の 20 分後の別プロセス
+  (23:39) で、しかも**モード別プロセス** (batched と seq を交互に採っていない。T6 の `bench_batch_vs_persample`
+  は同一プロセス内で交互に採る) なので、プロセス間・時間帯のドリフトが比に乗り得る。
+  ★**G4_band の median 比 1.157 は T6 の 1.076 (両 run) より大きく出ている** — batched 側の median 2.484 ms が
+  min 2.294 ms から +8% 離れており (seq 側は median/min 2.147/2.129 = +0.8% で密)、min 比 1.077 なら T6・nsys (1.081)
+  と揃う。同一 exe 内でも batched 側の分布が広い走行だったことは隠さない (原因は本ログからは断定しない・
+  nvidia-smi は pre 727 MHz の 1 点のみで post 無し)。rep_1280_32 は cudaEvent (1.009) より nsys (1.028) が大きい等、
+  形状ごとの順位まで一致させて読まないこと。
+- nsys 集計にはカーネル間のギャップ (launch オーバーヘッド・依存待ち) が含まれない。cudaEvent 側にはそれが乗る。
+  T6 の赤はカーネル時間だけでも再現している (T6r 比 > 1.0) ので、ギャップの有無が T6 の合否を左右してはいない。
+- `.sqlite` (nsys stats の中間ファイル) は退避していない (削除済)。`.nsys-rep` (10 本・計 ~700KB) から
+  `nsys stats --report cuda_gpu_kern_sum --format csv` で CSV を再生成できる。
+- 副産物 (申告・ビルドログ未退避): 計測 exe の初版は `launch_conv2d` の前方宣言を global namespace に置いて
+  LNK2019 になり、`using dollama::launch_conv2d;` (`conv2d.cuh` の宣言は namespace `dollama`) に直して再リンクした。
+  退避ソース `scripts/prof_conv_breakdown.cu:23` はその修正後のもの。**初版のリンクエラー自体の一次証拠は無い**。
