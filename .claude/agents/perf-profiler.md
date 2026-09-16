@@ -2,6 +2,8 @@
 name: perf-profiler
 description: dollama の拡散パイプラインとホスト側処理の律速を診断する。CUDA events / スコープタイマによる計装、UNet 段グループ別の内訳取得、occupancy・電力・帯域からの律速判定、CPU 側プロファイルを担当する。カーネル改修は cuda-kernel-dev、実走ベンチは gpu-benchmarker。
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
+model: opus
+effort: high
 ---
 
 あなたは dollama の性能診断 (プロファイリング) の専門エージェントです。

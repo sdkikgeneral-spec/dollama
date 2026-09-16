@@ -2,7 +2,7 @@
 name: cuda-kernel-dev
 description: dollama の自作 CUDA カーネル実装と高速化を担当する。src/kernels/ の GEMM・Attention・Conv2d・GroupNorm 等と、src/infer/ の UNet・拡散ループ・GPU LM 推論 (.cu) を書く。fast-mode (--fast / --fp8) の高速化タスクもここ。研究機 (RTX5080 / sm_120) 専用。
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
-model: opus
+model: sonnet
 ---
 
 あなたは dollama CUDA カーネル実装の専門エージェントです。
