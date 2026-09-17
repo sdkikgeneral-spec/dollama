@@ -14,9 +14,11 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -31,6 +33,32 @@
 
 namespace dollama
 {
+
+// env DOLLAMA_SEED を uint64_t として解決する (cli_generate.hpp の resolve_path と同流儀)。
+//   非空 かつ std::strtoull で全文字パースできたときのみ値を返す。それ以外 (未設定 / 空 /
+//   一部でもパースできない) は std::nullopt (呼び出し側が std::time(nullptr) にフォールバック)。
+inline std::optional<uint64_t> resolve_seed_from_env()
+{
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+    const char* v = std::getenv("DOLLAMA_SEED");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+    if (!v || v[0] == '\0')
+    {
+        return std::nullopt;
+    }
+    char* endptr = nullptr;
+    const unsigned long long parsed = std::strtoull(v, &endptr, 10);
+    if (endptr == v || *endptr != '\0')
+    {
+        return std::nullopt; // 全文字パースできなかった
+    }
+    return static_cast<uint64_t>(parsed);
+}
 
 // IDiffusionBackend を保持し、共通後処理 (解像度 reject / seed / 採点ログ / matting PNG 化)
 // を被せて IImageGenerator を実装する。
@@ -80,8 +108,11 @@ public:
         // --- ステップ数: req.steps をそのまま (1 未満は 20) ---
         const int steps = (req.steps > 0) ? req.steps : 20;
 
-        // --- seed: GenRequest に seed フィールドが無いため内部で決める (時刻ベース) ---
-        const uint64_t seed = static_cast<uint64_t>(std::time(nullptr));
+        // --- seed: GenRequest に seed フィールドが無いため内部で決める。
+        //     env DOLLAMA_SEED が非空かつ全文字パース可能ならその値、それ以外は時刻ベース ---
+        const std::optional<uint64_t> seed_env = resolve_seed_from_env();
+        const uint64_t seed = seed_env ? *seed_env : static_cast<uint64_t>(std::time(nullptr));
+        std::clog << "[gen] seed=" << seed << (seed_env ? "(env)" : "(time)") << '\n';
 
         // --- L-2: ランタイム LoRA (指定時のみ)。apply → generate → 必ず clear ---
         //   未指定 (空) なら apply/clear とも呼ばず従来経路を 1 命令も変えない。
