@@ -191,6 +191,49 @@ def verify_tokenizer(tok_xml, hf_tok, label):
 
 
 # ============================================================
+# 変換本体 (preset 変換スクリプトから再利用するため関数化)
+# ============================================================
+def convert_text_encoders(te_l, te_g, out_l_dir, out_g_dir, verify=True,
+                          tok_l=None, tok_g=None):
+    """CLIP-L / CLIP-bigG text encoder を OV IR に変換して保存する。
+
+    te_l: transformers CLIPTextModel (SDXL text_encoder 相当)
+    te_g: transformers CLIPTextModelWithProjection (SDXL text_encoder_2 相当)
+    out_l_dir / out_g_dir: 出力先 Path (model_ov.xml/.bin をここに置く)
+    verify: True のとき tok_l/tok_g で PyTorch↔OV 数値突合を行う (要指定)
+
+    戻り値: (ov_l, ov_g, errs) — errs は verify=True のとき
+      {"clip_l_penultimate": err, "bigg_penultimate": err, "bigg_pooled": err}、
+      verify=False のとき None。
+    """
+    te_l = te_l.float()
+    te_g = te_g.float()
+    wrap_l = TextEncoderLWrapper(te_l)
+    wrap_g = TextEncoderGWrapper(te_g)
+
+    ov_l = convert_encoder(wrap_l, out_l_dir, n_outputs=1, label="CLIP-L (text_encoder)",
+                           output_names=["penultimate"])
+    ov_g = convert_encoder(wrap_g, out_g_dir, n_outputs=2, label="CLIP-bigG (text_encoder_2)",
+                           output_names=["penultimate", "pooled"])
+
+    errs = None
+    if verify:
+        assert tok_l is not None and tok_g is not None, \
+            "verify=True には tok_l/tok_g が必要"
+        print(f"\n{'='*60}\n検証 (PROMPT={PROMPT!r})\n{'='*60}")
+        ids_l = tok_l([PROMPT], padding="max_length", max_length=SEQ_LEN,
+                      truncation=True, return_tensors="np")["input_ids"]
+        ids_g = tok_g([PROMPT], padding="max_length", max_length=SEQ_LEN,
+                      truncation=True, return_tensors="np")["input_ids"]
+        print("\nエンコーダ突合:")
+        el, _ = verify_encoder(ov_l, wrap_l, ids_l, "CLIP-L", has_pooled=False)
+        eg_pen, eg_pool = verify_encoder(ov_g, wrap_g, ids_g, "bigG", has_pooled=True)
+        errs = {"clip_l_penultimate": el, "bigg_penultimate": eg_pen, "bigg_pooled": eg_pool}
+
+    return ov_l, ov_g, errs
+
+
+# ============================================================
 # メイン
 # ============================================================
 def main():
@@ -207,36 +250,20 @@ def main():
     tok_l = AutoTokenizer.from_pretrained(SDXL_ID, subfolder="tokenizer")
     tok_g = AutoTokenizer.from_pretrained(SDXL_ID, subfolder="tokenizer_2")
 
-    wrap_l = TextEncoderLWrapper(te_l)
-    wrap_g = TextEncoderGWrapper(te_g)
+    ov_l, ov_g, errs = convert_text_encoders(
+        te_l, te_g, OUT_L, OUT_G, verify=True, tok_l=tok_l, tok_g=tok_g)
 
-    # --- 変換 ---
-    ov_l = convert_encoder(wrap_l, OUT_L, n_outputs=1, label="CLIP-L (text_encoder)",
-                           output_names=["penultimate"])
-    ov_g = convert_encoder(wrap_g, OUT_G, n_outputs=2, label="CLIP-bigG (text_encoder_2)",
-                           output_names=["penultimate", "pooled"])
     tok_l_xml = convert_tokenizer(tok_l, TOK_L, "CLIP-L")
     tok_g_xml = convert_tokenizer(tok_g, TOK_G, "bigG")
-
-    # --- 検証 ---
-    print(f"\n{'='*60}\n検証 (PROMPT={PROMPT!r})\n{'='*60}")
-    ids_l = tok_l([PROMPT], padding="max_length", max_length=SEQ_LEN,
-                  truncation=True, return_tensors="np")["input_ids"]
-    ids_g = tok_g([PROMPT], padding="max_length", max_length=SEQ_LEN,
-                  truncation=True, return_tensors="np")["input_ids"]
 
     print("\nトークナイザ突合:")
     verify_tokenizer(tok_l_xml, tok_l, "CLIP-L")
     verify_tokenizer(tok_g_xml, tok_g, "bigG")
 
-    print("\nエンコーダ突合:")
-    el, _ = verify_encoder(ov_l, wrap_l, ids_l, "CLIP-L", has_pooled=False)
-    eg_pen, eg_pool = verify_encoder(ov_g, wrap_g, ids_g, "bigG", has_pooled=True)
-
     print(f"\n{'='*60}\nまとめ\n{'='*60}")
-    print(f"CLIP-L  penultimate err = {el:.2e}")
-    print(f"bigG    penultimate err = {eg_pen:.2e}")
-    print(f"bigG    pooled      err = {eg_pool:.2e}")
+    print(f"CLIP-L  penultimate err = {errs['clip_l_penultimate']:.2e}")
+    print(f"bigG    penultimate err = {errs['bigg_penultimate']:.2e}")
+    print(f"bigG    pooled      err = {errs['bigg_pooled']:.2e}")
 
 
 if __name__ == "__main__":
