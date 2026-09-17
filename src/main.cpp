@@ -120,8 +120,11 @@ int run_device_check()
 //                                    Pipeline→Stub フォールバックで必ず PNG が出る。
 //                                    既定でマッティング ON (透過 PNG)。--no-matting で OFF。
 //   --preset <name>                 : 2-6d: models/presets/<name>/ の checkpoint 一式
-//                                    (unet/vae/text-encoder-l/g) を使う。未指定/未解決なら
-//                                    base checkpoint にフォールバック (env DOLLAMA_BACKEND_PRESET でも指定可)。
+//                                    (unet/vae/text-encoder-l/g) を使う。未指定なら既定
+//                                    "illustrious-xl" (env DOLLAMA_BACKEND_PRESET でも指定可)。
+//                                    未解決なら base checkpoint にフォールバック (warn ログ)。
+//                                    `--preset base` / `DOLLAMA_BACKEND_PRESET=base` は
+//                                    「preset なし = base 重み」を明示する特殊値。
 int main(int argc, char** argv)
 {
 #ifdef HAVE_HTTP
@@ -136,7 +139,8 @@ int main(int argc, char** argv)
     std::string prompt;            // 指定かつ --http 無し → CLI 生成モード
     std::string negative;          // 既定 ""
     std::string out_path = "out.png";
-    std::string preset;            // 2-6d: --preset <name> (既定 "" = base checkpoint)
+    std::string preset;            // 2-6d: --preset <name> (未指定 "" → build_image_generator が
+                                    //   既定 "illustrious-xl" を適用。"base" で base 重みを明示)
 
     for (int i = 1; i < argc; ++i)
     {

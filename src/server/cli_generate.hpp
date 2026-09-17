@@ -98,7 +98,11 @@ inline std::string resolve_path(const char* env_name, const std::string& fallbac
 // 画像生成器を 3 段フォールバックで構築する (HTTP / CLI 共有)。
 //   log: 各段の選択を出力するストリーム (HTTP は std::cout / CLI も std::cout)。
 //   preset_cli: CLI 由来の preset 名 (--preset)。空なら env DOLLAMA_BACKEND_PRESET を見る。
-//   ログ文言・段順・条件は preset 未指定 (現行) 時は従来 HTTP DI と bitwise 等価。
+//   既定 preset は "illustrious-xl" (ユーザー決裁)。base 重みへ明示的に戻したいときは
+//   `--preset base` / `DOLLAMA_BACKEND_PRESET=base` を指定する (preset なし の明示値。
+//   `DOLLAMA_BACKEND_PRESET=` (空文字) は「未指定」= 既定 preset に落ちる点に注意)。
+//   ログ文言・段順・条件は preset 解決成功時のみ変化し、"base" 明示 / preset 未配置時は
+//   preset 関連ログ行が増えるのみで既存ログは不変。
 inline std::unique_ptr<IImageGenerator> build_image_generator(
     std::ostream& log, const FastConfig& cli_fast = FastConfig{},
     const std::string& preset_cli = "")
@@ -108,11 +112,16 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
     const FastConfig fast_cfg = resolve_fast_config(cli_fast);
     (void)fast_cfg; // 段1 (OV&&CUDA) 以外では未使用。段2/3 は fast 非対象。
 
-    // 2-6d: preset 名を解決する (CLI 優先・無ければ env)。preset が空なら以降は
-    //   現行経路と 1 文字も変わらない (preset_paths は常に nullopt のまま)。
-    const std::string preset = !preset_cli.empty()
-                                    ? preset_cli
-                                    : resolve_path("DOLLAMA_BACKEND_PRESET", "");
+    // 2-6d: preset 名を解決する (CLI 優先・無ければ env・既定 "illustrious-xl")。
+    //   "base" は「preset なし = base 重み」の明示値として扱う (resolve 前に空へ変換)。
+    std::string preset = !preset_cli.empty()
+                              ? preset_cli
+                              : resolve_path("DOLLAMA_BACKEND_PRESET", "illustrious-xl");
+    if (preset == "base")
+    {
+        log << "[preset] base (explicit)\n";
+        preset.clear();
+    }
     std::optional<PresetPaths> preset_paths;
     if (!preset.empty())
     {
