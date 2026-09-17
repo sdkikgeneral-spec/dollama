@@ -408,6 +408,79 @@ merge 後のベースラインが **53/53 緑**であることを確認したう
   `libstdc++-6.dll` が PATH 先行。`std::jthread` を使う唯一の test。**環境問題で S6 の変更とは無関係**
   (★**「stash して再現確認済み」は作業報告のみで追試不能** — 採取したはずの `mfp.log` が **0 バイト**。2026-08-23 の監査で格下げ)。**研究機では緑** (最終ツリー 53/53)。
 
+### G-10k — conv2d 真 batch2 (T2b〜T8・2026-08-24 起票 → 2026-09-17 陰性クローズ・opt-in 降格 `c3ee3ca`)
+
+台帳 = `docs/g10k-plan.md` (§2 計器是正 / §3 分母 / §6 タスク表と T8 記録スコープ / §7・§7b ゲート / §8 判定帯 / §13 実施記録)。
+生ログ = `docs/logs/g10k-{baseline,t3,t4,t5,resnet,e2e}/`。本節は **§6「T8 の記録スコープ」1〜24 の写し**で、数値の一次証拠は
+すべて生ログの行番号で引く (書き手 = record-writer・検査 = record-auditor T9)。
+
+**結論 (1 行)**: 真 batch2 経路 (im2col N 込み + `cublasGemmStridedBatchedEx`) は数値ゲート全緑だが **fast+epilogue の resnet バケット
+削減率 = P1 +3.38% / P3 +1.87% (悪化方向・分母 = 同セットの `DOLLAMA_CONV_BATCH=0`)** → §8 ケース B「−15% 未満」帯 = **秒中立・陰性クローズ**。
+**revert せず opt-in `DOLLAMA_CONV_BATCH=1` に降格** (既定 = G-2k S1 per-n 直列・bit 一致資産を維持)。
+
+| 指標 | 値 | 出典 |
+|---|---|---|
+| T3 batched GEMM ラッパ ([H1]-[H7]/floor) | 既定経路 全 PASSED・[H6] hard は表 (A) の case3/case1 のみ・[H5] case4 E/θ 0.0996 / case5 0.00911 / case1 E=0 (分解能なし)・meson 53/53 | `g10k-t3/t3_default_run.log:19,26,31,37,39` |
+| T3 wmma 走行 | **[H6:case1] は表 (A) 判定のため red (exit 1)・カウンタ実数値 (batched 0 / fallback 1 / items 2) は表 (B) と一致** | `t3_wmma_run.log:36-37` |
+| T3 負のコントロール | NC1 (B stride 0) → [H2] MISMATCH FAILED / NC2 (強制フォールバック) → [H6:case1] FAILED **かつ [H5] 全 PASSED** (数値ゲート単独では空撃ち) | `t3_negctrl1_bstride0.log:44` / `t3_negctrl2_force_fallback.log:37,40` |
+| T4 conv2d [G1]〜[G5] | 既定 (当時 = 新経路) [G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] PASSED / `=0` **[G1] 5/5 BIT-EXACT + wrapper +0** / [G2] 小形状 MAE 2.7e-4 / 6.2e-4 (G-2k S2 6.4e-5 の 4.3x / 9.6x) / [G4] 1 call ピーク 270MiB / meson 54/54 (是正後) | `g10k-t4/t4_default_run2_final.log:104,114,177` / `t4_convbatch0_run2_final.log:65-85` / `t4fix_meson_test_full.log:65` |
+| T4 負のコントロール NC2 | キルスイッチ迂回で **[G1] は memcmp 単独 2/5・計器併用 5/5 が red** | `t4_negctrl2_killswitch_bypass.log:65,70,75,80,85` |
+| T5 回帰 | meson 54/54 / GATE2 MAE 0.0303612 SSIM 0.999474 / GATE4 MAE 0.0307191 SSIM 0.999467 / unet_fast fast vs default bit-exact / arena e2e cudaMalloc/cudaFree/chunk_alloc 0・live_peak 5914MiB・shortage 0・peak delta +346MB (同一セッション POOL=0 比) | `g10k-t5/t5_index.txt` (各ログ) |
+| T6 conv 単体 (`bench_batch_vs_persample`・≤0.95 ゲート) | **赤**: rep_320_128 1.024/1.022 · rep_640_64 1.029/1.028 · rep_1280_32 1.012/1.012 · G4_band 1.076/1.076 (run1/run2・batched が遅い方向) | `g10k-resnet/t6_conv2d_default_run{1,2}.log:205-209` |
+| T6r 律速診断 (nsys・src コミットなし) | GEMM: batched N=2 1 発 ≈ seq N=1 2 発 (528.8 vs 543.3 us 等) / im2col 同量 / batch 固有上乗せ = bias 1.6〜1.9x + G4 scatter +70.6us / **上乗せを 0 にしても 0.99〜1.01** → 判定 **No** (conv2d.cu 内のレバー無し) | `g10k-resnet/t6r/breakdown_table.txt`・台帳 §13 T6r |
+| **T7 resnet バケット (fast+epilogue 本走・s・計装 ON)** | **P1 既定 0.886 / P2 `=0` 0.857 / P3 既定 0.873**。default 行 1.064 / 1.058 / 1.060 (ドリフト対照) | `g10k-e2e/t7_p{1,2,3}_*.log:538` / `:438` |
+| **T7b 判定** | 削減率 **+3.38% / +1.87%** (悪化) → **−15% 未満帯 = 秒中立・陰性クローズ**。アンカー 1 = 0.38% / アンカー 2 = 0.6% 以内 / アンカー 3 = **帯内** (T2c 0.854/0.857 vs P2 0.857・帯 ±10%) | 台帳 §13 T7b |
+| T7 e2e 倍率 (計装 ON・参考・**正典ではない**) | fast+epi vs default x1.285 / x1.303 / x1.296 | `t7_p*.log:548` |
+| T7c 正典 e2e (計装 OFF) | **未実施** (T7b 合格時のみの規定) | — |
+| 後続処置 `c3ee3ca` | `conv_batch_enabled()` = `"1"` のみ true / `t4_conv_batch_off()` 厳密否定 / [G1] を既定プロセス (自動枠) へ / meson `conv2d_batch_off`→`conv2d_batch_on` (`=1`)。研究機 2/2 OK は **commit 本文の申告のみ (生ログ未収載)** | `git show c3ee3ca` |
+
+**記録上の規律 (§6 T8 スコープ・次に同じ判定をする人のために残す)**
+
+1. **G-4k 決裁の計器誤り (是正済・数値更新ではない)**: `docs/fast-mode-plan.md` の「resnet ≤0.95s を G-10k 後の再 profile へ再割当」は、
+   計器を **`prof_unet_fast_warm` (= `launch_unet` B=1 経路のみ)** に紐づけていた。被験変数 (conv2d の N>1 枝) を通らない計器で合否を取る設計 =
+   G-4k S3 の「測っている変数が epilogue ではない」と**同型の誤りが計器側**で起きていた (§2 F1)。fast-mode-plan の当該 2 箇所に注記済。
+2. **分母の退役**: B=1 の **1.212s / 1.225s / 1.28564–1.41299s は G-10k の合否分母から退役**。判定は削減率 (§3 / §8)。
+3. **`docs/fast-mode-plan.md` G-10k 節の stride 写像は「起草時の未検証提案」**と注記 (削除せず)。同節「現状」行に現物行番号を併記
+   (`conv2d.cu:487-507` @ `646cc66`・`c3ee3ca` では `for (int n…)` = `:843`)。
+4. **`DOLLAMA_PROFILE=1` の絶対秒は正典 e2e 値ではない** — `ScopedSyncTimer` (`src/infer/unet.cu:67-`) がバケットごとに同期を入れる。
+   T7 の e2e 秒 (14.1s / 10.8〜11.0s) は「計装 ON 条件下の参考値」。正典は T7c (未実施)。**削減率のような計装 ON 同士の比は同期の影響を受けない**
+   (合否を計装 ON 側に置ける理由)。
+5. **`default` 行を分母にしない**: default は B=1 × 2 forward/step (forwards=40) で batch2 構成 (forwards=20) と仕事の分割が違う。
+   分母は同一 `fast+epilogue` 構成の `CONV_BATCH=0`。**default 行はドリフト対照専用**。
+6. **`DB2_BENCH_ITERS=1` では 1 構成あたり `generate_txt2img` が 2 回** (warmup 1 + 計測 1)。warmup 側は判定不使用 (記録には残す)。
+7. **`prof_unet_fast_warm` は G-10k で使っていない**。同 `src/tests/prof_unet_fast_warm.cu:155-156` に
+   `(gate: <=0.95s / stretch <=0.85s / baseline 1.225s)` の**退役済み絶対値ゲートが出力文字列として残っている** (残債 §12-4・src 不可侵ゆえ未修正)。
+   走行ログにこの行が出ても分母として読まない。
+8. **マージンは対照の代替にならない** (§8 ケース B): マージンは差の大きさしか見ず、ドリフトが有利方向に振れた偽合格を検出できない。
+   対照 (P1/P3 同一構成再測 + default 行不変性) は方向を含めて検出する。「−15% のマージンで足りるから同一構成の再測は要らない」は誤り。
+9. **§2 F3 (batch2 構成で resnet バケットを印字する実行物が無かった) とその決裁 (① = T2b で `generate_txt2img` に reset + dump)**:
+   F1 と同型の誤りが引き継ぎ書の計器指定にも入っており、**PL の決裁 (T6②) もその起草行を一次証拠なしに採っていた**。
+   → 「計器を指定する決裁の規則」(§2): ①呼び出し行 ②到達連鎖 ③被験構成で枝を通ること、を `file:line` で示さない限り出さない・採らない。
+10. **batch2 resnet バケットは G-10k (T2c) で初めて測れた絶対値** (T2c 0.853〜0.857s / T7 0.857〜0.886s)。**退役した B=1 の 1.212s / 1.225s とは
+    別系列**であり、**同じ表・同じ文で比較しない** (混ぜると 4 回目の同型事故)。削減率 (−22% / −15%) の定義は維持。
+11. T2b で `n/a` にした欄・`weight_upload=0`・warm 判定は引用しない (T2b 禁止事項 1〜3)。
+12. **アンカー 3 は「帯内 / 帯外」で記録し、hard 検査と書かない**。今回は帯内 (T2c 0.854 / 0.857 → ±10% 帯に P2 0.857)・3 段手順は不発動。
+    復元性の hard 担保は **[G1] の memcmp + T4 の構造保存要件** (キルスイッチ経路 = 旧コードへ分岐・差分レビューで確認)。
+13. **`%` 列は存在しない** (T2b で (B) 採用)。理由: 同一呼び出しに 2 つの wall 秒が並存する / `unet_total_sec` 分母の % は VAE を含まず誤引用が確定する。
+14. **監査 3 巡で計器設計が 3 回差し替わった (T6② → 廃止 → T7/T7b/T7c 再編 → T2b 新設) が、その間 `src/` の変更は 1 行も無し**。一次証拠の補正 4 件
+    (`prof_unet_fast_warm` B=1 / 9b が tol 合否 / dump が `generate` 側のみ / `launch_unet_impl` 呼出元 3 本) も全て実装着手前。
+    「監査が重い」ではなく「実装前に潰すのが正しい」。**監査が PL 決裁の欠陥を 2 巡連続で捕まえた** (T6② 計器誤り / アンカー 3 の帯なし跨ぎ比較) =
+    書き手 / 査読者 / 決裁者の三分割が効いている証拠。PL 決裁を検査対象外にしない。
+15. `.claude/agents/perf-profiler.md` は 2026-08-24 に別途是正済 (§12-2)。**T8 では触っていない**。ただし opt-in 降格 (`c3ee3ca`) 後は
+    同ファイルの「分母は `DOLLAMA_CONV_BATCH=0`」が逆向きになる (残債 §12-7・決裁枠)。
+16. **T3 のゲート定義・θ (実測前固定の理論上限・実測値で置換しない)・負のコントロール 2 件 (red の事実とログ所在) は上表のとおり**。
+    **T3 で未発火の 2 経路 (validator 違反の abort 枝 / `batched_span` 負 stride 分岐) は「実走で確認した」と書かない** (G-8k S6 F4/F2 と同型)。
+17. **[H5] は case1 で数値的分解能を持たない** (E=0)。E/θ の引用は case4 / case5 から。case4 / case5 のカウンタは characterization (`(参考)`) で hard ではない。
+18. **GATE2 は SSIM だけでなく MAE / GATE4 も併記**: SSIM 0.999474 は T4 前後で一致 (偶然) だが MAE 0.0304753→0.0303612・GATE4 0.999477→0.999467 と
+    動いており、新経路が e2e を通っている証拠。T7 の P2 (`=0`) で T4 前の値が再現したことも整合。
+19. `grid_blocks_for(long)` の `static_cast<long>` (MSVC long = 32bit) は旧経路と同型のキャスト。引数最大は 2^27 要素 (im2col `K*Ncol` 上限 / VAE up_blocks.1 conv) で 2^31 未満。
+20. **NC2 の発見**: [G1] は memcmp 単独では 5 中 2 しか red にならず、計器 (wrapper +0) 併用で 5/5 → **memcmp だけでは空撃ちしうる**。ゲート設計資産。
+21. **「実装側の問題ではなかった」の出典は T6r の内訳表のみ** (実装者の申告では書かない・§8 ケース B' 分岐 3)。
+22. **未発火の異常系を「実走で確認した」と書かない** (本節全体に適用)。T7 の SAC 状態は「未確認」のまま。
+23. **T7 の HEAD は P1 `a9e0cf1` / P2・P3 `c0f6d8f`** (`.claude/agents/*.md` のみのコミットを走行中に挟んだ。src/exe sha256 は 3 本同一)。
+    `703ea92` 時点の README「3 プロセスとも同一 HEAD」は誤りで T8 で訂正済。
+24. **旧ハッシュ (`8707472` / `e16b700` / `0ff28c9` 等・索引と §13 T6/T6r が引く) は現ブランチに無い** (履歴書き換え前)。src ツリー同一で確認した対応表を §13 冒頭に置いた。
+
 
 ## 次のタスク
 

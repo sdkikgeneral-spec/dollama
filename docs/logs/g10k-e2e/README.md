@@ -5,8 +5,13 @@
 
 ## 走行ヘッダ (各ログ共通・詳細は各ファイル先頭を参照)
 
-- HEAD: `a9e0cf1b4eba94561a42eb670b14a197adaf77b0` (走行前に採取。3 プロセスとも同一 HEAD で変化なし)
-- `git status --porcelain`: **空ではない** — `.claude/agents/*.md` 11 ファイルが `M` (エージェント定義の更新。
+- HEAD: ~~`a9e0cf1b4eba94561a42eb670b14a197adaf77b0` (走行前に採取。3 プロセスとも同一 HEAD で変化なし)~~
+  ★**訂正 (T8・2026-09-17)**: 3 プロセスで同一ではない。**P1 = `a9e0cf1`** (`t7_p1_default.log:5`・porcelain に
+  `.claude/agents/*.md` 11 本の `M`) / **P2・P3 = `c0f6d8f`** (`t7_p2_convbatch0.log:5` / `t7_p3_default.log:5`・porcelain は
+  `?? docs/logs/g10k-e2e/` のみ)。P1 と P2 の間にその 11 本だけを `c0f6d8f` (chore(agents)) としてコミットしたため。
+  **`src/` 無改変・exe / `conv2d.cu` / `test_diffusion_batch2.cu` の sha256 は 3 本同一** (各ログ `:9-11`) → 判定への影響なし。
+  初版 (`703ea92`) の記述は履歴として取り消し線で残す。
+- `git status --porcelain`: **空ではない** (★T8 注: これは **P1 のみ**。P2 / P3 は `?? docs/logs/g10k-e2e/` のみ) — `.claude/agents/*.md` 11 ファイルが `M` (エージェント定義の更新。
   `src/` 配下・`docs/g10k-plan.md` は無改変)。タスク指示は「porcelain 空を走行前に確認」だったが、
   実際の走行前状態はこの 11 ファイルの変更を含んでいた。**判定への影響はない** (対象は `src/` 無改変の exe 実行のみ)。
 - exe: `build\src\test_diffusion_batch2.exe` (cwd `build`) — sha256 `87EA4C3AF0FCC8064388CFCD52D995CAF655CC181633EEEA521511A7ED3C271B`

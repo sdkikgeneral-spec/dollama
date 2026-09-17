@@ -350,6 +350,13 @@ tol の数字を議論するのをやめ、**tol に依存しない構造不変�
 
 ## 6. タスク表 (T2b〜T9・完全直列)
 
+**状態 (T8・2026-09-17 時点。下表の DoD 行は PL 決裁物なので書き換えず、状態はここに置く。詳細は §13)**:
+T2b ✅ (`036cb94`/`de34ec6`/`f58ba2c`) / T2c ✅ (2 回重複実行・`4147c58`) / T3 ✅ (`9518fd7`+是正 2) / T4 ✅ (`3f6ee41`+`a206155`) /
+T5 ✅ (`d657b08`・54/54) / **T6 赤** (batched/seq 1.01〜1.08・`a9e0cf1`) / T6r ✅ 判定 No / T7 ✅ (`703ea92`) /
+**T7b = 削減率 +3.38% / +1.87% (悪化方向) → 「−15% 未満」帯 = 秒中立・陰性クローズ** / T7c スキップ (規定どおり) /
+後続処置 ✅ `c3ee3ca` (opt-in 降格) / T8 = 本記録 / T9 = 未。
+★表中の「キルスイッチ `DOLLAMA_CONV_BATCH=0`」「`conv2d_batch_off`」は当時の表記 — 現況は **opt-in `=1` / `conv2d_batch_on`** (§13 冒頭の注記)。
+
 **実行順**: **T2b → T2c → T3 → T4 → T5 → T6 → T7 → T7b → [T7c] → T8 → T9**。
 **GPU 実走の並列は禁止** (同一 GPU を 2 プロセスで叩いた秒は意味を失う)。
 **T7b は実走なしなので GPU を占有しない** (両機で実施可)。
@@ -1302,6 +1309,13 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
    (`src/tests/test_diffusion_batch2.cu:470-475` の `steady_clock` 窓・min は `:476` の min-of-iters) とは
    **窓が違う**ことを必ず併記する — 併記しないなら追加しない方がよい。
 
+6. **(T8 で追加・2026-09-17) `c3ee3ca` (opt-in 降格) の研究機実走 (`conv2d` + `conv2d_batch_on` 2/2 OK) の生ログが repo に無い** —
+   commit 本文の申告のみ。§10 規律 (生ログ退避) の対象。次に研究機で `test_conv2d` を回すときに `docs/logs/g10k-optin/` へ退避する。
+7. **(T8 で追加) `.claude/agents/perf-profiler.md` の「分母は毎回 `--fast` + `DOLLAMA_CONV_BATCH=0` から取る」は opt-in 降格後は逆向き**
+   (現況: 既定 = 旧経路・新経路は `=1`)。§12-2 と同じくエージェント定義はユーザー決裁枠 = T8 では触っていない。
+8. **(T8 で追加) `docs/fast-mode-plan.md:421-424` (T8 注記挿入後の現物・挿入前 `:410-413`) / `:466` (攻め筋表の G-10k 行・挿入前 `:455`) / `docs/hw-accel-plan.md:118,132` の
+   「秒数の本命は G-10k 単独」は陰性クローズで前提が消えた。** 追随の要否は PL 決裁 (§12-3 と同じ扱い)。T8 が触ったのは
+   `fast-mode-plan.md:212-215` / `:318-324` / `:690-691` (挿入前の番号) のみ。挿入後の注記位置 = `:218-224` / `:334-337` / `:702-705`。
 ---
 
 ## 13. 実施記録 (実走後に追記する節・タスク表の DoD は書き換えない)
@@ -1513,7 +1527,88 @@ A (09-04) → B (09-09) の差:
   **差が小さかった原因は断定しない** (機体状態・常駐・計測窓・被験ハーネスのいずれも比較していない)。
 
 
-### T3 / T4 / T5 — 完了 (本節には未記載)
+### ★本節を読む前に: ハッシュの対応表と「キルスイッチ `=0` / `conv2d_batch_off`」表記の現況 (T8・2026-09-17)
+
+- **旧ハッシュ → 現ブランチのハッシュ**。T3〜T6r の索引 (`docs/logs/g10k-t3|t4|t5/*_index.txt`) と本節 T6 / T6r の記述が引く
+  `e15b658` / `e84a92a` / `a227635` / `e40cce4` / `8707472` / `59300a0` / `97aa092` / `faa0ead` / `e16b700` / `0ff28c9` は
+  **現ブランチ `feat/g10k-conv-true-batch2` の履歴に無い** (`git branch --contains` が空。オブジェクトは本機のローカルに残っており
+  `git cat-file -t` は commit を返す)。T8 で `git rev-parse <hash>:src` を突き合わせ、**`src/` ツリーが同一**であることを確認した対応:
+
+  | 旧 | 現 | src ツリー | 件名 |
+  |---|---|---|---|
+  | `e15b658` (docs) | `9518fd7` | 同一 (`b407ecc…`) | T3 実装 (batched GEMM ラッパ純追加 + [H1]-[H7]/floor) |
+  | `e84a92a` | `3b0a336` | 同一 (`594a430…`) | T3 是正 (case4/5 カウンタ・未発火経路コメント) |
+  | `a227635` / `e40cce4` | `1f9be8a` / `c8b3a14` | 同一 (`4a3b149…`) | T3 コメント訂正 / docs |
+  | `8707472` / `59300a0` / `97aa092` / `faa0ead` | `3f6ee41` / `6248a77` / `e4d48e5` / `18686e5` | 同一 (`e512249…`) | T4 実装 / docs 3 本 |
+  | `e16b700` / `0ff28c9` | `a206155` / `d657b08` | 同一 (`9e281ea…`) | T4 是正 ([G3] poison + meson 1 行) / T5 生ログ |
+
+  索引ファイルと T6 / T6r 節の旧ハッシュは**当時の記述として書き換えない** (生ログのヘッダにも同じ値が焼かれている)。
+  読むときは上表で読み替える。**T6 以降 (`a9e0cf1` / `703ea92` / `c3ee3ca`) は現ブランチのハッシュ**。
+- **「キルスイッチ `DOLLAMA_CONV_BATCH=0`」「meson `conv2d_batch_off`」は T4〜T7 当時 (`3f6ee41`〜`703ea92`) の事実**。
+  **現況 (`c3ee3ca`・2026-09-17)** は本節末尾「後続処置」のとおり **opt-in `DOLLAMA_CONV_BATCH=1` / meson `conv2d_batch_on`** に
+  反転している (既定 = G-2k S1 の per-n 直列)。§6 / §7 / §8 の当時表記は PL 決裁物なので書き換えず、読み替えは本注記で行う
+  (`docs/fast-mode-plan.md` G-8k 節の「当時の記述は履歴・現況は実装記録」と同じ型)。
+
+### T3 (S1・batched FP16 GEMM ラッパ純追加) — 完了
+
+- **コミット**: 実装 `9518fd7` / 是正 `3b0a336` (case4/5 カウンタの位置づけと未発火 2 経路をコメントで明示・src はコメントのみ) /
+  `1f9be8a` (test_gemm.cu コメントの表 (A)/(B) 取り違え訂正・コメント行のみ)。台帳側の是正ループは
+  `7934891` → `80f93c1` → `1b65737` → `088e727` → `9b7f396` → `848d722` → `74e15e1` → `d7316d2` → `c8b3a14` → `e4d48e5` → `18686e5`
+  (record-auditor 是正 7 本 + PL 決裁反映 2 本 (`7934891` / `9b7f396`) + その他 2 本 (`74e15e1` / `d7316d2`)。**`src/` を触ったのは上の 3 本だけ**)。
+- **走行条件** (`docs/logs/g10k-t3/t3_index.txt` / `t3_env_meta.log`): 2026-09-12 研究機・**HEAD `646cc66` + working tree**
+  (T3 の 4 ファイルが未コミットの状態で実走)・SAC = 0・`DOLLAMA_*` 全 `<unset>`。
+- **既定経路 `t3_default_run.log` (exit 0)**: 既存 5 ケース無改変で PASSED / [H7] validator 単体 12 件 PASSED / **[H6] hard = 表 (A) の
+  2 行のみ** (`case3` = cuBLAS 不適格形状 → wrapper 1・batched 0・fallback 1・items 2 で PASSED (`:19`) / `case1` = conv 実使用形態 →
+  batched 1・fallback 0 で PASSED (`:37`))。case4 / case5 のカウンタ行は `(参考)` 表記 (`:24` / `:30`) で合否を持たない。
+  [H1] (case4 / case1) [H2] (case2 swap) [H3] (3 runs) [H4] (case3 batched vs seq) すべて **BIT-EXACT**。
+  **[H5]**: case4 `E/theta=0.099609` (`:26`) / case5 `E/theta=0.00911427` (`:31`) / **case1 は `E=0` = 数値差が出なかった** (`:39`・
+  θ が緩い証拠にも写像が正しい証拠にもならない)。θ は実測前固定 (case1 0.00622342 / case4 0.00186188 / case5 0.00102227・§7b)。
+  floor 全 PASSED。`meson test` **53/53** (`t3_meson_test_full.log:60-61`)。
+- **wmma 走行 `t3_wmma_run.log` (exit 1)**: **[H6:case1] は表 (A) 判定のため red (`:37` FAILED)・ただしカウンタ実数値
+  (wrapper 1 / batched 0 / fallback 1 / items 2) は case1・case3・case4(参考)・case5(参考) すべて表 (B) と一致** (`:18` / `:24` / `:30` / `:36`)。
+  [H1]〜[H5] / [H7] / floor は緑。**exit 1 は設計どおり**で「全ゲート緑」とは書かない (§7b の報告書式)。
+- **負のコントロール 2 件 (一時改変・stage せず・exe sha256 未採取)**:
+  NC1 = B stride を 0 固定 → `t3_negctrl1_bstride0.log` で **[H2:case2] MISMATCH FAILED** (`:44`) + [H5] case1/4/5 も `E > theta` で FAILED。
+  NC2 = cuBLAS batched 枝をフォールバック直列へ強制迂回 → `t3_negctrl2_force_fallback.log` で **[H6:case1] FAILED** (`:37`) だが
+  **[H5] は全ケース PASSED (E=0)** = 数値ゲートだけでは空撃ちを捕まえられないことの実証 (§7b の要求どおり)。
+- **★未発火のまま (実走で確認していない) 2 経路**: ① validator 違反時の `std::abort()` 枝 ② `batched_span` の負 stride 分岐
+  (T3 のケースに負 stride は無い)。確定しているのは validator の戻り値までで、abort 経路の挙動はコード上の推論に依拠する (§6 T8 スコープ 18)。
+
+### T4 (S2+S3・conv2d N>1 枝の真 batch2 化 + キルスイッチ + [G1]〜[G5]) — 完了
+
+- **コミット**: 実装 `3f6ee41` / 是正 `a206155` ([G3] に poison 3 runs を追加 + `src/meson.build` に `conv2d_batch_off` (`DOLLAMA_CONV_BATCH=0`) 1 行)。
+  台帳 `6248a77` (PL 決裁 5 件) / `18686e5` (再監査是正)。
+- **走行条件** (`docs/logs/g10k-t4/t4_index.txt`): 2026-09-12 研究機・HEAD `e40cce4` (= 現 `c8b3a14`) + working tree・SAC = 0。
+  **2 プロセス体制**: `DOLLAMA_CONV_BATCH` は getenv キャッシュ型 = プロセス単位固定なので [G1] (`=0`) と [G2a]〜[G5] (既定 = 当時は新経路)
+  は別プロセス。同一プロセス内で切り替えたのではない。
+- **結果** (最終ツリー `t4_default_run2_final.log` / `t4_convbatch0_run2_final.log`・exit 0):
+  既定プロセス [G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] 全 PASSED (PASSED 75 行) / `=0` プロセス **[G1] 5/5 BIT-EXACT + wrapper +0** (`:65,70,75,80,85`)。
+  [G2] floor は小形状で **MAE 2.7e-4 (`small_1x1_bias_17x19`・`:104`) / 6.2e-4 (`small_3x3_s2_33to17`・`:114`)** = G-2k S2 の per-sample 6.4e-5 の
+  **約 4.3 倍 / 約 9.6 倍** (K が違う形状どうし・「同オーダー」とは書かない)。[G4] 帯分割ケースの 1 call ピーク **270MiB** (`:177`)。
+  T4 時点の `bench_batch` 比 (`:186-189`): **1.026 / 1.027 / 1.013 / 1.076** (batched が遅い方向 — T6 の赤を予告)。
+  `meson test` 53/53 (`t4_meson_test_full.log`) → 是正後 **54/54** (`t4fix_meson_test_full.log:65-66`・`conv2d_batch_off` が 1 本増)。
+- **負のコントロール 3 件** (一時改変・stage せず): NC1 (item stride を 1 行ずらす) → [G2a]/[G2b] が im2col 6 形状で MISMATCH・1x1 2 形状は PASSED (射程どおり)。
+  **NC2 (キルスイッチ迂回・`=0` で実行) → [G1] は memcmp 単独では 5 中 2 のみ red、計器 (wrapper +0) 併用で 5/5 red**
+  (`t4_negctrl2_killswitch_bypass.log:65,70,75,80,85`) = **memcmp だけでは空撃ちしうる**実例。NC3 (item1 の col を未書き) → [G3] poison が im2col 6 形状で FAILED
+  (`small_3x3_s2` は 0x00 poison では BIT-EXACT・0xFF のみ DIFF = 素の 3 連走では捕まらないことの実証)。
+- **stride 契約**: conv2d から渡す stride は全て非負。負 stride 分岐は T4 でも未発火のまま。
+
+### T5 (S4a・回帰実走のみ・src 無改変) — 完了
+
+- **コミット**: `d657b08` (生ログ + 索引)。走行 HEAD `e16b700` (= 現 `a206155`)・porcelain は未追跡ログのみ・SAC = 0・
+  exe は `ninja: no work to do` で HEAD 由来を確認 (`t5_index.txt`)。
+- ① `meson test` **Ok 54 / Fail 0** (`t5_meson_test_full.log:70-71`)。
+  ② `test_diffusion_batch2` GATE1 bit-exact / **GATE2 batch2 vs off @g=1.0 MAE 0.0303612 SSIM 0.999474** / GATE3 bit-exact /
+  **GATE4 MAE 0.0307191 SSIM 0.999467** (`t5_diffusion_batch2_default.log`)。T4 前 (T2c `t2c_0909_db2bench_profile.log:374,378`) は
+  GATE2 MAE 0.0304753 / GATE4 SSIM 0.999477 → **SSIM 一致 (GATE2) は偶然で、MAE と GATE4 は動いている = 新経路が e2e を通っている証拠**。
+  ③⑥ `prof_arena_e2e` (既定・batched ON): step ループ内 実 cudaMalloc/cudaFree/chunk_alloc **0** / `live_peak` **5914MiB** (= `kArenaLivePeakUnetMiB`・等号) /
+  `reserve shortage` **0 件** / PEAK_USED 13627MB vs 同一セッション `POOL=0` 13281MB = **delta +346MB**。
+  ⑤ `test_unet_fast` fast vs default **bit-exact** (default 無改変維持)・epilogue vs default SSIM 0.999999。
+  `test_conv2d` 既定 PASSED 75 / `=0` PASSED 80 ([G1] 5/5)。
+- 棄却走行 `DISCARDED_arena_e2e_pool0_envset_not_applied.log` (env が入らなかった初版スクリプト) は採用せず #7 で撮り直し (索引に経緯あり)。
+- 秒 (sec / 1step latency / cat_resnet_sec) はすべて characterization で T6 / T7 の代わりに使わない。
+
+#### (旧記述・T8 前の見出し「T3 / T4 / T5 — 完了 (本節には未記載)」・履歴として残す)
 
 本節には T3 / T4 / T5 の実施記録を書いていない。一次は各索引と commit 本文
 (`docs/logs/g10k-t3/` / `docs/logs/g10k-t4/t4_index.txt` / `docs/logs/g10k-t5/t5_index.txt`、
@@ -1706,3 +1801,74 @@ T7c は T7b 合格時のみ。§8 ケース B' の分岐 3 のとおり、T8 で
 - 副産物 (申告・ビルドログ未退避): 計測 exe の初版は `launch_conv2d` の前方宣言を global namespace に置いて
   LNK2019 になり、`using dollama::launch_conv2d;` (`conv2d.cuh` の宣言は namespace `dollama`) に直して再リンクした。
   退避ソース `scripts/prof_conv_breakdown.cu:23` はその修正後のもの。**初版のリンクエラー自体の一次証拠は無い**。
+
+### T7 (S4c・DB2_BENCH 3 プロセス・採取のみ) — 完了 (`703ea92`)
+
+**走行条件** (出典 = `docs/logs/g10k-e2e/t7_p*.log` ヘッダ・索引 `README.md`)
+
+- 2026-09-16 23:40〜 研究機 `KIK-WIN-RTX58`・**3 プロセス連続** (P1 既定 → P2 `DOLLAMA_CONV_BATCH=0` → P3 既定)・間に他の GPU 負荷なし。
+  env = `DB2_BENCH=1 DB2_BENCH_STEPS=20 DB2_BENCH_ITERS=1 DOLLAMA_PROFILE=1`・`DB2_BENCH_G` 未設定 (既定 7.5)・他 `DOLLAMA_*` 全 `<unset>` (T2c と同一 pin)。
+- ★**HEAD は 3 プロセスで同一ではない**: P1 = `a9e0cf1` (porcelain に `.claude/agents/*.md` 11 本の `M`)、**P2 / P3 = `c0f6d8f`**
+  (P1 と P2 の間にその 11 本だけを `c0f6d8f` としてコミットした。各ログ `:5-6`)。**exe sha256 `87EA4C3A…` / `conv2d.cu` `31F6C8C6…` /
+  `test_diffusion_batch2.cu` `B4A24AB2…` は 3 本同一** (各ログ `:9-11`) で、`src/` は無改変 → 判定に影響しない。
+  (`703ea92` 時点の README は「3 プロセスとも同一 HEAD」と書いていた → T8 で訂正。)
+- exe は T5 / T6 と同一ビルド (本セッションでビルドなし)。**SAC 状態は「未確認 (裏取りせず)」** (各ログ `:12`)。3 本とも `exit=0`・`ALL PASSED`。
+
+**採取値 — resnet バケット (`resnet (conv/groupnorm)` 行・秒・各ログ steps=20 節)**
+
+| 構成 | P1 既定 warmup / **本走** | P2 `=0` warmup / **本走** | P3 既定 warmup / **本走** |
+|---|---|---|---|
+| default (forwards=40・B=1×2/step) | 1.069 / **1.064** (`:438`) | 1.084 / **1.058** (`:438`) | 1.078 / **1.060** (`:438`) |
+| attn+batch2 (合成・CLI 到達不可) | 0.998 / 0.996 | 0.993 / 0.974 | 1.013 / 0.994 |
+| **fast+epilogue (出荷 `--fast`・forwards=20)** | 0.874 / **0.886** (`:538`) | 0.877 / **0.857** (`:538`) | 0.892 / **0.873** (`:538`) |
+
+warmup 側 (lazy init を含む) は判定に使わない (記録のみ)。`n/a` 欄・`weight_upload` は引用しない (T2b 禁止事項)。
+
+**採取値 — e2e (harness `steady_clock` min ms・★計装 ON 下の参考値・正典ではない)**: default 14106.1 / 14066.9 / 14042.8、
+fast+epilogue 10974.3 / 10799.8 / 10838.0 (各ログ `:547`)。倍率 (同 `:548`) fast+epi vs default **x1.285 / x1.303 / x1.296**。
+parity 節 (steps=4) の GATE2 / GATE4 は P1 / P3 (新経路) = MAE 0.0303612 / SSIM 0.999467、P2 (`=0`) = MAE 0.0304753 / SSIM 0.999477
+(各ログ `:386` / `:390` = T5 (新経路) と T2c (変更前) の値がそれぞれ再現)。
+
+### T7b (S4d・判定のみ・perf-profiler) — 完了・**「−15% 未満」帯 = 秒中立・陰性クローズ**
+
+判定は §3「分母の決裁」/ §8 ケース B の 3 帯どおり。分母 = **P2 (`CONV_BATCH=0`) の fast+epilogue 本走 0.857s**、
+被験 = P1 / P3 (既定 = 当時の新経路) の fast+epilogue 本走。
+
+| 項目 | 値 | 判定 |
+|---|---|---|
+| 削減率 P1 | (0.886 − 0.857) / 0.857 = **+3.38%** (悪化方向) | −15% 未満帯 |
+| 削減率 P3 | (0.873 − 0.857) / 0.857 = **+1.87%** (悪化方向) | −15% 未満帯 |
+| (平均) | +2.63% | — |
+| アンカー 1 (default P1 vs P3・\|P1−P3\|/P1) | (1.064 − 1.060) / 1.064 = **0.38%** | ドリフト幅 (床 10% 未満) |
+| アンカー 2 (default のプロセス間不変性) | 1.064 / 1.058 / 1.060 = 幅 0.6% 以内 | 不変 (CONV_BATCH 非依存) |
+| アンカー 3 (T2c `=0` 相当 vs T7 P2) | T2c A 0.854 / B 0.857 → 帯 ±10% = [0.769, 0.939] / [0.771, 0.943]。P2 0.857 = A 比 +0.35% / B 比 ±0.00% | **帯内** (参考対照・hard ではない・3 段手順は不発動) |
+
+- **e2e 倍率 (参考・合否なし)**: x1.285 / x1.303 / x1.296 = 既定 (P1/P3) と `=0` (P2) の差は −0.018 / −0.007 で **P2 (`=0`) の方が高い**。
+  §8 副次条件「x1.33 帯から +0.02 以上動く」は**計装 ON 下の値では判定しない** (x1.33 は計装 OFF の G-4k S3 値で窓が違う)。方向の参考まで。
+- **T6r の律速診断と整合**: GEMM / im2col の時間が N に比例し束ねても減らない + 帯分割の N=2 固有コスト (T6r 内訳表)。
+  「実装側の問題ではなかった」の出典は **T6r の内訳表のみ** (§8 ケース B' 分岐 3)。
+- **T7c はスキップ** (§6 T7c 行 = T7b 合格時のみ実施)。よって **G-10k の正典 e2e 倍率 (計装 OFF) は採っていない**。
+- **判定の主体**: perf-profiler (書き込みなし)。T8 (本記録) はその判定を転記し、上表の値を生ログから再計算して一致を確認した。
+
+### 後続処置 (§8 ケース B の既定・`c3ee3ca`) — `DOLLAMA_CONV_BATCH` を opt-in へ降格
+
+- §8 ケース B「−15% 未満 → `DOLLAMA_CONV_BATCH=0` を既定にし新経路を opt-in へ」の事前決裁どおり。**revert はしない**。
+- **`src/kernels/conv2d.cu`**: `conv_batch_enabled()` が **`"1"` のときだけ true** (旧: `"0"` のときだけ false)。未設定 / 空 / `"1"` 以外は
+  **G-2k S1 の per-n 直列ループ (旧経路・無改変)**。分岐構造・カーネルは不変 (`git show c3ee3ca -- src/kernels/conv2d.cu` = 判定式 1 行 +
+  コメント)。
+- **`src/tests/test_conv2d.cu`**: `t4_conv_batch_off()` を同式の厳密否定 (`!(v && strcmp(v,"1")==0)`) に。**[G1] hard memcmp は既定プロセス
+  (= meson `test('conv2d')` の自動枠へ昇格)**、[G2a]〜[G5] は `=1` プロセス。
+- **`src/meson.build`**: `conv2d_batch_off` (`=0`) → **`conv2d_batch_on`** (`DOLLAMA_CONV_BATCH=1`)。test 定義数は 54 のまま。
+- 研究機実走 (`c3ee3ca` 本文の申告): `meson compile` 緑 / `conv2d` + `conv2d_batch_on` 2/2 OK (SAC OFF)。Opus レビュー BLOCK 0 (中 1・軽微 1 是正済)。
+  ★**この走行の生ログは repo 未収載** (`docs/logs/` に該当ディレクトリ無し) = **commit 本文の申告のみ**。残債として §12 へ (下記 T8)。
+- ★以後の読み替え: 台帳内 (§6 / §7 / §8 / 索引) の「キルスイッチ `=0`」「`conv2d_batch_off`」は当時の表記。現況は本節冒頭の注記。
+
+### T8 (S5・記録) — 実施 (2026-09-17・worktree `g10k-optin-scratch` で執筆・コミットは依頼者側)
+
+- 書いたもの: 本節 T3 / T4 / T5 / T7 / T7b / 後続処置 + §6 冒頭の状態一覧 / `docs/measurements-log.md` G-10k 節 / `docs/fast-mode-plan.md`
+  `:212-215` `:318-324` `:690-691` の注記 / CLAUDE.md 計測表 1 行 + 次のタスク 1 行 / `docs/logs/g10k-e2e/README.md` の HEAD 記述訂正。
+- **書いていないもの (出典が無い)**: T7c の正典 e2e 倍率 (未実施) / `c3ee3ca` 実走の生ログ (未収載) / SAC 状態 (T7 は「未確認」のまま)。
+- **§12-6〜8 に追加した残債**: ① `c3ee3ca` 実走の生ログ未収載 ② `.claude/agents/perf-profiler.md` の「分母は `--fast` + `DOLLAMA_CONV_BATCH=0`」表記が
+  opt-in 降格後は反転している (T8 のスコープ外 = §12-2 の決裁枠) ③ `docs/fast-mode-plan.md` の「秒数の本命は G-10k 単独」(§12-8 に行番号) は
+  陰性クローズで前提が消えた (追随の要否は PL 決裁・§12-3 と同じ扱い)。
+- ★本節・§12・measurements-log が引く `docs/fast-mode-plan.md` の行番号は **T8 の注記挿入後の現物**で検算済み (挿入前の番号は §6 T8 スコープの表記)。
