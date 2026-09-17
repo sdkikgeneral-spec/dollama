@@ -87,7 +87,7 @@ struct IDiffusionBackend
 
 // backend 構築設定 (registry factory が受ける)。
 //   backend_name : 選択する backend ("sdxl" / "sd35")。
-//   preset       : 将来のプリセット名 (現状未使用・拡張点)。
+//   preset       : 2-6d: 使用中 (ログ・識別用。パス解決は cli_generate 側で行う)。
 //   unet/vae/embeds : 拡散重み (SDXL が使う)。
 //   tok_l/g・enc_l/g・tok_dll : OV text encoder アセット (SDXL が使う)。
 //   device_l/g   : text encoder の実行デバイス ("NPU" / "CPU" 等)。

@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -42,6 +43,7 @@
 #include "server/diffusion_backend.hpp"        // BackendConfig / make_backend (registry)
 #include "server/generator.hpp"
 #include "server/matter_runner.hpp"
+#include "server/preset.hpp"                   // 2-6d: preset 解決 (resolve_preset_paths)
 #include "server/scorer_runner.hpp"
 #include "server/pipeline_generator_factory.hpp"
 #include "server/stub_generator.hpp"
@@ -95,20 +97,51 @@ inline std::string resolve_path(const char* env_name, const std::string& fallbac
 
 // 画像生成器を 3 段フォールバックで構築する (HTTP / CLI 共有)。
 //   log: 各段の選択を出力するストリーム (HTTP は std::cout / CLI も std::cout)。
-//   ログ文言・段順・条件は従来 HTTP DI と bitwise 等価。
+//   preset_cli: CLI 由来の preset 名 (--preset)。空なら env DOLLAMA_BACKEND_PRESET を見る。
+//   ログ文言・段順・条件は preset 未指定 (現行) 時は従来 HTTP DI と bitwise 等価。
 inline std::unique_ptr<IImageGenerator> build_image_generator(
-    std::ostream& log, const FastConfig& cli_fast = FastConfig{})
+    std::ostream& log, const FastConfig& cli_fast = FastConfig{},
+    const std::string& preset_cli = "")
 {
     // G-0b: env (DOLLAMA_FAST/DOLLAMA_FP8) と CLI 由来フラグを OR 合成し fp8→fast を適用。
     //   default (全 off) は現行挙動そのまま。fast 分岐はこの Pkg では一切足さない。
     const FastConfig fast_cfg = resolve_fast_config(cli_fast);
     (void)fast_cfg; // 段1 (OV&&CUDA) 以外では未使用。段2/3 は fast 非対象。
-    // 重み/golden パスを解決 (env 変数で上書き可。既定は test data パス)。
+
+    // 2-6d: preset 名を解決する (CLI 優先・無ければ env)。preset が空なら以降は
+    //   現行経路と 1 文字も変わらない (preset_paths は常に nullopt のまま)。
+    const std::string preset = !preset_cli.empty()
+                                    ? preset_cli
+                                    : resolve_path("DOLLAMA_BACKEND_PRESET", "");
+    std::optional<PresetPaths> preset_paths;
+    if (!preset.empty())
+    {
+        preset_paths = resolve_preset_paths(preset, default_model_roots());
+        if (preset_paths)
+        {
+            log << "[preset] " << preset << " dir=" << preset_paths->dir << "\n";
+            log << "  unet='" << preset_paths->unet << "'\n";
+            log << "  vae='" << preset_paths->vae << "'\n";
+            log << "  enc_l='" << preset_paths->enc_l << "'\n";
+            log << "  enc_g='" << preset_paths->enc_g << "'\n";
+        }
+        else
+        {
+            log << "[warn] preset '" << preset
+                << "' が models/presets/ に見つからない "
+                   "(unet/vae/text-encoder-l/g の 4 ファイルが要る) → base にフォールバック\n";
+        }
+    }
+
+    // 重み/golden パスを解決 (env 変数で上書き可。既定は test data パス。preset が
+    // 解決できていれば preset のパスを fallback にする・個別 env は従来通り優先)。
     // 既定は src/tests/data。本番の重み配置先が決まったら DEFAULT を差し替える。
-    const std::string unet_w =
-        resolve_path("DOLLAMA_UNET_WEIGHTS", "src/tests/data/unet_weights.safetensors");
-    const std::string vae_w =
-        resolve_path("DOLLAMA_VAE_WEIGHTS", "src/tests/data/vae_weights.safetensors");
+    const std::string unet_w = resolve_path(
+        "DOLLAMA_UNET_WEIGHTS",
+        preset_paths ? preset_paths->unet : "src/tests/data/unet_weights.safetensors");
+    const std::string vae_w = resolve_path(
+        "DOLLAMA_VAE_WEIGHTS",
+        preset_paths ? preset_paths->vae : "src/tests/data/vae_weights.safetensors");
     const std::string embeds =
         resolve_path("DOLLAMA_EMBEDS", "src/tests/data/unet_io.safetensors");
 
@@ -132,14 +165,33 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
         const std::string tok_g =
             resolve_path("DOLLAMA_TOKENIZER_G",
                          find_model_xml("sdxl-tokenizer-g/openvino_tokenizer.xml"));
-        const std::string enc_l =
-            resolve_path("DOLLAMA_ENCODER_L",
-                         find_model_xml("sdxl-text-encoder-l/model_ov.xml"));
-        const std::string enc_g =
-            resolve_path("DOLLAMA_ENCODER_G",
-                         find_model_xml("sdxl-text-encoder-g/model_ov.xml"));
+        const std::string enc_l = resolve_path(
+            "DOLLAMA_ENCODER_L",
+            preset_paths ? preset_paths->enc_l
+                         : find_model_xml("sdxl-text-encoder-l/model_ov.xml"));
+        const std::string enc_g = resolve_path(
+            "DOLLAMA_ENCODER_G",
+            preset_paths ? preset_paths->enc_g
+                         : find_model_xml("sdxl-text-encoder-g/model_ov.xml"));
         // openvino_tokenizers.dll は env のみ (空なら段1 をスキップ)。
         const std::string tok_dll = resolve_path("DOLLAMA_OV_TOKENIZERS_DLL", "");
+
+        // 中1: 段1 で最終的に使う 4 パスをログする (preset 非空のときだけ・preset 空時は不変)。
+        //   個別 env が preset の解決値を上書きしていれば (env override) を注記する。
+        if (!preset.empty())
+        {
+            auto log_resolved = [&](const char* field, const std::string& final_v,
+                                     const std::string& preset_v)
+            {
+                const bool env_override = preset_paths && final_v != preset_v;
+                log << "[preset] resolved: " << field << "='" << final_v << "'"
+                    << (env_override ? " (env override)" : "") << "\n";
+            };
+            log_resolved("unet", unet_w, preset_paths ? preset_paths->unet : "");
+            log_resolved("vae", vae_w, preset_paths ? preset_paths->vae : "");
+            log_resolved("enc_l", enc_l, preset_paths ? preset_paths->enc_l : "");
+            log_resolved("enc_g", enc_g, preset_paths ? preset_paths->enc_g : "");
+        }
 
         // backend 選択 (env 既定 "sdxl"・resolve_path と同流儀で getenv)。
         const std::string backend_name = resolve_path("DOLLAMA_BACKEND", "sdxl");
@@ -160,6 +212,7 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
             {
                 BackendConfig cfg;
                 cfg.backend_name = backend_name;
+                cfg.preset       = preset_paths ? preset : ""; // 2-6d: フォールバック時は名前を残さない
                 cfg.unet_weights = unet_w;
                 cfg.vae_weights  = vae_w;
                 cfg.embeds       = embeds;
@@ -174,14 +227,27 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
                 return cfg;
             };
 
+            // preset が実際に解決できたときだけログにタグを足す (preset 空 or 解決失敗 → 従来通り無タグ)。
+            //   4 本すべて preset のパスが最終採用されていれば [preset=<name>]、
+            //   1 本でも個別 env が上書きしていれば [preset=<name>+env] にする。
+            std::string preset_tag;
+            if (preset_paths)
+            {
+                const bool all_from_preset =
+                    unet_w == preset_paths->unet && vae_w == preset_paths->vae &&
+                    enc_l == preset_paths->enc_l && enc_g == preset_paths->enc_g;
+                preset_tag = all_from_preset ? ("[preset=" + preset + "] ")
+                                              : ("[preset=" + preset + "+env] ");
+            }
+
             // NPU 第一・失敗時 CPU フォールバックで backend を構築 → BackendImageGenerator。
             //   make_backend は nullptr 契約 (未知名 / OV 無 / 構築失敗 → nullptr)。
             std::unique_ptr<IDiffusionBackend> backend = make_backend(make_cfg("NPU"));
             if (backend)
             {
                 gen = std::make_unique<BackendImageGenerator>(std::move(backend));
-                log << "dollama HTTP server (" << backend_name
-                    << " backend — NPU)\n";
+                log << "dollama HTTP server (" << backend_name << " backend "
+                    << preset_tag << "— NPU)\n";
             }
             else
             {
@@ -191,8 +257,8 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
                 if (backend)
                 {
                     gen = std::make_unique<BackendImageGenerator>(std::move(backend));
-                    log << "dollama HTTP server (" << backend_name
-                        << " backend — CPU)\n";
+                    log << "dollama HTTP server (" << backend_name << " backend "
+                        << preset_tag << "— CPU)\n";
                 }
                 else
                 {

@@ -119,6 +119,9 @@ int run_device_check()
 //                                    重み/golden が揃えば本 txt2img、無ければ
 //                                    Pipeline→Stub フォールバックで必ず PNG が出る。
 //                                    既定でマッティング ON (透過 PNG)。--no-matting で OFF。
+//   --preset <name>                 : 2-6d: models/presets/<name>/ の checkpoint 一式
+//                                    (unet/vae/text-encoder-l/g) を使う。未指定/未解決なら
+//                                    base checkpoint にフォールバック (env DOLLAMA_BACKEND_PRESET でも指定可)。
 int main(int argc, char** argv)
 {
 #ifdef HAVE_HTTP
@@ -133,6 +136,7 @@ int main(int argc, char** argv)
     std::string prompt;            // 指定かつ --http 無し → CLI 生成モード
     std::string negative;          // 既定 ""
     std::string out_path = "out.png";
+    std::string preset;            // 2-6d: --preset <name> (既定 "" = base checkpoint)
 
     for (int i = 1; i < argc; ++i)
     {
@@ -204,6 +208,10 @@ int main(int argc, char** argv)
         {
             fp8_flag = true;
         }
+        else if (a == "--preset")
+        {
+            preset = next_str(preset);
+        }
     }
 
     // G-0b: CLI 由来の FAST フラグ集合を組む (env との OR / fp8→fast 含意は
@@ -217,7 +225,7 @@ int main(int argc, char** argv)
     {
         // 生成器を 3 段フォールバックで構築 (--http / CLI 共有のヘルパ)。
         std::unique_ptr<dollama::IImageGenerator> gen =
-            dollama::build_image_generator(std::cout, fast_cli);
+            dollama::build_image_generator(std::cout, fast_cli, preset);
 
         std::cout << "  defaults: steps=" << steps
                   << " size=" << width << "x" << height << "\n";
@@ -231,7 +239,7 @@ int main(int argc, char** argv)
         std::cout << "  prompt='" << prompt << "' negative='" << negative << "'\n";
 
         std::unique_ptr<dollama::IImageGenerator> gen =
-            dollama::build_image_generator(std::cout, fast_cli);
+            dollama::build_image_generator(std::cout, fast_cli, preset);
 
         dollama::GenRequest req{prompt, negative, 1, steps, width, height};
         // 集成初期化に matting を足すと並びがずれるため代入で設定する。

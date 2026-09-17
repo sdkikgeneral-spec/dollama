@@ -311,6 +311,16 @@ test_diffusion_backend_exe = executable('test_diffusion_backend',
 )
 test('diffusion_backend', test_diffusion_backend_exe)
 
+# 2-6d: preset 解決 (server/preset.hpp) 単体テスト
+# 純 cpp (std::filesystem のみ) ゆえ OV/CUDA 非依存・開発機でも SKIP なし常時実走する。
+test_preset_exe = executable('test_preset',
+  sources             : files('tests/test_preset.cpp'),
+  include_directories : src_inc,
+  dependencies        : deps,
+  cpp_args            : cpp_args,
+)
+test('preset', test_preset_exe)
+
 # FastConfig (FAST モードのフラグ枠・G-0b) 単体テスト
 # 純 cpp (OV/CUDA 非依存) ゆえ開発機でも SKIP なし常時実走する。FastConfig 既定値と
 # resolve_fast_config の env(DOLLAMA_FAST/DOLLAMA_FP8)/CLI 合成・fp8->fast 含意を検証する。
