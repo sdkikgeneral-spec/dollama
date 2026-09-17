@@ -1316,6 +1316,7 @@ BIT-EXACT」・G-4k S2 行の 1.212s)。
 8. **(T8 で追加) `docs/fast-mode-plan.md:421-424` (T8 注記挿入後の現物・挿入前 `:410-413`) / `:466` (攻め筋表の G-10k 行・挿入前 `:455`) / `docs/hw-accel-plan.md:118,132` の
    「秒数の本命は G-10k 単独」は陰性クローズで前提が消えた。** 追随の要否は PL 決裁 (§12-3 と同じ扱い)。T8 が触ったのは
    `fast-mode-plan.md:212-215` / `:318-324` / `:690-691` (挿入前の番号) のみ。挿入後の注記位置 = `:218-224` / `:334-337` / `:702-705`。
+   ★T9 是正 (2026-09-17) で CLAUDE.md G-4k S2 行 (計測表 `conv2d 後段融合` セル末尾) と `docs/measurements-log.md` G-8k S5 ②「再 profile 自体は G-10k 完了後で正しい」にも現況注記を追記済 (計器を B=1 に戻さない旨)。
 ---
 
 ## 13. 実施記録 (実走後に追記する節・タスク表の DoD は書き換えない)
@@ -1534,9 +1535,10 @@ A (09-04) → B (09-09) の差:
   **現ブランチ `feat/g10k-conv-true-batch2` の履歴に無い** (`git branch --contains` が空。オブジェクトは本機のローカルに残っており
   `git cat-file -t` は commit を返す)。T8 で `git rev-parse <hash>:src` を突き合わせ、**`src/` ツリーが同一**であることを確認した対応:
 
-  | 旧 | 現 | src ツリー | 件名 |
+  | 旧 | 現 (src ツリー写像 = `git rev-parse <hash>:src` が一致する現ブランチ commit) | src ツリー | 件名 (現側) |
   |---|---|---|---|
-  | `e15b658` (docs) | `9518fd7` | 同一 (`b407ecc…`) | T3 実装 (batched GEMM ラッパ純追加 + [H1]-[H7]/floor) |
+  | `646cc66` (T3 索引の「走行時 HEAD」・2026-09-10) | `74e15e1` | 同一 (`f306bda…`) | docs: [H5] E のスコープ明記 (T3 実装前) |
+  | `e15b658` (docs: 3レーンレビュー是正) | `d7316d2` (docs 等価) / src は `9518fd7` (T3 実装) と同一 | 同一 (`b407ecc…`) | T3 実装 `9518fd7` (batched GEMM ラッパ純追加 + [H1]-[H7]/floor) 直後の docs |
   | `e84a92a` | `3b0a336` | 同一 (`594a430…`) | T3 是正 (case4/5 カウンタ・未発火経路コメント) |
   | `a227635` / `e40cce4` | `1f9be8a` / `c8b3a14` | 同一 (`4a3b149…`) | T3 コメント訂正 / docs |
   | `8707472` / `59300a0` / `97aa092` / `faa0ead` | `3f6ee41` / `6248a77` / `e4d48e5` / `18686e5` | 同一 (`e512249…`) | T4 実装 / docs 3 本 |
@@ -1555,7 +1557,7 @@ A (09-04) → B (09-09) の差:
   `1f9be8a` (test_gemm.cu コメントの表 (A)/(B) 取り違え訂正・コメント行のみ)。台帳側の是正ループは
   `7934891` → `80f93c1` → `1b65737` → `088e727` → `9b7f396` → `848d722` → `74e15e1` → `d7316d2` → `c8b3a14` → `e4d48e5` → `18686e5`
   (record-auditor 是正 7 本 + PL 決裁反映 2 本 (`7934891` / `9b7f396`) + その他 2 本 (`74e15e1` / `d7316d2`)。**`src/` を触ったのは上の 3 本だけ**)。
-- **走行条件** (`docs/logs/g10k-t3/t3_index.txt` / `t3_env_meta.log`): 2026-09-12 研究機・**HEAD `646cc66` + working tree**
+- **走行条件** (`docs/logs/g10k-t3/t3_index.txt` / `t3_env_meta.log`): 2026-09-12 研究機・**HEAD `646cc66` (= 現 `74e15e1`・上表) + working tree**
   (T3 の 4 ファイルが未コミットの状態で実走)・SAC = 0・`DOLLAMA_*` 全 `<unset>`。
 - **既定経路 `t3_default_run.log` (exit 0)**: 既存 5 ケース無改変で PASSED / [H7] validator 単体 12 件 PASSED / **[H6] hard = 表 (A) の
   2 行のみ** (`case3` = cuBLAS 不適格形状 → wrapper 1・batched 0・fallback 1・items 2 で PASSED (`:19`) / `case1` = conv 実使用形態 →

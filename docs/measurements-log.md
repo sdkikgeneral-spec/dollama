@@ -129,7 +129,7 @@ CLAUDE.md の計測表には G-2k / G-3kf / G-4k の行はあるが **G-8k の�
 さらに G-4k S2 の行 (CLAUDE.md:230 付近) は今も
 「resnet ≤0.95s の合否は **G-10k(conv 真batch2)/G-8k(im2col malloc撲滅) 後**へ再割当」と
 **G-8k を未完了の前提**で書かれている。G-8k は S4b 全緑でクローズ済 (2026-08-19) なので、
-次に CLAUDE.md を触る際に追随させること (再 profile 自体は G-10k 完了後で正しい —
+次に CLAUDE.md を触る際に追随させること (再 profile 自体は G-10k 完了後で正しい — ★2026-09-17 T8 注記: ただし計器を `prof_unet_fast_warm` (B=1) にしてはいけない・G-10k は陰性クローズ (下記 G-10k 節 規律 1) —
 G-8k は秒数レバーではないため)。
 → ★**「未完了前提」の側は S5g (2026-08-22) でクローズ**: G-4k S2 行の再割当文に G-8k クローズ済
 (S1〜S4b・2026-08-19) の最小注記を追加した (6 回目監査の中4・ユーザー決裁は最小注記のみ)。
@@ -415,7 +415,7 @@ merge 後のベースラインが **53/53 緑**であることを確認したう
 すべて生ログの行番号で引く (書き手 = record-writer・検査 = record-auditor T9)。
 
 **結論 (1 行)**: 真 batch2 経路 (im2col N 込み + `cublasGemmStridedBatchedEx`) は数値ゲート全緑だが **fast+epilogue の resnet バケット
-削減率 = P1 +3.38% / P3 +1.87% (悪化方向・分母 = 同セットの `DOLLAMA_CONV_BATCH=0`)** → §8 ケース B「−15% 未満」帯 = **秒中立・陰性クローズ**。
+削減率 = P1 +3.38% / P3 +1.87% (悪化方向・分母 = 同セットの `DOLLAMA_CONV_BATCH=0`・**当時 = 既定が新経路。`c3ee3ca` 以降は `=0` も未設定も旧経路**)** → §8 ケース B「−15% 未満」帯 = **秒中立・陰性クローズ**。
 **revert せず opt-in `DOLLAMA_CONV_BATCH=1` に降格** (既定 = G-2k S1 per-n 直列・bit 一致資産を維持)。
 
 | 指標 | 値 | 出典 |
@@ -428,8 +428,8 @@ merge 後のベースラインが **53/53 緑**であることを確認したう
 | T5 回帰 | meson 54/54 / GATE2 MAE 0.0303612 SSIM 0.999474 / GATE4 MAE 0.0307191 SSIM 0.999467 / unet_fast fast vs default bit-exact / arena e2e cudaMalloc/cudaFree/chunk_alloc 0・live_peak 5914MiB・shortage 0・peak delta +346MB (同一セッション POOL=0 比) | `g10k-t5/t5_index.txt` (各ログ) |
 | T6 conv 単体 (`bench_batch_vs_persample`・≤0.95 ゲート) | **赤**: rep_320_128 1.024/1.022 · rep_640_64 1.029/1.028 · rep_1280_32 1.012/1.012 · G4_band 1.076/1.076 (run1/run2・batched が遅い方向) | `g10k-resnet/t6_conv2d_default_run{1,2}.log:205-209` |
 | T6r 律速診断 (nsys・src コミットなし) | GEMM: batched N=2 1 発 ≈ seq N=1 2 発 (528.8 vs 543.3 us 等) / im2col 同量 / batch 固有上乗せ = bias 1.6〜1.9x + G4 scatter +70.6us / **上乗せを 0 にしても 0.99〜1.01** → 判定 **No** (conv2d.cu 内のレバー無し) | `g10k-resnet/t6r/breakdown_table.txt`・台帳 §13 T6r |
-| **T7 resnet バケット (fast+epilogue 本走・s・計装 ON)** | **P1 既定 0.886 / P2 `=0` 0.857 / P3 既定 0.873**。default 行 1.064 / 1.058 / 1.060 (ドリフト対照) | `g10k-e2e/t7_p{1,2,3}_*.log:538` / `:438` |
-| **T7b 判定** | 削減率 **+3.38% / +1.87%** (悪化) → **−15% 未満帯 = 秒中立・陰性クローズ**。アンカー 1 = 0.38% / アンカー 2 = 0.6% 以内 / アンカー 3 = **帯内** (T2c 0.854/0.857 vs P2 0.857・帯 ±10%) | 台帳 §13 T7b |
+| **T7 resnet バケット (fast+epilogue 本走・s・計装 ON・★当時 = 既定が新経路)** | **P1 既定(新経路) 0.886 / P2 `=0`(旧経路) 0.857 / P3 既定(新経路) 0.873**。default 行 1.064 / 1.058 / 1.060 (ドリフト対照) | `g10k-e2e/t7_p{1,2,3}_*.log:538` / `:438` |
+| **T7b 判定** | 削減率 **+3.38% / +1.87%** (悪化・分母 = P2 `=0` = 当時の旧経路。`c3ee3ca` 以降は `=0` も未設定も旧経路) → **−15% 未満帯 = 秒中立・陰性クローズ**。アンカー 1 = 0.38% / アンカー 2 = 0.6% 以内 / アンカー 3 = **帯内** (T2c 0.854/0.857 vs P2 0.857・帯 ±10%) | 台帳 §13 T7b |
 | T7 e2e 倍率 (計装 ON・参考・**正典ではない**) | fast+epi vs default x1.285 / x1.303 / x1.296 | `t7_p*.log:548` |
 | T7c 正典 e2e (計装 OFF) | **未実施** (T7b 合格時のみの規定) | — |
 | 後続処置 `c3ee3ca` | `conv_batch_enabled()` = `"1"` のみ true / `t4_conv_batch_off()` 厳密否定 / [G1] を既定プロセス (自動枠) へ / meson `conv2d_batch_off`→`conv2d_batch_on` (`=1`)。研究機 2/2 OK は **commit 本文の申告のみ (生ログ未収載)** | `git show c3ee3ca` |
@@ -446,7 +446,7 @@ merge 後のベースラインが **53/53 緑**であることを確認したう
    T7 の e2e 秒 (14.1s / 10.8〜11.0s) は「計装 ON 条件下の参考値」。正典は T7c (未実施)。**削減率のような計装 ON 同士の比は同期の影響を受けない**
    (合否を計装 ON 側に置ける理由)。
 5. **`default` 行を分母にしない**: default は B=1 × 2 forward/step (forwards=40) で batch2 構成 (forwards=20) と仕事の分割が違う。
-   分母は同一 `fast+epilogue` 構成の `CONV_BATCH=0`。**default 行はドリフト対照専用**。
+   分母は同一 `fast+epilogue` 構成の `CONV_BATCH=0` (当時 = 既定が新経路・`c3ee3ca` 以降は `=0` も未設定も旧経路 = 再測時は `=1` を被験にする)。**default 行はドリフト対照専用**。
 6. **`DB2_BENCH_ITERS=1` では 1 構成あたり `generate_txt2img` が 2 回** (warmup 1 + 計測 1)。warmup 側は判定不使用 (記録には残す)。
 7. **`prof_unet_fast_warm` は G-10k で使っていない**。同 `src/tests/prof_unet_fast_warm.cu:155-156` に
    `(gate: <=0.95s / stretch <=0.85s / baseline 1.225s)` の**退役済み絶対値ゲートが出力文字列として残っている** (残債 §12-4・src 不可侵ゆえ未修正)。
