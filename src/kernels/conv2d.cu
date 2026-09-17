@@ -43,7 +43,9 @@
 //   - N>1 枝 (launch_conv2d 末尾) を「im2col の n 次元対応 + strided batched GEMM
 //     (launch_gemm_fp16_batched)」へ置き換えた。N==1 分岐・direct・N==1 用ヘルパ
 //     (launch_conv2d_1x1_gemm / launch_conv2d_im2col_gemm) は 1 バイトも変えていない。
-//   - キルスイッチ DOLLAMA_CONV_BATCH=0 (getenv キャッシュ型・プロセス単位固定) で、
+//   - G-10k T7/T7b (docs/g10k-plan.md §8 ケース B) の実走で秒中立・陰性クローズと判定した
+//     ため revert はせず、既定を反転して opt-in DOLLAMA_CONV_BATCH=1 に降格した
+//     (getenv キャッシュ型・プロセス単位固定)。未設定/空/"1"以外は
 //     G-2k S1 の per-n 直列ループ (旧コード) がそのまま実行される。旧ループは新設の
 //     N 対応関数を経由せず、rows_cap の N 分割も通らない (構造保存)。
 //   - VRAM: IM2COL_TILE_BYTES (256MB) は「N 込みの合計上限」として扱い、rows_cap を
@@ -455,12 +457,15 @@ static void launch_conv2d_im2col_gemm(const __half* d_in, const __half* d_weight
 // ================================================================
 
 // ----------------------------------------------------------------
-// キルスイッチ: DOLLAMA_CONV_BATCH=0 で N>1 の真 batch 経路を無効化し、
-//   G-2k S1 の per-n 直列ループ (旧コード) をそのまま実行する。
+// opt-in スイッチ: DOLLAMA_CONV_BATCH=1 のときだけ N>1 の真 batch 経路を有効化し、
+//   それ以外 (未設定/空/"1"以外) は G-2k S1 の per-n 直列ループ (旧コード) を
+//   そのまま実行する。G-10k T7/T7b (docs/g10k-plan.md §8 ケース B) の実走で
+//   削減率 +1.9〜3.4% 悪化 = 秒中立・陰性クローズと判定したため、revert はせず
+//   既定を反転して opt-in に降格した。
 //   作法は gemm.cu の cublas_disabled() / device_arena.cu の
 //   device_arena_pool_enabled() と同型 (getenv は初回のみ・以後キャッシュ =
 //   プロセス単位固定。同一プロセス内で切り替えることはできない)。
-//   未設定 / 空 / "0" 以外 は既定 (新経路 ON)。"0" のときだけ旧経路。
+//   未設定 / 空 / "1" 以外 は既定 (旧経路)。"1" のときだけ新経路 ON。
 // ----------------------------------------------------------------
 static bool conv_batch_enabled()
 {
@@ -475,7 +480,7 @@ static bool conv_batch_enabled()
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
-        cached = (v != nullptr && std::strcmp(v, "0") == 0) ? 0 : 1;
+        cached = (v != nullptr && std::strcmp(v, "1") == 0) ? 1 : 0;
     }
     return cached == 1;
 }
@@ -805,10 +810,11 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
     if (N > 1 && use_gemm_path(1, Cin, Cout, KH, KW, Hout, Wout))
     {
         // ------------------------------------------------------------
-        // G-10k T4: 真の batch 経路 (既定 ON)。im2col の n 次元対応 + strided batched
-        // GEMM で N item を 1 発で回す。数値は per-n 直列と bit 一致を狙わない
-        // (batched のタイル選択差 = FP16 tol 内・G-2k S2 と同種)。
-        // キルスイッチ DOLLAMA_CONV_BATCH=0 のときはこのブロックに入らず、下の
+        // G-10k T4: 真の batch 経路 (opt-in DOLLAMA_CONV_BATCH=1)。im2col の n 次元対応 +
+        // strided batched GEMM で N item を 1 発で回す。数値は per-n 直列と bit 一致を
+        // 狙わない (batched のタイル選択差 = FP16 tol 内・G-2k S2 と同種)。
+        // T7/T7b で秒中立・陰性クローズと判定したため既定は旧経路 (opt-in 降格)。
+        // DOLLAMA_CONV_BATCH=1 以外はこのブロックに入らず、下の
         // G-2k S1 per-n 直列ループ (旧コード・無改変) がそのまま実行される。
         //   ★構造保存: 旧ループは新設の N 対応関数を経由せず、rows_cap の N 分割も
         //     通らない (N==1 ヘルパをそのまま N 回呼ぶ)。
@@ -830,7 +836,8 @@ void launch_conv2d(const __half* d_in, const __half* d_weight, const __half* d_b
             return;
         }
 
-        // ---- ここから下は G-2k S1 の per-n 直列ループ (DOLLAMA_CONV_BATCH=0 の旧経路・無改変) ----
+        // ---- ここから下は G-2k S1 の per-n 直列ループ (既定の旧経路・無改変。
+        //      DOLLAMA_CONV_BATCH が "1" 以外のとき = 未設定/空/=0/=true 等すべて) ----
         const long in_stride  = static_cast<long>(Cin) * H * W;
         const long out_stride = static_cast<long>(Cout) * Hout * Wout;
         for (int n = 0; n < N; ++n)

@@ -475,18 +475,19 @@ static bool test_conv_gemm_large()
 // G-10k T4 ヘルパ群 (docs/g10k-plan.md §7 の 7 ゲート用)。
 //
 // ★2 プロセス体制について (§9-4 / §9-7):
-//   conv2d.cu のキルスイッチ DOLLAMA_CONV_BATCH は getenv キャッシュ型 = プロセス単位固定
-//   なので、[G1] (=0 のキルスイッチ経路) と [G2a]〜[G4] (既定 = 新経路) は同一プロセスでは
-//   両方取れない。本 exe は env の値を読んで「このプロセスがどちらの経路か」を知り、
-//   各ゲートの期待値を切り替える (meson test 自動枠 = 既定経路 / =0 は手動実行してログ退避)。
+//   conv2d.cu の opt-in スイッチ DOLLAMA_CONV_BATCH は getenv キャッシュ型 = プロセス単位固定
+//   なので、[G1] (既定 = per-n 直列の旧経路) と [G2a]〜[G4] (DOLLAMA_CONV_BATCH=1 の新経路) は
+//   同一プロセスでは両方取れない。本 exe は env の値を読んで「このプロセスがどちらの経路か」を
+//   知り、各ゲートの期待値を切り替える (meson test 自動枠 = 素の test_conv2d が既定経路 /
+//   conv2d_batch_on(=1) が新経路)。
 //   ★これは「同一プロセス内で切り替えた」のではない。記録にもそう書かないこと。
 //   env の値を読むこと自体は分岐の証拠にならないので、各ゲートは必ず
 //   「実際に通った枝」の計器 (gemm_batched_stats の差分・アリーナ alloc 回数の差分) と
-//   突き合わせる = env 表示と実経路が食い違えば赤になる (キルスイッチ迂回の負のコントロール
-//   はここで捕まる)。
+//   突き合わせる = env 表示と実経路が食い違えば赤になる (opt-in 迂回の負のコントロールは
+//   ここで捕まる)。
 // ================================================================
 
-// このプロセスがキルスイッチ経路 (DOLLAMA_CONV_BATCH=0) か。
+// このプロセスが per-n 直列の旧経路 (既定 = DOLLAMA_CONV_BATCH が未設定/空/"1"以外) か。
 static bool t4_conv_batch_off()
 {
 #if defined(_MSC_VER)
@@ -497,7 +498,7 @@ static bool t4_conv_batch_off()
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
-    return (v != nullptr && std::strcmp(v, "0") == 0);
+    return !(v != nullptr && std::strcmp(v, "1") == 0);
 }
 
 // FP16 ビット列の範囲 memcmp。
@@ -595,14 +596,14 @@ static void t4_print_numeric(const char* tag, const std::vector<float>& got,
 //    launch_conv2d の N=2 出力を、per-sample に N=1 で 2 回呼んだ出力
 //    (= 既存 N==1 GEMM 経路そのまま) と突合する。Cout/HW/K は GEMM 下限 (16) 以上にする。
 //
-//    G-10k T4 で [G1] へ昇格 (docs/g10k-plan.md §7):
-//      - DOLLAMA_CONV_BATCH=0 のプロセス (= per-n 直列の旧経路) では、N=2 出力と
-//        per-sample 参照の **memcmp 一致を hard 合否**にする (各サンプルは独立で
+//    G-10k T4 で [G1] へ昇格 (docs/g10k-plan.md §7・§8 ケース B で opt-in 降格後も維持):
+//      - 既定のプロセス (= per-n 直列の旧経路。DOLLAMA_CONV_BATCH が未設定/空/"1"以外) では、
+//        N=2 出力と per-sample 参照の **memcmp 一致を hard 合否**にする (各サンプルは独立で
 //        K-loop 順・蓄積順が N==1 と完全同一 = 既に観測済みの性質の固定)。
 //        加えて「旧経路は batched GEMM ラッパを 1 度も呼ばない」ことを計器差分で hard 化する
-//        (キルスイッチ経路が新経路へ迂回していれば wrapper 差分が非 0 になり赤)。
-//      - 既定のプロセス (= 新経路) では bit 一致は要求しない (batched のタイル選択差 =
-//        FP16 tol 内が設計・§5)。bit 一致の有無は print のみ (characterization)。
+//        (旧経路が新経路へ迂回していれば wrapper 差分が非 0 になり赤)。
+//      - DOLLAMA_CONV_BATCH=1 のプロセス (= 新経路) では bit 一致は要求しない (batched の
+//        タイル選択差 = FP16 tol 内が設計・§5)。bit 一致の有無は print のみ (characterization)。
 //      - どちらのプロセスでも既存 compare(..., K, ...) は floor として維持する
 //        (緩和ではなく分岐。超えたら緩めず BLOCK)。
 // ----------------------------------------------------------------
@@ -670,10 +671,10 @@ static bool run_case_batch_vs_persample(const char* name,
     const int K = Cin * KH * KW;
     if (t4_conv_batch_off())
     {
-        // [G1] hard: キルスイッチ経路は per-sample と memcmp 一致、かつ batched ラッパ非経由。
+        // [G1] hard: 既定 (旧経路) は per-sample と memcmp 一致、かつ batched ラッパ非経由。
         const bool g1_bits = bit_exact;
         const bool g1_path = (d.wrapper == 0) && (d.cublas == 0) && (d.fallback == 0);
-        std::cout << "[G1:" << name << "] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample "
+        std::cout << "[G1:" << name << "] default (per-n serial path) process: memcmp vs per-sample "
                   << (g1_bits ? "BIT-EXACT" : "MISMATCH")
                   << " / batched wrapper untouched (expected +0): "
                   << (g1_path ? "yes" : "NO")
@@ -682,10 +683,10 @@ static bool run_case_batch_vs_persample(const char* name,
     }
     else
     {
-        // 既定プロセス (新経路): [G1] は本プロセスでは検査しない (別プロセスで採る)。
+        // DOLLAMA_CONV_BATCH=1 プロセス (新経路): [G1] は本プロセスでは検査しない (別プロセスで採る)。
         // bit 一致の有無は上の print (characterization) のみ。
-        std::cout << "[G1:" << name << "] n/a in this process (default = batched path;"
-                  << " [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)\n";
+        std::cout << "[G1:" << name << "] n/a in this process (batched path;"
+                  << " [G1] is taken in a separate default (DOLLAMA_CONV_BATCH unset) process)\n";
     }
 
     // floor: 既存 compare(..., K, ...) は両プロセスで維持 (超えたら緩めず BLOCK)。
@@ -695,14 +696,14 @@ static bool run_case_batch_vs_persample(const char* name,
 
 // ----------------------------------------------------------------
 // 9b. N=2 バッチ GEMM 突合ケース群。1x1 / 3x3 same / 3x3 stride2 / bias 有無。
-//     G-10k T4: この 5 ケースが [G1] の対象 (DOLLAMA_CONV_BATCH=0 プロセスで hard memcmp)。
+//     G-10k T4: この 5 ケースが [G1] の対象 (既定=DOLLAMA_CONV_BATCH 未設定のプロセスで hard memcmp)。
 // ----------------------------------------------------------------
 static bool test_conv_batch_gemm()
 {
     bool ok = true;
     std::cout << "[test_conv_batch_gemm] process mode: "
-              << (t4_conv_batch_off() ? "DOLLAMA_CONV_BATCH=0 (kill switch = per-n serial path; [G1] hard)"
-                                      : "default (batched path; [G1] n/a here)")
+              << (t4_conv_batch_off() ? "default (per-n serial path; [G1] hard)"
+                                      : "DOLLAMA_CONV_BATCH=1 (batched path; [G1] n/a here)")
               << "\n";
     // 1x1 GEMM バッチ — Cin=24 Cout=32 20x20。
     ok = run_case_batch_vs_persample("batch2_1x1", 24, 20, 20, 32, 1, 1, 1, 1, 0, 0, 1, 1,
@@ -748,12 +749,12 @@ static bool test_conv_batch_gemm()
 //           direct 強制呼びと memcmp 一致 + batched ラッパ非経由 + アリーナ alloc 0。
 //
 //   ★空撃ち防止: [G2a]/[G2b]/[G3] は「ラッパが内部で直列ループしているだけ」でも緑になる。
-//     そのため既定プロセスでは各 launch_conv2d(N=2) 呼び出しで
+//     そのため DOLLAMA_CONV_BATCH=1 プロセスでは各 launch_conv2d(N=2) 呼び出しで
 //     「cuBLAS strided batched が実際に >= 1 回発行された (fallback 0)」ことを計器差分で hard 化する
 //     (T3 の [H6] と同じ役割)。DOLLAMA_GEMM=wmma を付けた走行ではこの検査は設計上 red になる
 //     (全ケースがフォールバック枝に落ちるため・§9-7)。T4 は wmma 走行を要求しない。
-//   ★DOLLAMA_CONV_BATCH=0 のプロセスでは、同じ性質 ([G2a]/[G2b]/[G3]/floor) は per-n 直列でも
-//     自明に成立するので同様に通し、経路計器は「wrapper +0」を期待する。
+//   ★既定 (DOLLAMA_CONV_BATCH 未設定) のプロセスでは、同じ性質 ([G2a]/[G2b]/[G3]/floor) は
+//     per-n 直列でも自明に成立するので同様に通し、経路計器は「wrapper +0」を期待する。
 //
 //   [G4] の形状選定 (実装者が rows_cap の実値から選んだ・N=2):
 //     rows_cap(N) = IM2COL_TILE_BYTES / (K*Wout*2*N)。
@@ -824,9 +825,9 @@ static bool run_case_t4_batched(const T4Shape& sh)
     };
 
     // 経路計器の期待値 (1 回の launch_conv2d(N=2) あたり)。
-    //   既定: wrapper >= 1 かつ wrapper == cublas (全発行が cuBLAS batched) かつ fallback 0。
+    //   =1  : wrapper >= 1 かつ wrapper == cublas (全発行が cuBLAS batched) かつ fallback 0。
     //         帯分割形状なら wrapper >= 2 (帯の数)。アリーナ alloc は 1x1=0 / 非帯=1 / 帯=2。
-    //   =0  : wrapper == 0 (旧経路は batched ラッパを経由しない)。
+    //   既定: wrapper == 0 (旧経路は batched ラッパを経由しない)。
     auto path_ok = [&](const char* tag, const T4PathDelta& d) -> bool
     {
         t4_print_delta(tag, d);
@@ -834,7 +835,7 @@ static bool run_case_t4_batched(const T4Shape& sh)
         if (off)
         {
             ok = (d.wrapper == 0) && (d.cublas == 0) && (d.fallback == 0);
-            std::cout << "[" << tag << "] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> "
+            std::cout << "[" << tag << "] path check (default: expected wrapper +0) -> "
                       << (ok ? "PASSED" : "FAILED") << "\n";
             return ok;
         }
@@ -842,7 +843,7 @@ static bool run_case_t4_batched(const T4Shape& sh)
         const uint64_t exp_arena = sh.is_1x1 ? 0 : (sh.expect_banded ? 2 : 1);
         ok = (d.wrapper >= min_calls) && (d.cublas == d.wrapper) && (d.fallback == 0)
              && (d.arena == exp_arena);
-        std::cout << "[" << tag << "] path check (default: expected wrapper>=" << min_calls
+        std::cout << "[" << tag << "] path check (DOLLAMA_CONV_BATCH=1: expected wrapper>=" << min_calls
                   << " cublas==wrapper fallback==0 arena==" << exp_arena << ") -> "
                   << (ok ? "PASSED" : "FAILED") << "\n";
         return ok;
@@ -971,7 +972,7 @@ static bool test_g10k_t4_gates()
 {
     bool ok = true;
     std::cout << "[test_g10k_t4_gates] process mode: "
-              << (t4_conv_batch_off() ? "DOLLAMA_CONV_BATCH=0 (kill switch)" : "default (batched path)")
+              << (t4_conv_batch_off() ? "default (per-n serial path)" : "DOLLAMA_CONV_BATCH=1 (batched path)")
               << "\n";
 
     // 小形状 (端数あり): 1x1+bias (17x19, Cout=20) / 3x3 stride2 (33->17)。
@@ -1212,6 +1213,9 @@ static bool test_g8k_arena_bitexact()
 // ----------------------------------------------------------------
 // 9c. warm ベンチ: N=2 バッチ GEMM (1 forward) vs N=1 を 2 回逐次呼び。
 //    per-call ms (中央値) を報告。CFG B=2 束ねの launch オーバーヘッド低減を観測する。
+//    ★既定プロセス (DOLLAMA_CONV_BATCH 未設定) では batched 経路自体が per-n 直列に
+//      フォールバックするため、この比は 1.0 付近になり T6 としての意味を持たない。
+//      T6 の意味を持つ計測は `conv2d_batch_on` (DOLLAMA_CONV_BATCH=1) 側のみ。
 // ----------------------------------------------------------------
 static void bench_batch_vs_persample(int Cin, int H, int W, int Cout, int KH, int KW,
                                      int stride_h, int stride_w, int pad_h, int pad_w,
