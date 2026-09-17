@@ -1,0 +1,125 @@
+G-10k T4 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走)
+採取と結果の所在のみ。数値の位置づけ・合否設計は docs/g10k-plan.md §4 / §5 / §7 / §8 / §10 を見ること。
+
+======================================================================
+[共通条件]
+======================================================================
+  実行日     : 2026-09-12 (JST)  ※各ログのヘッダ start(local) / end(local) が一次証拠
+  ホスト     : KIK-WIN-RTX58 (RTX5080 / Blackwell / sm_120)
+  nvcc       : CUDA 13.3 V13.3.33 (docs/logs/g10k-t3/t3_env_meta.log と同一ツールチェーン)
+  ブランチ   : feat/g10k-conv-true-batch2
+  走行時 HEAD: e40cce4d08348eca3faf510997db891c2aed5bf3
+               (= T4 のコミット前。T4 の変更は working tree に載った状態で実走した。
+                 porcelain は src/kernels/conv2d.cu / src/tests/test_conv2d.cu の 2 本 + 未追跡の docs/logs/g10k-t4/)
+  SAC        : VerifiedAndReputablePolicyState = 0 (= Smart App Control OFF) を各ログのヘッダで採取
+  env        : 各ログのヘッダ "--- env ---" 節が一次証拠。
+               既定走行 = DOLLAMA_CONV_BATCH / DOLLAMA_GEMM / DOLLAMA_POOL / DOLLAMA_PROFILE /
+               DOLLAMA_EPILOGUE / DOLLAMA_G8K_DUMP すべて <unset>。
+               キルスイッチ走行 = DOLLAMA_CONV_BATCH=0 のみ set・他は <unset>。
+  ★2 プロセス体制: DOLLAMA_CONV_BATCH は getenv キャッシュ型 = プロセス単位固定。
+    [G1] (=0) と [G2a]〜[G4] (既定) は「同じ exe を env 違いで別プロセスとして」走らせた。
+    同一プロセス内で切り替えたのではない。
+  走行スクリプト: scripts/t4_run_conv2d.ps1 (ヘッダ = HEAD / porcelain / exe と対象ソースの sha256 /
+               SAC / env を採り、stdout+stderr を 2>&1 で落とし、末尾に exit=<code> を書く)
+
+  最終ツリー (コミット対象) のソース sha256:
+    31f6c8c6923acf8a35a3e47985f8f97e953397da867de9b8386636cd1a89a183  src/kernels/conv2d.cu
+    894391e66625e203c438277e15776e2058a079d66706872a303b2d29c708ed9f  src/tests/test_conv2d.cu
+    4eec27b5175ac4cc011fa924e3f162e079236b080b25c7146490dae072944203  src/kernels/gemm.cu    (T3 のまま・無改変)
+    a64ce46ccbb83fafcce3e75e18367e7ec234e5fee07851b376e18056a346d91a  src/kernels/gemm.cuh   (T3 のまま・無改変)
+    9cf9b2ae7520b98c281b0ae8d293dfd013051e2643575b4a7ae8a0953fb7d72b  src/meson.build        (無改変)
+  最終ツリーの exe sha256:
+    5ef74733de55e0dd2b3e2a09ce631897a1107c972cc9223b5d9ff298a90fc6f1  build/src/test_conv2d.exe
+  ★注: run1 (221A828D…) と run2_final (5EF74733…) はソース sha256 が完全に同一だが exe sha256 が違う
+    (負のコントロールの revert 後に再ビルドしたため。MSVC/nvcc のビルドは byte 決定的でない)。
+    ソース同一性はログ内の conv2d.cu / test_conv2d.cu sha256 で担保する。
+
+======================================================================
+[走行一覧]  (順序 = 実走順)
+======================================================================
+  # | ログ                                  | env                   | exe sha256 (先頭 8) | conv2d.cu sha256 (先頭 8) | exit | 位置づけ
+  1 | t4_default_run1.log                   | 既定                  | 221A828D            | 31F6C8C6 (最終と同一)     | 0    | 既定経路 初回。[G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] 全 PASSED
+  2 | t4_convbatch0_run1.log                | DOLLAMA_CONV_BATCH=0  | 221A828D            | 31F6C8C6 (最終と同一)     | 0    | キルスイッチ経路 初回。[G1] 5/5 PASSED
+  3 | t4_negctrl1_sample1_offset.log        | 既定                  | 889AF2E0            | F4AB30A0 (一時改変)       | 1    | 負のコントロール 1 (下記)。[G2a]/[G2b] red
+  4 | t4_negctrl2_killswitch_bypass.log     | DOLLAMA_CONV_BATCH=0  | 3EF9D755            | EE49E712 (一時改変)       | 1    | 負のコントロール 2 (下記)。[G1] red
+  5 | t4_default_run2_final.log             | 既定                  | 5EF74733 (最終)     | 31F6C8C6 (最終)           | 0    | 最終ツリー再ビルド後の取り直し。全 PASSED
+  6 | t4_convbatch0_run2_final.log          | DOLLAMA_CONV_BATCH=0  | 5EF74733 (最終)     | 31F6C8C6 (最終)           | 0    | 同上 (=0)。[G1] 5/5 PASSED
+  7 | t4_meson_compile_full.log             | -                     | -                   | -                         | 0    | 最終ツリーで全ターゲット再ビルド (compile_exit=0)
+  8 | t4_meson_test_full.log                | 既定                  | 5EF74733 (最終)     | 31F6C8C6 (最終)           | 0    | `meson test -C build` 全体 53/53 OK / Fail 0
+
+  ★負のコントロールの exe sha256 (#3 / #4) は一時改変ビルドのものであり最終 exe とは別物。
+    索引に載せるのは §10 規律 (T4 以降適用) による。一時改変は stage しておらず、最終ツリーに
+    "NEGCTRL" の文字列は残っていない (grep 実数 0・t4_meson_test_full.log の porcelain 節の時点)。
+
+======================================================================
+[負のコントロール 2 件の内容と結果]  (コミットしない一時改変・stage しない)
+======================================================================
+  NC1 (#3): src/kernels/conv2d.cu launch_conv2d_im2col_gemm_batched の in item stride を
+            Cin*H*W から Cin*H*W - W (1 行ぶんずらす) に改変。
+            結果: [G2a] (X,X) と [G2b] (X,Y)/(Y,X) が im2col 経路の全 6 形状で MISMATCH FAILED。
+                  1x1 経路の 2 形状 (改変の射程外) は PASSED のまま = 検査が射程どおり。
+                  [G3] は全形状 BIT-EXACT PASSED のまま = 決定的なバグは [G3] 単独では捕まらない (設計どおり)。
+                  [G2] floor も 3x3 形状で mismatch (compare の tol 超過)。exit=1。
+  NC2 (#4): src/kernels/conv2d.cu の `if (conv_batch_enabled())` を `if (conv_batch_enabled() || true)` に
+            改変 = DOLLAMA_CONV_BATCH=0 でもキルスイッチ経路 (旧 per-n ループ) へ分岐せず新経路へ迂回。
+            DOLLAMA_CONV_BATCH=0 で実行。
+            結果: [G1] 5/5 FAILED。内訳 = 計器側 (batched wrapper +0 期待に対し非 0) は 5/5 で red、
+                  memcmp 側は batch2_1x1_bias / batch2_3x3_s2 の 2/5 のみ MISMATCH で、
+                  batch2_1x1 / batch2_3x3_same / batch2_unet_c320_64 の 3/5 は新経路でも BIT-EXACT だった。
+                  ★つまり memcmp 単独の [G1] ではこの迂回を 3/5 で素通ししていた。計器差分を [G1] に
+                    併せたことで 5/5 で red になる。
+                  加えて [G2a]/[G2b] の path check (=0 では wrapper +0 期待) が全形状 FAILED。exit=1。
+
+======================================================================
+[注意]
+======================================================================
+  ・bench_batch (T6 の計器) の数値は #1 / #5 (既定 = 新経路) と #2 / #6 (=0 = 旧経路) の両方に印字される。
+    「N=2 batch median」は既定走行では新経路、=0 走行では旧 per-n 直列の値である (ラベルは同じ)。
+    合否判定は T6 の担当。本索引は判定しない。
+  ・t4_meson_test_full.log は meson の非 verbose 出力で、各 test の stdout は build/meson-logs/testlog.txt 側にある
+    (repo には入れていない)。走行時の GATE 行は本 T4 の報告本文に転記した。
+
+======================================================================
+[T4 是正 (2026-09-12・Opus 監査 中-4 / 中-2 の是正): [G3] poison 追加 + meson `conv2d_batch_off` 1 行]
+======================================================================
+  走行時 HEAD: faa0eada2604f0608a50f4a5f86d6a167c3a9979 (= 97aa092 の直後に載った docs 専用コミット。
+               src/ は 8707472 のまま。是正の変更は working tree に載った状態で実走した。
+               porcelain は src/tests/test_conv2d.cu / src/meson.build の 2 本 + 未追跡の本ログ群)
+  SAC        : VerifiedAndReputablePolicyState = 0 (OFF) を各ログのヘッダで採取 (セッション開始時点で既に OFF)
+  走行スクリプト: scripts/t4_run_conv2d.ps1 (T4 と同一・無改変)
+  変更ファイル (src/kernels/conv2d.cu は無改変 = 31F6C8C6 のまま):
+    566f487307c109e33da1d25625cb5dfa5e5e3d079c5ccfb3be10adab9d579a82  src/tests/test_conv2d.cu
+    253dc1c9daf9417025c442c26f85f9aeedc2c05f3b43e422e3ac638505034f37  src/meson.build
+    31f6c8c6923acf8a35a3e47985f8f97e953397da867de9b8386636cd1a89a183  src/kernels/conv2d.cu (無改変)
+  最終ツリーの exe sha256:
+    1fef7939a5d3597f412ce752cfe646fd1f72f94dda810cf5716eca937ac66504  build/src/test_conv2d.exe
+
+  [G3] の poison 方式 (9d test_g8k_arena_bitexact と同型):
+    run0 = 汚染なし (既存 o_xy) / run1 = poison 0xFF (FP16 NaN) / run2 = poison 0x00。
+    各 run の前に poison_arena(poison_bytes, pattern) で alloc→memset→rewind し、出力バッファも 0xCD で汚す。
+    poison_bytes = min(N*K*Hout*Wout*2B, 256MiB) [col 上限] + N*Cout*Hout*Wout*2B [帯 上限] + 1MiB [整列余裕]
+      = 形状から先験的に決める (実測から決めない)。実走の arena peak_request (各 run 前に reset) が
+      poison_bytes 以下であることも hard (覆っていなければ空撃ちなので FAILED)。
+    形状別 (既定プロセス・poison / peak_request): rep_320_128 201/180MiB, rep_640_64 101/90MiB,
+      rep_1280_32 51/45MiB, G4_band_640to320_128 277/270MiB, G4_band_960to320_128 277/262MiB
+      (T4 の t4_default_run2_final.log:177 の 270/262MiB を覆う)。=0 プロセスは per-n なので peak は半分程度
+      (G4_band_960to320_128 のみ 264MiB = N=1 の帯分割 2 帯 (rows_cap=121) で col ≈255MiB + 帯 ≈9MiB)。1x1 形状は alloc 0 (素通り)。
+
+  # | ログ                                          | env                  | exe sha256 (先頭 8) | conv2d.cu sha256 (先頭 8) | exit | 位置づけ
+  9 | t4_g3poison_default_run1.log                  | 既定                 | 9DFB6191            | 31F6C8C6 (無改変)         | 0    | poison 追加後 既定経路 初回。[G3] 8/8 PASSED (coverage yes)
+ 10 | t4_negctrl3_g3_poison_col_unwritten.log       | 既定                 | 46465F3A            | C3402D77 (一時改変)       | 1    | 負のコントロール 3 (下記)。[G3] red
+ 11 | t4_g3poison_default_run2_final.log            | 既定                 | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | 最終ツリー再ビルド後の取り直し。[G2a]/[G2b]/[G2]/[G3]/[G4]/[G5] 全 PASSED
+ 12 | t4_g3poison_convbatch0_run2_final.log         | DOLLAMA_CONV_BATCH=0 | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | 同上 (=0)。[G1] 5/5 + [G3] 8/8 PASSED
+ 13 | t4fix_meson_compile_full.log                  | -                    | -                   | -                         | 0    | 最終ツリーで全ターゲット再ビルド (compile_exit=0)
+ 14 | t4fix_meson_test_full.log                     | (meson が付与)       | 1FEF7939 (最終)     | 31F6C8C6 (最終)           | 0    | `meson test -C build` 54/54 OK / Fail 0 (conv2d 12.78s / conv2d_batch_off 12.00s・既定 timeout 30s 内)
+
+  NC3 (#10): src/kernels/conv2d.cu launch_conv2d_im2col_gemm_batched の im2col 起動 grid を
+            dim3(blocks, N) から dim3(blocks, 1) に改変 = item 1 の col 領域を書かずに残す
+            (汚染が出力へ混入する方向の一時改変。poison を外す方向ではない)。既定プロセスで実行。
+            結果: [G3] は im2col 経路の 6 形状すべて FAILED (small_3x3_s2 / rep_320_128 / rep_640_64 /
+                  rep_1280_32 / G4_band_640to320_128 / G4_band_960to320_128)。1x1 経路の 2 形状 (改変の射程外)
+                  は PASSED のまま = 検査が射程どおり。[G2a]/[G2b] も同 6 形状で MISMATCH。exit=1。
+                  ★small_3x3_s2 は run0==run2(0x00) が BIT-EXACT で run0==run1(0xFF) のみ DIFF
+                    = 未書き領域がたまたま 0 だと素の 3 連走 (T4 初版) では捕まらないことの実証。
+            一時改変は stage しておらず revert 済 (最終ツリーの conv2d.cu sha256 は T4 最終と同一 31F6C8C6・
+            "NEGCTRL" 文字列 grep 実数 0)。

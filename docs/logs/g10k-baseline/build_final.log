@@ -1,0 +1,331 @@
+ninja: Entering directory `E:/Develop/Projects/dollama/build'
+[1/18] Compiling Cuda object src/test_diffusion_batch2.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_00000228_00000000-7_diffusion.cudafe1.cpp
+[2/18] Compiling Cuda object src/test_pipeline_generator.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_000045e4_00000000-7_diffusion.cudafe1.cpp
+[3/18] Compiling Cuda object src/test_pipeline_factory.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_00001438_00000000-7_diffusion.cudafe1.cpp
+[4/18] Compiling Cuda object src/test_cli_generate.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_00000a94_00000000-7_diffusion.cudafe1.cpp
+[5/18] Compiling Cuda object src/test_diffusion.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_000057a8_00000000-7_diffusion.cudafe1.cpp
+[6/18] Compiling Cuda object src/test_diffusion_batch2.exe.p/tests_test_diffusion_batch2.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+test_diffusion_batch2.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+test_diffusion_batch2.cu
+test_diffusion_batch2.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_00006280_00000000-7_test_diffusion_batch2.cudafe1.cpp
+[7/18] Compiling Cuda object src/dollama.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_000020b4_00000000-7_diffusion.cudafe1.cpp
+[8/18] Compiling Cuda object src/prof_arena_e2e.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_00002a40_00000000-7_diffusion.cudafe1.cpp
+[9/18] Compiling Cuda object src/test_txt2img.exe.p/infer_diffusion.cu.obj
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+diffusion.cu
+diffusion.cu
+cl : コマンド ライン warning D9025 : '/std:c++20' より '/std:c++14' が優先されます。
+tmpxft_000024e0_00000000-7_diffusion.cudafe1.cpp
+[10/18] Linking target src/test_pipeline_generator.exe
+tests_test_pipeline_generator.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[11/18] Linking target src/test_pipeline_factory.exe
+tests_test_pipeline_factory.cpp.obj
+server_pipeline_generator_factory.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[12/18] Linking target src/test_diffusion.exe
+tests_test_diffusion.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[13/18] Linking target src/test_diffusion_batch2.exe
+tests_test_diffusion_batch2.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[14/18] Linking target src/test_cli_generate.exe
+tests_test_cli_generate.cpp.obj
+server_pipeline_generator_factory.cu.obj
+server_diffusion_runner.cu.obj
+server_diffusion_backend.cpp.obj
+server_matter_runner.cpp.obj
+server_scorer_runner.cpp.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[15/18] Linking target src/dollama.exe
+main.cpp.obj
+server_api.cpp.obj
+server_diffusion_backend.cpp.obj
+server_matter_runner.cpp.obj
+server_scorer_runner.cpp.obj
+server_pipeline_generator_factory.cu.obj
+server_diffusion_runner.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[16/18] Linking target src/prof_arena_e2e.exe
+tests_prof_arena_e2e.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[17/18] Linking target src/test_txt2img.exe
+tests_test_txt2img.cpp.obj
+server_diffusion_runner.cu.obj
+infer_diffusion.cu.obj
+infer_unet.cu.obj
+kernels_vae_decode.cu.obj
+kernels_conv2d.cu.obj
+kernels_device_arena.cu.obj
+kernels_groupnorm.cu.obj
+kernels_layernorm.cu.obj
+kernels_activation.cu.obj
+kernels_geglu.cu.obj
+kernels_attention.cu.obj
+kernels_attention_fast.cu.obj
+kernels_gemm.cu.obj
+kernels_elementwise.cu.obj
+kernels_bias_add.cu.obj
+kernels_timeembed.cu.obj
+openvino.lib
+cudart.lib
+cublas.lib
+kernel32.lib
+user32.lib
+gdi32.lib
+winspool.lib
+shell32.lib
+ole32.lib
+oleaut32.lib
+uuid.lib
+comdlg32.lib
+advapi32.lib
+[18/18] Generating src/copy_openvino_dlls with a custom command (wrapped by meson to set PATH)
+Activating VS 18.8.3
+INFO: automatically activated MSVC compiler environment
+INFO: autodetecting backend as ninja
+INFO: calculating backend command to run: "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.EXE" -C E:/Develop/Projects/dollama/build

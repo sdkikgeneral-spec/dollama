@@ -1,0 +1,33 @@
+=== T2a 基準 sha256 まとめ (研究機 KIK-WIN-RTX58) ===
+採取日時: 2026-09-04 20:37:22 +09:00
+
+--- [基準A] e2e 生成物の内容ダイジェスト (prof_arena_e2e / generate_txt2img) ---
+採取条件: exe=build/src/prof_arena_e2e.exe
+          env  PROF_IMAGES=2 PROF_STEPS=20 PROF_G=7.5 PROF_FAST=1 PROF_SAMPLE_MS=5
+               DOLLAMA_PROFILE=(未設定) DOLLAMA_POOL=(未設定=既定 ON)
+          seed 1234 (prof_arena_e2e.cu:233)  解像度 1024x1024  steps 20  guidance 7.5
+          構成 PROF_FAST=1 -> FastConfig{attn_fast,batch2,epilogue}=true (prof_arena_e2e.cu:212-215)
+★ 注意: prof_arena_e2e は画像ファイルを書き出さない。下の値は RGB バッファ全体の
+   FNV-1a 64bit (prof_arena_e2e.cu:85 fnv1a / :247 出力) であって sha256 ではない。
+  e2e_run1.log: [S4] image=1 sec=10.9628 rgb_hash=0x8a96690109d2b253 1024x1024
+  e2e_run1.log: [S4] image=2 sec=10.6465 rgb_hash=0x8a96690109d2b253 1024x1024
+  e2e_run2.log: [S4] image=1 sec=10.7505 rgb_hash=0x8a96690109d2b253 1024x1024
+  e2e_run2.log: [S4] image=2 sec=10.6561 rgb_hash=0x8a96690109d2b253 1024x1024
+
+--- [基準B] 生成物ファイルのバイト列 (test_conv2d / launch_conv2d 出力 .bin) ---
+採取条件: exe=build/src/test_conv2d.exe
+          env  DOLLAMA_G8K_DUMP=<dir>\conv  DOLLAMA_PROFILE=(未設定) DOLLAMA_POOL=(未設定)
+          seed 形状ごとにハードコード 3101..3107 (test_conv2d.cu:696-703)
+          基準ブロブの保管先 (研究機): E:\Develop\logs\g10k-t2a\bin_run1
+  conv_b1_128_512.bin          67108864 bytes  sha256=30B7B87FE0D6EA373D9DA4BEA81ED83507894826110F48FBDCCD880268794231
+  conv_b1_1280_32.bin           2621440 bytes  sha256=479C9E7EFEFCC45596A394E7ED2FA6C8BFA50BA3BDCE237DC759B24D3AD19572
+  conv_b1_320_128.bin          10485760 bytes  sha256=A8E5F3E3653FE43AEA48F01A774C9635B10B2C8A41CE17239299C7369E671008
+  conv_b1_640_64.bin            5242880 bytes  sha256=FCC32AE4D5555898019013CC2A37072A3678041A2B9CF941F883E76326ABA0AF
+  conv_b2_1280_32.bin           5242880 bytes  sha256=E154131B7002C12716E2912A2B5782F391F38F44AB483EBE6175BC9FB2C023E3
+  conv_b2_320_128.bin          20971520 bytes  sha256=2CA054357670F2C93F6538AE575BCA8BC65CB8779C7DE19B1E2396CDC36E9F08
+  conv_b2_640_64.bin           10485760 bytes  sha256=F67AECD2AF7009CBF842B27D63F9680753EB7C584ECDDDAAA0F887E609E59EE4
+
+--- 2 回走行の一致 (決定性の確認。無改変の証明ではない) ---
+  基準A: e2e_run1 / e2e_run2 の 計 4 画像すべて rgb_hash 一致 (上記)
+  基準B: conv2d_run1 / conv2d_run2 の 7 ファイルすべて sha256 一致
+         (run2 のブロブは確認後に削除済み。ログ conv2d_run2.log に値が残っている)

@@ -1,0 +1,64 @@
+db = E:\Develop\logs\g10k-t2c\nsys\g10k_t2c_nsys2.sqlite
+
+=== D2H copies >= 1 MB (image readback markers) ===
+  t_rel=  10.7369s  bytes=6291456  dur=0.374ms
+  t_rel=  21.3977s  bytes=6291456  dur=0.365ms
+
+=== H2D copies >= 8 MB (weight-upload markers: first/last) ===
+  count=138  first_t_rel=-0.5484s  last_end_t_rel=-0.0781s  sum_bytes=2908.6MB
+
+=== generation #2 (between image1 D2H end and image2 D2H end) ===
+  window            = [10.7373s .. 21.3981s]  wall=10.6608 s
+  kernels           = 67032
+  sum_kernel_time   = 10.4707 s
+  wall - sum_kernel = 0.1901 s   (launch gap; 1.78 % of wall)
+  GPU busy          = 98.22 %
+  H2D in window     = (26, 101788, 3388428)
+  D2D in window     = (564, 3928083, 5621118464)
+  top kernels:
+      6.3438s  60.59%  n=  2800  dollama::attention_flash_wmma_fast_fp16(const __half *, const __half *, const __half *, __half 
+      0.5856s   5.59%  n=  1200  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x256_32x3_tn_align8>(T1::P
+      0.5143s   4.91%  n=     1  dollama::attention_flash_wmma_fp16(const __half *, const __half *, const __half *, __half *, in
+      0.4614s   4.41%  n=  7440  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_tn_align8>(T1::P
+      0.3202s   3.06%  n=  1642  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int
+      0.2952s   2.82%  n=  1200  nvjet_sm120_hsh_mma_64x176x64_3_16x88x64_tmaAB_alignCD4_bz_TNNN
+      0.2763s   2.64%  n=   891  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::Par
+      0.1727s   1.65%  n=  6460  dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)
+      0.1712s   1.63%  n=   560  nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+      0.1268s   1.21%  n=    13  dollama::k_group_norm_f32(const float *, const __half *, const __half *, float *, int, int, int
+      0.1064s   1.02%  n=   258  void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nn_align4>(T1::Params)
+      0.1019s   0.97%  n=   103  nvjet_sm120_hsh_mma_128x80x64_3_32x40x64_tmaAB_alignCD4_bz_NNNN
+      0.1010s   0.96%  n=   200  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(T1::P
+      0.0951s   0.91%  n=  1400  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x4_tn_align8>(T1::P
+      0.0911s   0.87%  n=   257  dollama::im2col_f32(const float *, float *, int, int, int, int, int, int, int, int, int, int, i
+
+=== generation #1 (last big H2D end .. image1 D2H end) ===
+  window            = [-0.0781s .. 10.7373s]  wall=10.8154 s
+  kernels           = 67032
+  sum_kernel_time   = 10.4441 s
+  wall - sum_kernel = 0.3713 s   (launch gap; 3.43 % of wall)
+  GPU busy          = 96.57 %
+  H2D in window     = (214, 6643173, 142336826)
+  D2D in window     = (564, 3925894, 5621118464)
+  top kernels:
+      6.3258s  60.57%  n=  2800  dollama::attention_flash_wmma_fast_fp16(const __half *, const __half *, const __half *, __half 
+      0.5841s   5.59%  n=  1200  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x256_32x3_tn_align8>(T1::P
+      0.5143s   4.92%  n=     1  dollama::attention_flash_wmma_fp16(const __half *, const __half *, const __half *, __half *, in
+      0.4602s   4.41%  n=  7440  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_256x128_32x3_tn_align8>(T1::P
+      0.3192s   3.06%  n=  1642  dollama::im2col_fp16(const __half *, __half *, int, int, int, int, int, int, int, int, int, int
+      0.2945s   2.82%  n=  1200  nvjet_sm120_hsh_mma_64x176x64_3_16x88x64_tmaAB_alignCD4_bz_TNNN
+      0.2754s   2.64%  n=   891  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_64x64_32x6_nn_align8>(T1::Par
+      0.1723s   1.65%  n=  6460  dollama::bias_add_rowvec_fp16(const __half *, const __half *, __half *, long, int)
+      0.1707s   1.63%  n=   560  nvjet_sm120_hsh_mma_64x128x64_4_64x16x64_tmaAB_alignCD4_bz_NNNN
+      0.1267s   1.21%  n=    13  dollama::k_group_norm_f32(const float *, const __half *, const __half *, float *, int, int, int
+      0.1062s   1.02%  n=   258  void cutlass::Kernel2<cutlass_80_tensorop_s1688gemm_64x64_16x6_nn_align4>(T1::Params)
+      0.1017s   0.97%  n=   103  nvjet_sm120_hsh_mma_128x80x64_3_32x40x64_tmaAB_alignCD4_bz_NNNN
+      0.1006s   0.96%  n=   200  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(T1::P
+      0.0948s   0.91%  n=  1400  void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x4_tn_align8>(T1::P
+      0.0910s   0.87%  n=   257  dollama::im2col_f32(const float *, float *, int, int, int, int, int, int, int, int, int, int, i
+
+=== whole capture ===
+  kernel_instances = 134064
+  sum_kernel_time  = 20.9148 s
+  activity_span    = 21.3959 s
+=== end ===

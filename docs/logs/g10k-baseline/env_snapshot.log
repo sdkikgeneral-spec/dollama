@@ -1,0 +1,78 @@
+=== T2a 環境スナップショット (研究機) ===
+採取日時 (ローカル): 2026-09-04 20:33:27 +09:00
+採取日時 (UTC)     : 2026-09-04 11:33:27 UTC
+hostname           : KIK-WIN-RTX58
+OS                 : Microsoft Windows 11 Home 10.0.26200.0
+PowerShell         : 7.6.5
+
+=== git (研究機) ===
+branch    : feat/g10k-conv-true-batch2
+HEAD      : e17374c5b40437e6e23f628e8952615a1c75297c
+status --porcelain: (出力 0 行 = clean)
+
+=== nvcc --version ===
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2026 NVIDIA Corporation
+Built on Fri_Apr_24_19:26:09_Pacific_Daylight_Time_2026
+Cuda compilation tools, release 13.3, V13.3.33
+Build cuda_13.3.r13.3/compiler.37862127_0
+
+=== meson --version ===
+meson path: C:\Users\sdkik\AppData\Local\Python\pythoncore-3.14-64\Scripts\meson.exe
+meson version: 1.11.1
+
+=== nvidia-smi (フル出力) ===
+Fri Sep  4 20:33:27 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.88                 KMD Version: 610.88        CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 5080      WDDM  |   00000000:02:00.0  On |                  N/A |
+|  0%   35C    P8             11W /  360W |     465MiB /  16303MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A            2128    C+G   C:\Windows\System32\LogonUI.exe       N/A      |
+|    0   N/A  N/A            2136    C+G   C:\Windows\System32\dwm.exe           N/A      |
+|    0   N/A  N/A           12092    C+G   C:\Windows\explorer.exe               N/A      |
+|    0   N/A  N/A           12152    C+G   ...indows\System32\ShellHost.exe      N/A      |
+|    0   N/A  N/A           12548    C+G   ...2txyewy\CrossDeviceResume.exe      N/A      |
+|    0   N/A  N/A           13704    C+G   ...IA App\CEF\NVIDIA Overlay.exe      N/A      |
+|    0   N/A  N/A           13744    C+G   ..._cw5n1h2txyewy\SearchHost.exe      N/A      |
+|    0   N/A  N/A           13768    C+G   ...y\StartMenuExperienceHost.exe      N/A      |
+|    0   N/A  N/A           15880    C+G   ...IA App\CEF\NVIDIA Overlay.exe      N/A      |
+|    0   N/A  N/A           16972    C+G   ...0.4129.107\msedgewebview2.exe      N/A      |
+|    0   N/A  N/A           17884    C+G   ...App_cw5n1h2txyewy\LockApp.exe      N/A      |
+|    0   N/A  N/A           22628    C+G   ...5n1h2txyewy\TextInputHost.exe      N/A      |
+|    0   N/A  N/A           22636    C+G   ...xyewy\ShellExperienceHost.exe      N/A      |
+|    0   N/A  N/A           23760    C+G   ...em_tray\lghub_system_tray.exe      N/A      |
+|    0   N/A  N/A           25188    C+G   ...\cef.win64\steamwebhelper.exe      N/A      |
+|    0   N/A  N/A           27484    C+G   ...__kzh8wxbdkxb8p\DCv2\DCv2.exe      N/A      |
+|    0   N/A  N/A           27508    C+G   ...yApp\MicrosoftSecurityApp.exe      N/A      |
+|    0   N/A  N/A           27652    C+G   ...Creative App\Creative.App.exe      N/A      |
+|    0   N/A  N/A           27772    C+G   ...are\IntelGraphicsSoftware.exe      N/A      |
+|    0   N/A  N/A           28408    C+G   ...lGraphicsSoftware.Overlay.exe      N/A      |
+|    0   N/A  N/A           29520    C+G   ...em32\ApplicationFrameHost.exe      N/A      |
+|    0   N/A  N/A           29540    C+G   ...ntrolPanel\SystemSettings.exe      N/A      |
++-----------------------------------------------------------------------------------------+
+
+=== nvidia-smi --query (要約) ===
+name, driver_version, memory.total [MiB], memory.used [MiB], power.draw [W], power.limit [W], temperature.gpu, clocks.current.sm [MHz]
+NVIDIA GeForce RTX 5080, 610.88, 16303 MiB, 465 MiB, 11.53 W, 360.00 W, 35, 180 MHz
+
+=== 実行に使う exe の同一性 (T2b との突合用) ===
+★ 下の LastWriteTime は「本 T2a 走行より前に既に存在していた」ビルド成果物の時刻。
+★ 本タスクでは meson compile を一切実行していない。
+prof_arena_e2e.exe         size=1387008   mtime=2026-09-04 20:18:59  sha256=CA11AF279B729E23A2D928D8BDA2B14876AF16167B1711338F44EAA9BDDA6FDB
+test_conv2d.exe            size=251392    mtime=2026-09-04 20:18:53  sha256=C14BB9E88B381D8A222B499B163F1D73FDEF1642EF38EA289B4EC5EB685FFC9C
+test_diffusion_batch2.exe  size=1396736   mtime=2026-09-04 20:19:00  sha256=6A3B1B80E445343408E2BDC66A81B58CB7818803DDA3FEE68668A52343658F89
+test_unet_fast.exe         size=1260032   mtime=2026-09-04 20:18:54  sha256=6C8F5B1F705D9D7D0E46E0FD0D7BD1BAD4C281E050BFF028EDEA466F802D4F0A
+dollama.exe                size=1975808   mtime=2026-09-04 20:18:45  sha256=9133C56531CA07B150F7E17B08C1E2AB6BE8DF346D2F3D057001AD831A13C8FF

@@ -1,0 +1,83 @@
+G-10k T3 生ログ 索引 (研究機 KIK-WIN-RTX58 上で直接実走)
+採取のみ・判定と考察は含めない。数値の位置づけは docs/g10k-plan.md §7b / T3 実施記録を見ること。
+
+======================================================================
+[共通条件]
+======================================================================
+  実行日     : 2026-09-12 (JST)  ※ t3_env_meta.log の "=== date ===" が一次証拠
+  ホスト     : KIK-WIN-RTX58 (RTX5080 / Blackwell / sm_120)
+  nvcc       : CUDA 13.3 V13.3.33
+  ブランチ   : feat/g10k-conv-true-batch2
+  走行時 HEAD: 646cc6657f0af80cecea53b56b173d4199cd0c5d
+               (= T3 のコミット前。T3 の変更は working tree に載った状態で実走した。
+                 porcelain は gemm.cu / gemm.cuh / meson.build / test_gemm.cu の 4 本のみ
+                 = t3_env_meta.log の "=== git HEAD ===" 節)
+  SAC        : VerifiedAndReputablePolicyState = 0 (= Smart App Control OFF) を
+               実走前にレジストリで確認した (t3_env_meta.log の "=== SAC ===" 節)
+  env        : DOLLAMA_GEMM / DOLLAMA_PROFILE / DOLLAMA_POOL / DOLLAMA_CONV_BATCH /
+               DOLLAMA_EPILOGUE / DOLLAMA_VAE_GEMM はすべて <unset>
+               (wmma 走行のみ DOLLAMA_GEMM=wmma を 1 プロセス限りで付与)
+
+======================================================================
+[ファイル一覧]
+======================================================================
+  t3_env_meta.log
+      走行環境・SAC 状態・env・最終ツリーの exe / ソース sha256。
+
+  t3_default_run.log                       exit code 0
+      既定経路 (DOLLAMA_GEMM 未設定) で build/src/test_gemm.exe を単体実行した生ログ。
+      既存 5 ケース + [H1]〜[H7] + floor + bench。
+      ★最終ツリー (負のコントロールを revert し再ビルドした後) で取り直したもの。
+
+  t3_wmma_run.log                          exit code 1
+      同じ exe を DOLLAMA_GEMM=wmma で 1 回手動実行した生ログ。
+      ★[H6] は期待値表 (A) (既定経路) を判定する hard ゲートとして実装に固定されているため、
+        wmma 走行では FAIL 行が残るのが設計上正常 (docs/g10k-plan.md §7b)。
+        合否は exit code ではなく、print されたカウンタ実数値と表 (B) の突合で人が目視判定する。
+      ★最終ツリーで取り直したもの。
+
+  t3_negctrl1_bstride0.log                 exit code 1
+      負のコントロール 1 = cublasGemmStridedBatchedEx の B 側 stride を 0 に固定した
+      「コミットしない一時改変」での走行。[H2] が red になることの一次証拠。
+      ★この走行の exe は一時改変ビルドであり、t3_env_meta.log の exe sha256 とは別物である。
+        一時改変の sha256 は採取していない (改変は stage せず即 revert した)。
+
+  t3_negctrl2_force_fallback.log           exit code 1
+      負のコントロール 2 = cuBLAS batched 枝を強制的にフォールバック直列ループへ迂回した
+      「コミットしない一時改変」での走行。[H6] が red / [H5] は全ケース緑のままであることの
+      一次証拠。★exe は上と同じく一時改変ビルド (sha256 未採取)。
+
+  t3_meson_test_full.log                   exit code 0
+      最終ツリーでの `meson test -C build` 全体。53/53 OK / Fail 0。
+      dollama:gemm の所要は 6.14s。
+
+  ---- 以下 2 本は T3 コミット後の「コメントのみ是正」の検証走行 (追記 2026-09-12) ----
+  ★[共通条件] の「走行時 HEAD 646cc66」はこの 2 本には当てはまらない (各ログ内のヘッダが一次証拠)。
+
+  t3_fix_comments_run.log                  exit=0 (ログ末尾行)
+      `e15b658` + コメント差分 (後に `e84a92a` としてコミット) のツリーで
+      `meson test -C build gemm -v` を 1 回実行した生ログ (ヘッダ `commit_base=e15b658`)。
+      ★exe sha256 / ソース sha256 は未採取 (record-auditor 中3 指摘)。走行 exe と `e84a92a` の
+        同一性は「差分がコメントのみ」であることの機械確認で担保する:
+        `git show e84a92a -- src/` の `+` 行から `//` 始まりの行と空行を除くと 0 行。
+        (ログ内の meson は "ninja: no work to do" = このログ採取時点で再ビルドは走っていない。)
+
+  t3_fix_comments_run2.log                 exit=0 (ログ末尾行)
+      `e84a92a` を HEAD にし、working tree に test_gemm.cu のコメント行訂正
+      (表 (B) -> 表 (A) conv 実使用形態行と同型) を載せた状態で
+      `meson compile -C build && meson test -C build gemm -v` を実行した生ログ。
+      ログ内に `git rev-parse HEAD` (= e84a92a) / `git status --porcelain` / compile_exit=0 /
+      走行 exe とソース 3 本 (test_gemm.cu / gemm.cuh / gemm.cu) の sha256 を採取済み。
+      ★このログとソース訂正は `a227635` (test: e84a92a のコメントの表 (A)/(B) 取り違えを訂正)
+        でコミット済み (`git ls-files` で追跡を確認)。ログ内 sha256 のうち test_gemm.cu
+        (63e80c9f...) は `a227635` の現物と一致する = 走行ソースは a227635 のツリーと同一。
+        (走行自体は a227635 のコミット前・HEAD=e84a92a に訂正を載せた working tree で実施 =
+         ログ内 `git status --porcelain` 節のとおり。)
+
+======================================================================
+[注意]
+======================================================================
+  ・負のコントロール 2 件の一時改変はいずれも stage していない。最終ツリーに NEGCTRL の
+    文字列は 1 件も残っていない (grep 実数 0)。
+  ・t3_default_run.log / t3_wmma_run.log は一時改変の前にも 1 度ずつ採取したが、
+    最終ツリーでの取り直し分で上書きしてある (内容の差はゲート結果ではなく bench の秒のみ)。

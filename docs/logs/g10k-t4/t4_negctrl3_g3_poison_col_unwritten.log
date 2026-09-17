@@ -1,0 +1,184 @@
+===== G-10k T4 実走ヘッダ (negctrl3_g3_poison_col_unwritten) =====
+note         = NEGCTRL3 (一時改変・コミットしない): conv2d.cu launch_conv2d_im2col_gemm_batched の im2col grid.y を N->1 にし item1 の col を書かずに残す -> poison が出力へ混入し [G3] が red になることの確認 (既定経路)
+start(local) = 2026-09-12 23:23:35 +09:00
+hostname     = KIK-WIN-RTX58
+HEAD         = faa0eada2604f0608a50f4a5f86d6a167c3a9979
+porcelain    = [ M src/kernels/conv2d.cu| M src/meson.build| M src/tests/test_conv2d.cu|?? docs/logs/g10k-t4/t4_g3poison_default_run1.log]  (空 = clean)
+exe          = build\src\test_conv2d.exe
+exe sha256   = 46465F3A4AC85A58F4EE1D58CD087E96D19DA5E241F749A410E5592A760EC435
+conv2d.cu sha256      = C3402D7767176F7746EC2E1C6447FC7B02EC1D6BDFF0548112DD2D39A96D56B7
+test_conv2d.cu sha256 = 566F487307C109E33DA1D25625CB5DFA5E5E3D079C5CCFB3BE10ADAB9D579A82
+gemm.cu sha256        = 4EEC27B5175AC4CC011FA924E3F162E079236B080B25C7146490DAE072944203
+gemm.cuh sha256       = A64CE46CCBB83FAFCCE3E75E18367E7EC234E5FEE07851B376E18056A346D91A
+SAC VerifiedAndReputablePolicyState = 0
+--- env ---
+  DOLLAMA_CONV_BATCH = <unset>
+  DOLLAMA_GEMM = <unset>
+  DOLLAMA_POOL = <unset>
+  DOLLAMA_PROFILE = <unset>
+  DOLLAMA_EPILOGUE = <unset>
+  DOLLAMA_G8K_DUMP = <unset>
+===== stdout+stderr (2>&1) =====
+[conv_1x1[odd]] MAE=0.000113135 max_abs=0.000952721
+[conv_1x1[odd]] PASSED (max_rel=0.000476688 atol=0.00316 rtol=0.00508 K=8)
+[conv_1x1[even]] MAE=0.00012104 max_abs=0.000959396
+[conv_1x1[even]] PASSED (max_rel=0.000482376 atol=0.00316 rtol=0.00508 K=8)
+[conv_3x3_s1p1[odd]] MAE=0.000260227 max_abs=0.00187492
+[conv_3x3_s1p1[odd]] PASSED (max_rel=0.000470109 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s1p1[even]] MAE=0.000256208 max_abs=0.0019002
+[conv_3x3_s1p1[even]] PASSED (max_rel=0.000466174 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[odd]] MAE=0.000263331 max_abs=0.00192165
+[conv_3x3_s2p1[odd]] PASSED (max_rel=0.000471884 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[even]] MAE=0.00025897 max_abs=0.00181532
+[conv_3x3_s2p1[even]] PASSED (max_rel=0.000447237 atol=0.00372 rtol=0.00536 K=36)
+[conv_bias[off]] MAE=0.000318443 max_abs=0.00191593
+[conv_bias[off]] PASSED (max_rel=0.000473849 atol=0.00408 rtol=0.00554 K=54)
+[conv_bias[on]] MAE=0.000324684 max_abs=0.00193834
+[conv_bias[on]] PASSED (max_rel=0.000477358 atol=0.00408 rtol=0.00554 K=54)
+[conv_batch_multi] MAE=0.000312098 max_abs=0.00197601
+[conv_batch_multi] PASSED (max_rel=0.000486143 atol=0.0039 rtol=0.00545 K=45)
+[conv_dil2[pad2]] MAE=0.000269038 max_abs=0.00191307
+[conv_dil2[pad2]] PASSED (max_rel=0.000483434 atol=0.00372 rtol=0.00536 K=36)
+[conv_dil2[pad0]] MAE=0.000294441 max_abs=0.0019455
+[conv_dil2[pad0]] PASSED (max_rel=0.000480011 atol=0.00372 rtol=0.00536 K=36)
+[gemm_1x1] MAE=0.000228003 max_abs=0.00194454
+[gemm_1x1] PASSED (max_rel=0.000485548 atol=0.00348 rtol=0.00524 K=24)
+[gemm_1x1_bias] MAE=0.000441855 max_abs=0.0042882
+[gemm_1x1_bias] PASSED (max_rel=0.275472 atol=0.00348 rtol=0.00524 K=24)
+[gemm_3x3_same] MAE=0.000850637 max_abs=0.0146141
+[gemm_3x3_same] PASSED (max_rel=0.0445346 atol=0.0066 rtol=0.0068 K=180)
+[gemm_3x3_s2] MAE=0.00100121 max_abs=0.00968552
+[gemm_3x3_s2] PASSED (max_rel=0.899619 atol=0.00588 rtol=0.00644 K=144)
+[gemm_unet_like] MAE=0.00147407 max_abs=0.0153656
+[gemm_unet_like] PASSED (max_rel=0.108345 atol=0.01452 rtol=0.01076 K=576)
+[large_down0_320_128] MAE=4.8228e-05 max_abs=0.0625
+[large_down0_320_128] PASSED (max_rel=0.0602007 atol=0.0606 rtol=0.0338 K=2880)
+[large_up2_640to320_128] MAE=0.0035186 max_abs=0.125
+[large_up2_640to320_128] PASSED (max_rel=0.192084 atol=0.1182 rtol=0.0626 K=5760)
+[large_up2_concat_960to320_128] MAE=0.00429036 max_abs=0.125
+[large_up2_concat_960to320_128] PASSED (max_rel=0.449057 atol=0.1758 rtol=0.0914 K=8640)
+[large_vae_c128_512_band] MAE=0.00155172 max_abs=0.03125
+[large_vae_c128_512_band] PASSED (max_rel=0.123793 atol=0.02604 rtol=0.01652 K=1152)
+[test_conv_batch_gemm] process mode: default (batched path; [G1] n/a here)
+[batch2_1x1] MAE=0 max_abs=0 max_rel=0 exact=25600/25600 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_1x1] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G1:batch2_1x1] n/a in this process (default = batched path; [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)
+[batch2_1x1] MAE=0 max_abs=0
+[batch2_1x1] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[batch2_1x1_bias] MAE=0.000275086 max_abs=0.00390625 max_rel=0.302326 exact=8571/12920 (66.339%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_1x1_bias] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G1:batch2_1x1_bias] n/a in this process (default = batched path; [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)
+[batch2_1x1_bias] MAE=0.000275086 max_abs=0.00390625
+[batch2_1x1_bias] PASSED (max_rel=0.302326 atol=0.00348 rtol=0.00524 K=24)
+[batch2_3x3_same] MAE=2.48115 max_abs=27.9609 max_rel=3189 exact=7776/15552 (50%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_3x3_same] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G1:batch2_3x3_same] n/a in this process (default = batched path; [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)
+[batch2_3x3_same] MAE=2.48115 max_abs=27.9609
+[batch2_3x3_same] mismatch at 7776: got 5.13281 ref -1.74805 diff 6.88086 lim 0.0184867 (K=180 atol=0.0066 rtol=0.0068)
+[batch2_3x3_s2] MAE=2.18961 max_abs=21.7188 max_rel=3471.52 exact=5669/18496 (30.6499%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_3x3_s2] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G1:batch2_3x3_s2] n/a in this process (default = batched path; [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)
+[batch2_3x3_s2] MAE=2.18961 max_abs=21.7188
+[batch2_3x3_s2] mismatch at 9248: got -6.6875 ref -3.19336 diff 3.49414 lim 0.0264452 (K=144 atol=0.00588 rtol=0.00644)
+[batch2_unet_c320_64] MAE=10.008 max_abs=118 max_rel=37707.8 exact=1310865/2621440 (50.0055%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_unet_c320_64] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G1:batch2_unet_c320_64] n/a in this process (default = batched path; [G1] is taken in a separate DOLLAMA_CONV_BATCH=0 process)
+[batch2_unet_c320_64] MAE=10.008 max_abs=118
+[batch2_unet_c320_64] mismatch at 1310720: got 2.57812 ref 8.92969 diff 6.35156 lim 0.362423 (K=2880 atol=0.0606 rtol=0.0338)
+[g8k_arena] b1_320_128 N=1 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_320_128 N=2 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b1_640_64 N=1 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_640_64 N=2 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b1_1280_32 N=1 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_1280_32 N=2 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b1_128_512 N=1 C=128 512x512 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] 累計: cudaMalloc=2 cudaFree=0 alloc=56 chunk_alloc=2 chunks=2 capacity=512MiB peak_in_use=284MiB
+[test_g10k_t4_gates] process mode: default (batched path)
+[G2a:small_1x1_bias_17x19] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:small_1x1_bias_17x19] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G2a:small_1x1_bias_17x19] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==0) -> PASSED
+[G2b:small_1x1_bias_17x19] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:small_1x1_bias_17x19] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G2:small_3x3_s2_33to17] mismatch at 9248: got 0.0820312 ref -0.393066 diff 0.475098 lim 0.00841135 (K=144 atol=0.00588 rtol=0.00644)
+[G2b:small_1x1_bias_17x19] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==0) -> PASSED
+[G3:small_1x1_bias_17x19] 3 runs memcmp: run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | poison=1MiB (col_bound 0 + band_bound 0 + 1) covers peak_request 0/0MiB: yes -> PASSED
+[G2:small_1x1_bias_17x19] MAE=0.000272702 max_abs=0.00390625 max_rel=0.3 exact=8615/12920 (66.6796%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:small_1x1_bias_17x19] MAE=0.000272702 max_abs=0.00390625
+[G2:small_1x1_bias_17x19] PASSED (max_rel=0.3 atol=0.00348 rtol=0.00524 K=24)
+[G2a:small_3x3_s2_33to17] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:small_3x3_s2_33to17] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2a:small_3x3_s2_33to17] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G2b:small_3x3_s2_33to17] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:small_3x3_s2_33to17] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2b:small_3x3_s2_33to17] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G3:small_3x3_s2_33to17] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): BIT-EXACT | poison=1MiB (col_bound 0 + band_bound 0 + 1) covers peak_request 0/0MiB: yes -> FAILED
+[G2:small_3x3_s2_33to17] MAE=1.53147 max_abs=14.2744 max_rel=163.333 exact=5755/18496 (31.1148%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:small_3x3_s2_33to17] MAE=1.53147 max_abs=14.2744
+[G2a:unet_1x1_320to640_32] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:unet_1x1_320to640_32] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G2a:unet_1x1_320to640_32] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==0) -> PASSED
+[G2b:unet_1x1_320to640_32] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:unet_1x1_320to640_32] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +0
+[G2b:unet_1x1_320to640_32] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==0) -> PASSED
+[G3:unet_1x1_320to640_32] 3 runs memcmp: run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | poison=4MiB (col_bound 1 + band_bound 2 + 1) covers peak_request 0/0MiB: yes -> PASSED
+[G2:rep_320_128] mismatch at 5242880: got -1.9043 ref -13.2266 diff 11.3223 lim 0.507658 (K=2880 atol=0.0606 rtol=0.0338)
+[G2:unet_1x1_320to640_32] MAE=0 max_abs=0 max_rel=0 exact=1310720/1310720 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:unet_1x1_320to640_32] MAE=0 max_abs=0
+[G2:unet_1x1_320to640_32] PASSED (max_rel=0 atol=0.0094 rtol=0.0082 K=320)
+[G2a:rep_320_128] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:rep_320_128] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2a:rep_320_128] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G2b:rep_320_128] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:rep_320_128] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2b:rep_320_128] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G3:rep_320_128] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): DIFF | poison=201MiB (col_bound 180 + band_bound 20 + 1) covers peak_request 180/180MiB: yes -> FAILED
+[G2:rep_320_128] MAE=10.0665 max_abs=136.375 max_rel=37206.3 exact=5243479/10485760 (50.0057%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_320_128] MAE=10.0665 max_abs=136.375
+[G2a:rep_640_64] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:rep_640_64] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2a:rep_640_64] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G2b:rep_640_64] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:rep_640_64] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2b:rep_640_64] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G3:rep_640_64] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): DIFF | poison=101MiB (col_bound 90 + band_bound 10 + 1) covers peak_request 90/90MiB: yes -> FAILED
+[G2:rep_640_64] MAE=14.1603 max_abs=192.875 max_rel=42469.4 exact=2621742/5242880 (50.0058%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_640_64] MAE=14.1603 max_abs=192.875
+[G2:rep_640_64] mismatch at 2621440: got 12.7891 ref 26.9688 diff 14.1797 lim 1.80644 (K=5760 atol=0.1182 rtol=0.0626)
+[G2a:rep_1280_32] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:rep_1280_32] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2a:rep_1280_32] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G2b:rep_1280_32] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:rep_1280_32] path counters: gemm_batched wrapper +1 cublas_batched +1 fallback_loops +0 | arena alloc +1
+[G2b:rep_1280_32] path check (default: expected wrapper>=1 cublas==wrapper fallback==0 arena==1) -> PASSED
+[G3:rep_1280_32] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): DIFF | poison=51MiB (col_bound 45 + band_bound 5 + 1) covers peak_request 45/45MiB: yes -> FAILED
+[G2:rep_1280_32] MAE=19.86 max_abs=240.625 max_rel=36270.2 exact=1310873/2621440 (50.0058%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_1280_32] MAE=19.86 max_abs=240.625
+[G2:rep_1280_32] mismatch at 1310720: got -32.625 ref 22.5156 diff 55.1406 lim 2.93978 (K=11520 atol=0.2334 rtol=0.1202)
+[G2a:G4_band_640to320_128] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:G4_band_640to320_128] path counters: gemm_batched wrapper +2 cublas_batched +2 fallback_loops +0 | arena alloc +2
+[G2a:G4_band_640to320_128] path check (default: expected wrapper>=2 cublas==wrapper fallback==0 arena==2) -> PASSED
+[G2b:G4_band_640to320_128] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:G4_band_640to320_128] path counters: gemm_batched wrapper +2 cublas_batched +2 fallback_loops +0 | arena alloc +2
+[G2b:G4_band_640to320_128] path check (default: expected wrapper>=2 cublas==wrapper fallback==0 arena==2) -> PASSED
+[G3:G4_band_640to320_128] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): DIFF | poison=277MiB (col_bound 256 + band_bound 20 + 1) covers peak_request 270/270MiB: yes -> FAILED
+[G2:G4_band_640to320_128] MAE=12.6414 max_abs=174.688 max_rel=51688.7 exact=5243413/10485760 (50.0051%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:G4_band_640to320_128] MAE=12.6414 max_abs=174.688
+[G2:G4_band_640to320_128] mismatch at 5242880: got -17.8438 ref 16.3438 diff 34.1875 lim 1.14132 (K=5760 atol=0.1182 rtol=0.0626)
+[G2a:G4_band_960to320_128] uniform (X,X): sample0 vs sample1 memcmp MISMATCH FAILED
+[G2a:G4_band_960to320_128] path counters: gemm_batched wrapper +3 cublas_batched +3 fallback_loops +0 | arena alloc +2
+[G2a:G4_band_960to320_128] path check (default: expected wrapper>=2 cublas==wrapper fallback==0 arena==2) -> PASSED
+[G2b:G4_band_960to320_128] swap (X,Y) vs (Y,X): MISMATCH FAILED (s0==s1' no / s1==s0' no)
+[G2b:G4_band_960to320_128] path counters: gemm_batched wrapper +3 cublas_batched +3 fallback_loops +0 | arena alloc +2
+[G2b:G4_band_960to320_128] path check (default: expected wrapper>=2 cublas==wrapper fallback==0 arena==2) -> PASSED
+[G3:G4_band_960to320_128] 3 runs memcmp: run0==run1(0xFF poisoned): DIFF / run0==run2(0x00 poisoned): DIFF | poison=277MiB (col_bound 256 + band_bound 20 + 1) covers peak_request 262/262MiB: yes -> FAILED
+[G2:G4_band_960to320_128] mismatch at 5242880: got 5.44922 ref -30.7812 diff 36.2305 lim 2.98921 (K=8640 atol=0.1758 rtol=0.0914)
+[G2:G4_band_960to320_128] MAE=14.8438 max_abs=217.188 max_rel=43466.8 exact=5237714/10485760 (49.9507%) not bit-exact | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:G4_band_960to320_128] MAE=14.8438 max_abs=217.188
+[G4:G4_band_640to320_128] arena peak_request during one launch_conv2d(N=2) = 270 MiB (col total cap = 256 MiB incl. N; band buffer is extra) alloc=2 | characterization only
+[test_g10k_t4_gates] FAILED
+[G4:G4_band_960to320_128] arena peak_request during one launch_conv2d(N=2) = 262 MiB (col total cap = 256 MiB incl. N; band buffer is extra) alloc=2 | characterization only
+[G5:direct_N2_Cout7] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G5:direct_N2_Cout7] launch_conv2d vs forced direct memcmp BIT-EXACT / batched wrapper +0 and arena alloc +0: yes -> PASSED
+[test_conv2d] FAILED
+end(local)   = 2026-09-12 23:23:41 +09:00
+exit=1

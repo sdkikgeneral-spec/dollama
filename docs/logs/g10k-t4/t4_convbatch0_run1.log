@@ -1,0 +1,190 @@
+===== G-10k T4 実走ヘッダ (convbatch0_run1) =====
+note         = DOLLAMA_CONV_BATCH=0 (キルスイッチ経路) [G1] 採取
+start(local) = 2026-09-12 18:02:26 +09:00
+hostname     = KIK-WIN-RTX58
+HEAD         = e40cce4d08348eca3faf510997db891c2aed5bf3
+porcelain    = [ M src/kernels/conv2d.cu| M src/tests/test_conv2d.cu|?? docs/logs/g10k-t4/]  (空 = clean)
+exe          = build\src\test_conv2d.exe
+exe sha256   = 221A828DAB537B11C1A91C13BF673CD42A7EB5D1E0DFEA7AB4C22DE720CE377D
+conv2d.cu sha256      = 31F6C8C6923ACF8A35A3E47985F8F97E953397DA867DE9B8386636CD1A89A183
+test_conv2d.cu sha256 = 894391E66625E203C438277E15776E2058A079D66706872A303B2D29C708ED9F
+gemm.cu sha256        = 4EEC27B5175AC4CC011FA924E3F162E079236B080B25C7146490DAE072944203
+gemm.cuh sha256       = A64CE46CCBB83FAFCCE3E75E18367E7EC234E5FEE07851B376E18056A346D91A
+SAC VerifiedAndReputablePolicyState = 0
+--- env ---
+  DOLLAMA_CONV_BATCH = 0
+  DOLLAMA_GEMM = <unset>
+  DOLLAMA_POOL = <unset>
+  DOLLAMA_PROFILE = <unset>
+  DOLLAMA_EPILOGUE = <unset>
+  DOLLAMA_G8K_DUMP = <unset>
+===== stdout+stderr (2>&1) =====
+[conv_1x1[odd]] MAE=0.000113135 max_abs=0.000952721
+[conv_1x1[odd]] PASSED (max_rel=0.000476688 atol=0.00316 rtol=0.00508 K=8)
+[conv_1x1[even]] MAE=0.00012104 max_abs=0.000959396
+[conv_1x1[even]] PASSED (max_rel=0.000482376 atol=0.00316 rtol=0.00508 K=8)
+[conv_3x3_s1p1[odd]] MAE=0.000260227 max_abs=0.00187492
+[conv_3x3_s1p1[odd]] PASSED (max_rel=0.000470109 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s1p1[even]] MAE=0.000256208 max_abs=0.0019002
+[conv_3x3_s1p1[even]] PASSED (max_rel=0.000466174 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[odd]] MAE=0.000263331 max_abs=0.00192165
+[conv_3x3_s2p1[odd]] PASSED (max_rel=0.000471884 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[even]] MAE=0.00025897 max_abs=0.00181532
+[conv_3x3_s2p1[even]] PASSED (max_rel=0.000447237 atol=0.00372 rtol=0.00536 K=36)
+[conv_bias[off]] MAE=0.000318443 max_abs=0.00191593
+[conv_bias[off]] PASSED (max_rel=0.000473849 atol=0.00408 rtol=0.00554 K=54)
+[conv_bias[on]] MAE=0.000324684 max_abs=0.00193834
+[conv_bias[on]] PASSED (max_rel=0.000477358 atol=0.00408 rtol=0.00554 K=54)
+[conv_batch_multi] MAE=0.000312098 max_abs=0.00197601
+[conv_batch_multi] PASSED (max_rel=0.000486143 atol=0.0039 rtol=0.00545 K=45)
+[conv_dil2[pad2]] MAE=0.000269038 max_abs=0.00191307
+[conv_dil2[pad2]] PASSED (max_rel=0.000483434 atol=0.00372 rtol=0.00536 K=36)
+[conv_dil2[pad0]] MAE=0.000294441 max_abs=0.0019455
+[conv_dil2[pad0]] PASSED (max_rel=0.000480011 atol=0.00372 rtol=0.00536 K=36)
+[gemm_1x1] MAE=0.000228003 max_abs=0.00194454
+[gemm_1x1] PASSED (max_rel=0.000485548 atol=0.00348 rtol=0.00524 K=24)
+[gemm_1x1_bias] MAE=0.000441855 max_abs=0.0042882
+[gemm_1x1_bias] PASSED (max_rel=0.275472 atol=0.00348 rtol=0.00524 K=24)
+[gemm_3x3_same] MAE=0.000850637 max_abs=0.0146141
+[gemm_3x3_same] PASSED (max_rel=0.0445346 atol=0.0066 rtol=0.0068 K=180)
+[gemm_3x3_s2] MAE=0.00100121 max_abs=0.00968552
+[gemm_3x3_s2] PASSED (max_rel=0.899619 atol=0.00588 rtol=0.00644 K=144)
+[gemm_unet_like] MAE=0.00147407 max_abs=0.0153656
+[gemm_unet_like] PASSED (max_rel=0.108345 atol=0.01452 rtol=0.01076 K=576)
+[large_down0_320_128] MAE=4.8228e-05 max_abs=0.0625
+[large_down0_320_128] PASSED (max_rel=0.0602007 atol=0.0606 rtol=0.0338 K=2880)
+[large_up2_640to320_128] MAE=0.0035186 max_abs=0.125
+[large_up2_640to320_128] PASSED (max_rel=0.192084 atol=0.1182 rtol=0.0626 K=5760)
+[large_up2_concat_960to320_128] MAE=0.00429036 max_abs=0.125
+[large_up2_concat_960to320_128] PASSED (max_rel=0.449057 atol=0.1758 rtol=0.0914 K=8640)
+[large_vae_c128_512_band] MAE=0.00155172 max_abs=0.03125
+[large_vae_c128_512_band] PASSED (max_rel=0.123793 atol=0.02604 rtol=0.01652 K=1152)
+[test_conv_batch_gemm] process mode: DOLLAMA_CONV_BATCH=0 (kill switch = per-n serial path; [G1] hard)
+[batch2_1x1] MAE=0 max_abs=0 max_rel=0 exact=25600/25600 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_1x1] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G1:batch2_1x1] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample BIT-EXACT / batched wrapper untouched (expected +0): yes -> PASSED
+[batch2_1x1] MAE=0 max_abs=0
+[batch2_1x1] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[batch2_1x1_bias] MAE=0 max_abs=0 max_rel=0 exact=12920/12920 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_1x1_bias] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G1:batch2_1x1_bias] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample BIT-EXACT / batched wrapper untouched (expected +0): yes -> PASSED
+[batch2_1x1_bias] MAE=0 max_abs=0
+[batch2_1x1_bias] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[batch2_3x3_same] MAE=0 max_abs=0 max_rel=0 exact=15552/15552 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_3x3_same] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G1:batch2_3x3_same] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample BIT-EXACT / batched wrapper untouched (expected +0): yes -> PASSED
+[batch2_3x3_same] MAE=0 max_abs=0
+[batch2_3x3_same] PASSED (max_rel=0 atol=0.0066 rtol=0.0068 K=180)
+[batch2_3x3_s2] MAE=0 max_abs=0 max_rel=0 exact=18496/18496 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_3x3_s2] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G1:batch2_3x3_s2] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample BIT-EXACT / batched wrapper untouched (expected +0): yes -> PASSED
+[batch2_3x3_s2] MAE=0 max_abs=0
+[batch2_3x3_s2] PASSED (max_rel=0 atol=0.00588 rtol=0.00644 K=144)
+[batch2_unet_c320_64] MAE=0 max_abs=0 max_rel=0 exact=2621440/2621440 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[batch2_unet_c320_64] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G1:batch2_unet_c320_64] DOLLAMA_CONV_BATCH=0 process: memcmp vs per-sample BIT-EXACT / batched wrapper untouched (expected +0): yes -> PASSED
+[batch2_unet_c320_64] MAE=0 max_abs=0
+[batch2_unet_c320_64] PASSED (max_rel=0 atol=0.0606 rtol=0.0338 K=2880)
+[g8k_arena] b1_320_128 N=1 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_320_128 N=2 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_640_64 N=1 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_640_64 N=2 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_1280_32 N=1 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_1280_32 N=2 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_128_512 N=1 C=128 512x512 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] 累計: cudaMalloc=2 cudaFree=0 alloc=68 chunk_alloc=2 chunks=2 capacity=512MiB peak_in_use=284MiB
+[test_g10k_t4_gates] process mode: DOLLAMA_CONV_BATCH=0 (kill switch)
+[G2a:small_1x1_bias_17x19] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:small_1x1_bias_17x19] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G2a:small_1x1_bias_17x19] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:small_1x1_bias_17x19] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:small_1x1_bias_17x19] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G2b:small_1x1_bias_17x19] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:small_1x1_bias_17x19] 3 runs memcmp: BIT-EXACT PASSED
+[G2:small_1x1_bias_17x19] MAE=0 max_abs=0 max_rel=0 exact=12920/12920 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:small_1x1_bias_17x19] MAE=0 max_abs=0
+[G2:small_1x1_bias_17x19] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[G2a:small_3x3_s2_33to17] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:small_3x3_s2_33to17] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2a:small_3x3_s2_33to17] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:small_3x3_s2_33to17] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:small_3x3_s2_33to17] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2b:small_3x3_s2_33to17] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:small_3x3_s2_33to17] 3 runs memcmp: BIT-EXACT PASSED
+[G2:small_3x3_s2_33to17] MAE=0 max_abs=0 max_rel=0 exact=18496/18496 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:small_3x3_s2_33to17] MAE=0 max_abs=0
+[G2:small_3x3_s2_33to17] PASSED (max_rel=0 atol=0.00588 rtol=0.00644 K=144)
+[G2a:unet_1x1_320to640_32] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:unet_1x1_320to640_32] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G2a:unet_1x1_320to640_32] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:unet_1x1_320to640_32] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:unet_1x1_320to640_32] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G2b:unet_1x1_320to640_32] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:unet_1x1_320to640_32] 3 runs memcmp: BIT-EXACT PASSED
+[G2:unet_1x1_320to640_32] MAE=0 max_abs=0 max_rel=0 exact=1310720/1310720 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:unet_1x1_320to640_32] MAE=0 max_abs=0
+[G2:unet_1x1_320to640_32] PASSED (max_rel=0 atol=0.0094 rtol=0.0082 K=320)
+[G2a:rep_320_128] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:rep_320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2a:rep_320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:rep_320_128] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:rep_320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2b:rep_320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:rep_320_128] 3 runs memcmp: BIT-EXACT PASSED
+[G2:rep_320_128] MAE=0 max_abs=0 max_rel=0 exact=10485760/10485760 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_320_128] MAE=0 max_abs=0
+[G2:rep_320_128] PASSED (max_rel=0 atol=0.0606 rtol=0.0338 K=2880)
+[G2a:rep_640_64] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:rep_640_64] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2a:rep_640_64] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:rep_640_64] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:rep_640_64] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2b:rep_640_64] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:rep_640_64] 3 runs memcmp: BIT-EXACT PASSED
+[G2:rep_640_64] MAE=0 max_abs=0 max_rel=0 exact=5242880/5242880 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_640_64] MAE=0 max_abs=0
+[G2:rep_640_64] PASSED (max_rel=0 atol=0.1182 rtol=0.0626 K=5760)
+[G2a:rep_1280_32] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:rep_1280_32] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2a:rep_1280_32] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:rep_1280_32] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:rep_1280_32] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2b:rep_1280_32] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:rep_1280_32] 3 runs memcmp: BIT-EXACT PASSED
+[G2:rep_1280_32] MAE=0 max_abs=0 max_rel=0 exact=2621440/2621440 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:rep_1280_32] MAE=0 max_abs=0
+[G2:rep_1280_32] PASSED (max_rel=0 atol=0.2334 rtol=0.1202 K=11520)
+[G2a:G4_band_640to320_128] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:G4_band_640to320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2a:G4_band_640to320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:G4_band_640to320_128] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:G4_band_640to320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +2
+[G2b:G4_band_640to320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:G4_band_640to320_128] 3 runs memcmp: BIT-EXACT PASSED
+[G2:G4_band_640to320_128] MAE=0 max_abs=0 max_rel=0 exact=10485760/10485760 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:G4_band_640to320_128] MAE=0 max_abs=0
+[G2:G4_band_640to320_128] PASSED (max_rel=0 atol=0.1182 rtol=0.0626 K=5760)
+[G2a:G4_band_960to320_128] uniform (X,X): sample0 vs sample1 memcmp BIT-EXACT PASSED
+[G2a:G4_band_960to320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +4
+[G2a:G4_band_960to320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G2b:G4_band_960to320_128] swap (X,Y) vs (Y,X): BIT-EXACT PASSED (s0==s1' yes / s1==s0' yes)
+[G2b:G4_band_960to320_128] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +4
+[G2b:G4_band_960to320_128] path check (DOLLAMA_CONV_BATCH=0: expected wrapper +0) -> PASSED
+[G3:G4_band_960to320_128] 3 runs memcmp: BIT-EXACT PASSED
+[G2:G4_band_960to320_128] MAE=0 max_abs=0 max_rel=0 exact=10485760/10485760 (100%) BIT-EXACT | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)
+[G2:G4_band_960to320_128] MAE=0 max_abs=0
+[G2:G4_band_960to320_128] PASSED (max_rel=0 atol=0.1758 rtol=0.0914 K=8640)
+[G5:direct_N2_Cout7] path counters: gemm_batched wrapper +0 cublas_batched +0 fallback_loops +0 | arena alloc +0
+[G5:direct_N2_Cout7] launch_conv2d vs forced direct memcmp BIT-EXACT / batched wrapper +0 and arena alloc +0: yes -> PASSED
+[bench_conv2d] unet_c320_64 N=1 Cin=320 H=64 W=64 Cout=320 K=3x3 s=1 p=1 -> 64x64 median=0.15968 ms (min=0.15904 max=0.165664) 47280.5 GFLOPS BW=44.3768 GB/s (N=100)
+[bench_conv2d] vae_c128_512 N=1 Cin=128 H=512 W=512 Cout=128 K=3x3 s=1 p=1 -> 512x512 median=2.68755 ms (min=2.6657 max=3.56925) 28765.7 GFLOPS BW=50.0502 GB/s (N=100)
+[bench_conv2d] unet_1x1_320to640 N=1 Cin=320 H=32 W=32 Cout=640 K=1x1 s=1 p=0 -> 32x32 median=0.021472 ms (min=0.020608 max=0.067648) 19533.8 GFLOPS BW=110.641 GB/s (N=100)
+[bench_conv2d] vae_1x1_512_64 N=1 Cin=512 H=64 W=64 Cout=512 K=1x1 s=1 p=0 -> 64x64 median=0.04192 ms (min=0.039616 max=0.10144) 51228.1 GFLOPS BW=212.617 GB/s (N=100)
+[bench_batch] unet_c320_64 N=2 batch median=0.315136 ms | N=1x2 seq median=0.315136 ms
+[bench_batch] rep_320_128 N=2 batch median=1.13366 ms | N=1x2 seq median=1.13382 ms
+[bench_batch] rep_640_64 N=2 batch median=0.86976 ms | N=1x2 seq median=0.869344 ms
+[bench_batch] rep_1280_32 N=2 batch median=0.71344 ms | N=1x2 seq median=0.713792 ms
+[bench_batch] G4_band_640to320_128 N=2 batch median=2.15821 ms | N=1x2 seq median=2.15933 ms
+[test_conv2d] ALL PASSED
+end(local)   = 2026-09-12 18:02:33 +09:00
+exit=0

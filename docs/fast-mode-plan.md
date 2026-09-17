@@ -215,6 +215,13 @@ resnet_block 後段の 2 つの非効率を epilogue 融合カーネル 2 本で
   ため、**resnet バケット秒を動かす見込みは G-10k (conv 真 batch2) 側にある**。再 profile は G-10k 完了後に行う。
   G-6k 出荷判定の resnet 分母は暫定 **1.212s** (fast+epilogue) を採用 (baseline 1.225s から実質不変)。
   再 profile 手順は `prof_unet_fast_warm.exe` (DOLLAMA_PROFILE=1) の [RESNET-BUCKET] 行で恒久化済。
+  → ★**是正 (2026-09-17・G-10k T8)**: 上の再割当は **計器の誤り**を含んでいた。`prof_unet_fast_warm` は
+  `launch_unet` = **B=1 経路しか叩かない** (`docs/g10k-plan.md` §2 F1) ため、被験変数 (conv2d の N>1 枝 = batch2 構成) を
+  **一度も通らない計器**に「G-10k 後の合否」を紐づけていた = G-4k S3 の「測っている変数が epilogue ではない」と**同型の誤りが計器側で**
+  起きていた。G-10k では **B=1 の 1.212s / 1.225s を合否分母から退役**し、判定は **同一構成 (fast+epilogue) の
+  `DOLLAMA_CONV_BATCH` 既定 vs `=0` (別プロセス) の resnet バケット削減率**へ移した (§3 / §8)。**結果 = 削減率 +3.38% / +1.87%
+  (悪化方向) → 秒中立・陰性クローズ・opt-in 降格 (`c3ee3ca`)**。resnet ≤0.95s ゲート自体は **未達のまま閉じていない**が、
+  再 profile の計器を `prof_unet_fast_warm` (B=1) に戻してはいけない。当時の記述は履歴として残す。正本 = `docs/measurements-log.md` G-10k 節。
 
 #### G-4k S3 実測 (2026-07-28・env 配線 + DiffusionPipeline 結線 + ゲート再設計・**G-4k クローズ**)
 
@@ -324,6 +331,10 @@ epilogue vs default: MAE=6.57082e-05 max_abs=0.000488281 bad=0 SSIM=0.999999
 G-8k は秒数レバーではない (前提条件の充足) ため、**再 profile は G-10k 完了後**に回す。
 G-4k 自身の達成は **(A)(B) のパス数削減 + カーネル単体 bit-exact +
 出荷経路への結線 + parity ゲート 4/4 PASS** をもって満たしたものとする。
+★**是正 (2026-09-17・G-10k T8)**: 「再 profile 手順は `prof_unet_fast_warm.exe` … で恒久化」は **B=1 固定の計器**であり、
+batch2 構成の resnet を測れない (計器の誤り・上の S2 節末尾の是正と同じ)。G-10k の合否は削減率で出し **陰性クローズ** (+3.38% / +1.87%)。
+`prof_unet_fast_warm.cu:155-156` の `(gate: <=0.95s / stretch <=0.85s / baseline 1.225s)` は**退役済み絶対値**で、今も印字されるが
+分母として読まない (`docs/g10k-plan.md` §12-4)。
 
 ### #3 FP8 Tensor Core (精度トレードオフ・最内 opt-in)
 - **選択的 FP8**: 計算律速の大 GEMM のみ入力を FP8 (E4M3)、**蓄積は FP32** (既存規約と整合)。
@@ -688,7 +699,10 @@ G-0 以降未着手のバケット。内訳の直接 profile は無いが、コ�
 ### G-10k: conv2d 真の batch2 (G-2k 残課題の解消)
 
 - **現状**: `src/kernels/conv2d.cu:483-503` — N>1 は per-n オフセットで N==1 ヘルパを **直列 N 回** 呼ぶ (G-2k S1 のビット一致優先設計)。これが「batch2 が resnet に効かない」主因 (G-2k 注記)。
+  (★行番号の併記・T8 2026-09-17: 起草時の `:483-503` は当時の値。**現物 `src/kernels/conv2d.cu:487-507` (2026-08-24 確認 (台帳 §6 T4 行) / T8 2026-09-17 に `646cc66` (2026-09-10・旧履歴の docs commit・現ブランチ等価 `74e15e1`・src ツリー `f306bda` 同一) で再確認 = T3/T4 前・`if (N > 1 && use_gemm_path…)` `:487` / `for (int n = 0; n < N; ++n)` `:491`)**。G-10k T4 以降は同ループが `if (conv_batch_enabled())` の else 側に残り、`c3ee3ca` 現物では `for (int n = 0; n < N; ++n)` = `:843` (行番号非依存の指し方は `grep -n "for (int n = 0; n < N; ++n)" src/kernels/conv2d.cu`)。)
 - **提案**: ① im2col カーネルに n 次元を追加し col を [N, K, Hout·Wout] で 1 launch 生成 ② GEMM を `cublasGemmStridedBatchedEx` (strideA=0 で重み共有 / strideB=K·HW / strideC=Cout·HW) に置換。**出力 [N, Cout, HW] は strided batched の C stride と自然に一致し、追加 scatter 不要** (帯分割時のみ既存 scatter を N 対応)。1x1 経路も同型で置換可。
+  (★注記・T8 2026-09-17: この stride 写像は**起草時の未検証提案**。G-10k T3 で実装したのは `launch_gemm_fp16_batched` ラッパ + validator で、写像の正誤は [H1]〜[H7] の実測で確定させた (`docs/g10k-plan.md` §7b / §13 T3)。本行を写像の正典として引用しないこと。削除せず履歴として残す。)
+  (★結果・T8: G-10k は T7/T7b で **削減率 +3.38% / +1.87% = 秒中立・陰性クローズ**。「~0.5-1.0s (resnet 1.3-1.7x)」の見込みは**実測で撤回**。律速は GEMM / im2col の時間が N に比例し束ねても減らないこと + 帯分割の N=2 固有コスト (`docs/g10k-plan.md` §13 T6r 内訳表)。新経路は opt-in `DOLLAMA_CONV_BATCH=1` として残置 (`c3ee3ca`)。)
 - **効果**: CFG e2e (--fast 15.88s) の resnet ≈ 2.45s が対象。per-n 直列 → batched 並列で占有率が上がり、bias/im2col の launch も半減。**~0.5-1.0s** (resnet 1.3-1.7x 相当) を見込む。正確な倍率は要実測。
 - **リスク**: strided batched は単発 GEMM とタイル選択が変わり得る = **G-2k S2 と同種の ~1 ULP パリティ** (ビット一致は狙わない)。既存 g=1.0 SSIM ≥0.999 ハードゲートをそのまま流用。default (B=1) は無改変 (N>1 枝のみ差し替え)。難度中。G-4k(B) の per-b bias ループ解消とは相補 (あちらは conv 後段・こちらは conv 本体)。
 

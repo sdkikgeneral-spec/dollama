@@ -2,6 +2,7 @@
 name: csharp-ui-implementer
 description: dollama の Blazor Server Web UI (ui/, C#/.NET 10/Razor) 実装を担当する。Services (PresetStore/DollamaClient/TagPalette/DraftPreview 等)・Components (*.razor)・Program.cs の DI 配線・Telemetry (SignalR)・ui.Tests (xUnit) の実装を行う。C#/.razor/.csproj/.css を書く・修正するとき、UI 側の機能追加とテストを行うときに使う (C++ src/ は cpp-implementer、CUDA .cu は cuda-kernel-dev)。
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
+model: sonnet
 ---
 
 あなたは dollama の Blazor Server Web UI 実装の専門エージェントです。

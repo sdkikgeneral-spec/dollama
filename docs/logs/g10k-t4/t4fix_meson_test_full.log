@@ -1,0 +1,70 @@
+HEAD=faa0eada2604f0608a50f4a5f86d6a167c3a9979
+porcelain=[ M src/meson.build| M src/tests/test_conv2d.cu|?? docs/logs/g10k-t4/t4_g3poison_convbatch0_run2_final.log|?? docs/logs/g10k-t4/t4_g3poison_default_run1.log|?? docs/logs/g10k-t4/t4_g3poison_default_run2_final.log|?? docs/logs/g10k-t4/t4_negctrl3_g3_poison_col_unwritten.log|?? docs/logs/g10k-t4/t4fix_meson_compile_full.log|?? docs/logs/g10k-t4/t4fix_meson_test_full.log|]
+test_conv2d.exe sha256=1fef7939a5d3597f412ce752cfe646fd1f72f94dda810cf5716eca937ac66504
+start=2026-09-12 23:24:35
+'vswhere.exe' は、内部コマンドまたは外部コマンド、
+操作可能なプログラムまたはバッチ ファイルとして認識されていません。
+ninja: Entering directory `E:\Develop\Projects\dollama\build'
+ninja: no work to do.
+Activating VS 18.9.3
+ 1/54 dollama:text_conditioner      OK               1.44s
+ 2/54 dollama:quality_gate          OK               1.15s
+ 3/54 dollama:quality_scorer        OK               0.73s
+ 4/54 dollama:scorer_runner         OK               0.67s
+ 5/54 dollama:scoring_postprocess   OK               0.49s
+ 6/54 dollama:fast_config           OK               0.43s
+ 7/54 dollama:affinity              OK               0.41s
+ 8/54 dollama:png                   OK               0.16s
+ 9/54 dollama:png_meta              OK               0.13s
+10/54 dollama:diffusion_backend     OK               0.63s
+11/54 dollama:pipeline_factory      OK               0.44s
+12/54 dollama:character             OK               0.53s
+13/54 dollama:safetensors           OK               0.47s
+14/54 dollama:cpu_topology          OK               0.30s
+15/54 dollama:tokenizer             OK               0.89s
+16/54 dollama:scheduler             OK               1.16s
+17/54 dollama:attention_fast        OK               0.98s
+18/54 dollama:layernorm             OK               0.94s
+19/54 dollama:timeembed             OK               0.33s
+20/54 dollama:clip                  OK               2.90s
+21/54 dollama:activation            OK               1.52s
+22/54 dollama:device_arena_pool_off OK               0.59s
+23/54 dollama:device_arena          OK               0.75s
+24/54 dollama:elementwise           OK               1.89s
+25/54 dollama:geglu                 OK               1.53s
+26/54 dollama:bias_add              OK               2.16s
+27/54 dollama:multi_frame_pipeline  OK               5.24s
+28/54 dollama:groupnorm             OK               5.18s
+29/54 dollama:cuda_smoke            OK               6.22s
+30/54 dollama:gemm                  OK               6.82s
+31/54 dollama:matting               OK               9.68s
+32/54 dollama:attention             OK               8.85s
+33/54 dollama:conv2d_batch_off      OK              12.00s
+34/54 dollama:conv2d                OK              12.78s
+35/54 dollama:tensor                OK              14.73s
+36/54 dollama:spsc_queue            OK              16.33s
+37/54 dollama:pipeline              OK              16.20s
+38/54 dollama:bitnet_d80m           OK              16.03s
+39/54 dollama:bitnet_int8           OK              18.10s
+40/54 dollama:allocator             OK              26.32s
+41/54 dollama:wd14                  OK              28.43s
+42/54 dollama:bitnet_infer          OK              28.24s
+43/54 dollama:bitnet                OK              55.16s
+44/54 dollama:vae_decode            OK              13.95s
+45/54 dollama:unet                  OK              19.60s
+46/54 dollama:unet_fast             OK              14.20s
+47/54 dollama:lora_runtime          OK               0.25s
+48/54 dollama:diffusion             OK               6.68s
+49/54 dollama:diffusion_batch2      OK              66.19s
+50/54 dollama:pipeline_generator    OK               6.78s
+51/54 dollama:bitnet_gpu            OK               6.25s
+52/54 dollama:txt2img               OK               0.15s
+53/54 dollama:http                  OK               0.68s
+54/54 dollama:cli_generate          OK               4.65s
+
+Ok:                54  
+Fail:              0   
+
+Full log written to E:\Develop\Projects\dollama\build\meson-logs\testlog.txt
+exit=0
+end=2026-09-12 23:27:52

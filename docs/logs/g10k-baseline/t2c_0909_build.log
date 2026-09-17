@@ -1,0 +1,8 @@
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+ninja: Entering directory `E:/Develop/Projects/dollama/build'
+ninja: no work to do.
+Activating VS 18.8.3
+INFO: automatically activated MSVC compiler environment
+INFO: autodetecting backend as ninja
+INFO: calculating backend command to run: "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.EXE" -C E:/Develop/Projects/dollama/build

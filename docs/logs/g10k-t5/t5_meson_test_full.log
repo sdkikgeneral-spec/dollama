@@ -1,0 +1,75 @@
+HEAD=e16b7008995987a6d9164c45af70439681996ab7
+porcelain=[?? docs/logs/g10k-t5/|]
+1fef7939a5d3597f412ce752cfe646fd1f72f94dda810cf5716eca937ac66504 *build/src/test_conv2d.exe
+87ea4c3af0fcc8064388cfcd52d995caf655cc181633eeea521511a7ed3c271b *build/src/test_diffusion_batch2.exe
+98c03a0073d51dfaac61b50a080bc1d17458b2cac9df492ce3148278fc28d78c *build/src/test_unet_fast.exe
+68f65f00c0160078ac8f0e604a912aa3e88f14149755e2c286a817da8d8adc90 *build/src/prof_arena_e2e.exe
+SAC VerifiedAndReputablePolicyState=0
+env: DOLLAMA_CONV_BATCH/GEMM/POOL/PROFILE/EPILOGUE/G8K_DUMP all unset in launching shell
+start=2026-09-12 23:36:24
+'vswhere.exe' は、内部コマンドまたは外部コマンド、
+操作可能なプログラムまたはバッチ ファイルとして認識されていません。
+ninja: Entering directory `E:\Develop\Projects\dollama\build'
+ninja: no work to do.
+Activating VS 18.9.3
+ 1/54 dollama:text_conditioner      OK               0.11s
+ 2/54 dollama:quality_gate          OK               0.10s
+ 3/54 dollama:scorer_runner         OK               0.09s
+ 4/54 dollama:scoring_postprocess   OK               0.08s
+ 5/54 dollama:fast_config           OK               0.07s
+ 6/54 dollama:affinity              OK               0.07s
+ 7/54 dollama:png                   OK               0.04s
+ 8/54 dollama:diffusion_backend     OK               0.11s
+ 9/54 dollama:cpu_topology          OK               0.05s
+10/54 dollama:png_meta              OK               0.10s
+11/54 dollama:pipeline_factory      OK               0.15s
+12/54 dollama:character             OK               0.37s
+13/54 dollama:safetensors           OK               0.63s
+14/54 dollama:tokenizer             OK               0.77s
+15/54 dollama:scheduler             OK               0.87s
+16/54 dollama:attention_fast        OK               0.70s
+17/54 dollama:activation            OK               1.22s
+18/54 dollama:quality_scorer        OK               1.43s
+19/54 dollama:timeembed             OK               0.32s
+20/54 dollama:layernorm             OK               0.66s
+21/54 dollama:device_arena_pool_off OK               0.43s
+22/54 dollama:device_arena          OK               0.51s
+23/54 dollama:elementwise           OK               1.53s
+24/54 dollama:geglu                 OK               1.31s
+25/54 dollama:clip                  OK               3.31s
+26/54 dollama:bias_add              OK               2.44s
+27/54 dollama:groupnorm             OK               4.46s
+28/54 dollama:multi_frame_pipeline  OK               5.19s
+29/54 dollama:cuda_smoke            OK               6.45s
+30/54 dollama:attention             OK               8.84s
+31/54 dollama:matting               OK               9.15s
+32/54 dollama:conv2d_batch_off      OK              11.46s
+33/54 dollama:conv2d                OK              12.30s
+34/54 dollama:gemm                  OK              13.66s
+35/54 dollama:tensor                OK              13.89s
+36/54 dollama:bitnet_d80m           OK              16.12s
+37/54 dollama:spsc_queue            OK              16.34s
+38/54 dollama:pipeline              OK              16.63s
+39/54 dollama:bitnet_int8           OK              18.38s
+40/54 dollama:allocator             OK              26.07s
+41/54 dollama:wd14                  OK              28.22s
+42/54 dollama:bitnet_infer          OK              29.60s
+43/54 dollama:bitnet                OK              54.83s
+44/54 dollama:vae_decode            OK              13.34s
+45/54 dollama:unet                  OK              18.56s
+46/54 dollama:unet_fast             OK              13.96s
+47/54 dollama:lora_runtime          OK               0.24s
+48/54 dollama:diffusion             OK               6.69s
+49/54 dollama:diffusion_batch2      OK              68.44s
+50/54 dollama:pipeline_generator    OK               7.39s
+51/54 dollama:bitnet_gpu            OK               6.42s
+52/54 dollama:txt2img               OK               0.11s
+53/54 dollama:http                  OK               0.68s
+54/54 dollama:cli_generate          OK               4.12s
+
+Ok:                54  
+Fail:              0   
+
+Full log written to E:\Develop\Projects\dollama\build\meson-logs\testlog.txt
+exit=0
+end=2026-09-12 23:39:40

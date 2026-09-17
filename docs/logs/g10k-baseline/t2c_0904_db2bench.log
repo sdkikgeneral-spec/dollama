@@ -1,0 +1,517 @@
+[test_diffusion_batch2] unet_weights=E:/Develop/Projects/dollama/src/tests/data/unet_weights.safetensors
+[test_diffusion_batch2] vae_weights=E:/Develop/Projects/dollama/src/tests/data/vae_weights.safetensors
+[test_diffusion_batch2] io=E:/Develop/Projects/dollama/src/tests/data/unet_io.safetensors
+[test_diffusion_batch2] steps=4 guidance sweep={1.0, 3.0, 7.5} (gate=g1.0)
+[ALLOC] reserve: unet=6080MiB unet_persist=176MiB (set DOLLAMA_ARENA_RESERVE_MB=0 to disable)
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=8   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.703 s
+      [stage group, wall]
+      embed                            0.004 s
+      down                             1.022 s
+      mid                              0.231 s
+      up                               1.441 s
+      conv_out                         0.004 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.213 s
+      transformer (attn/gemm)          2.355 s
+        -> attention only              1.838 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=8   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.583 s
+      [stage group, wall]
+      embed                            0.003 s
+      down                             0.907 s
+      mid                              0.231 s
+      up                               1.438 s
+      conv_out                         0.004 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.210 s
+      transformer (attn/gemm)          2.333 s
+        -> attention only              1.837 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=8   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.586 s
+      [stage group, wall]
+      embed                            0.003 s
+      down                             0.905 s
+      mid                              0.234 s
+      up                               1.439 s
+      conv_out                         0.004 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.210 s
+      transformer (attn/gemm)          2.335 s
+        -> attention only              1.836 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=8   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.586 s
+      [stage group, wall]
+      embed                            0.003 s
+      down                             0.908 s
+      mid                              0.232 s
+      up                               1.439 s
+      conv_out                         0.004 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.210 s
+      transformer (attn/gemm)          2.335 s
+        -> attention only              1.837 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=39096
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=68MiB cursor_peak=68MiB chunks=1 cudaMalloc=1 cudaFree=0 alloc=384
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.291 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.803 s
+      mid                              0.200 s
+      up                               1.283 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          2.060 s
+        -> attention only              1.597 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.293 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.804 s
+      mid                              0.200 s
+      up                               1.284 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          2.062 s
+        -> attention only              1.600 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       2.300 s
+      [stage group, wall]
+      embed                            0.003 s
+      down                             0.808 s
+      mid                              0.200 s
+      up                               1.286 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          2.067 s
+        -> attention only              1.600 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=2 cudaFree=1 alloc=54390
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=2 cudaFree=1 alloc=528
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.978 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.686 s
+      mid                              0.171 s
+      up                               1.116 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          1.746 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.975 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.687 s
+      mid                              0.170 s
+      up                               1.113 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          1.744 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.972 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.687 s
+      mid                              0.170 s
+      up                               1.110 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.194 s
+      transformer (attn/gemm)          1.740 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=3 cudaFree=2 alloc=69684
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=3 cudaFree=2 alloc=672
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.949 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.682 s
+      mid                              0.169 s
+      up                               1.093 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.171 s
+      transformer (attn/gemm)          1.742 s
+        -> attention only              1.278 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.945 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.680 s
+      mid                              0.169 s
+      up                               1.091 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.171 s
+      transformer (attn/gemm)          1.738 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.950 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.680 s
+      mid                              0.169 s
+      up                               1.095 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.171 s
+      transformer (attn/gemm)          1.742 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=4   unet forwards (launch_unet_impl calls)=4   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       1.951 s
+      [stage group, wall]
+      embed                            0.002 s
+      down                             0.685 s
+      mid                              0.169 s
+      up                               1.092 s
+      conv_out                         0.003 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.172 s
+      transformer (attn/gemm)          1.742 s
+        -> attention only              1.277 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=4 cudaFree=3 alloc=90076
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=4 cudaFree=3 alloc=864
+[test_diffusion_batch2] VRAM free=14913MB (after all parity pipelines destroyed)
+[test_diffusion_batch2] [GATE1] noise floor (off@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 batch2-vs-off: MAE=0.0304753 max_abs=2 SSIM=0.999474 [GATE2 >=0.999]
+[test_diffusion_batch2] sweep g=3 batch2-vs-off: MAE=0.0870895 max_abs=9 SSIM=0.99877 (characterization)
+[test_diffusion_batch2] sweep g=7.5 batch2-vs-off: MAE=0.295126 max_abs=28 SSIM=0.996627 (characterization)
+[test_diffusion_batch2] [GATE3] epi determinism (fast+epi@g=1.0 x2): MAE=0 max_abs=0
+[test_diffusion_batch2] sweep g=1 (fast+epi)-vs-fast: MAE=0.0302668 max_abs=2 SSIM=0.999477 [GATE4 >=0.999]
+[test_diffusion_batch2] sweep g=3 (fast+epi)-vs-fast: MAE=0.0870231 max_abs=7 SSIM=0.998765 (characterization)
+[test_diffusion_batch2] sweep g=7.5 (fast+epi)-vs-fast: MAE=0.295204 max_abs=20 SSIM=0.996533 (characterization)
+[test_diffusion_batch2] [GATE5] off(default) cat_resnet_sec: run1=0.212884s  rerun=0.210484s  ratio=0.988724  (gens in pipeline=4, sentinel cleared, required: sentinel cleared and ratio<1.5)
+[test_diffusion_batch2] [GATE5] fast+epi cat_resnet_sec: run1=0.171151s  rerun=0.171724s  ratio=1.00335  (gens in pipeline=4, sentinel cleared, required: sentinel cleared and ratio<1.5)
+[test_diffusion_batch2] parity PASSED (GATE2 batch2 g=1.0 SSIM=0.999474 / GATE4 epilogue g=1.0 SSIM=0.999477 >= 0.999・GATE1/GATE3 determinism bit-exact)
+[test_diffusion_batch2] BENCH steps=20 guidance=7.5 iters=1 (warmup1・min 採用・VAE 共通込み e2e)
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=40   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)      13.026 s
+      [stage group, wall]
+      embed                            0.015 s
+      down                             4.565 s
+      mid                              1.178 s
+      up                               7.244 s
+      conv_out                         0.022 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          1.058 s
+      transformer (attn/gemm)         11.762 s
+        -> attention only              9.220 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=40   batch2=0
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)      12.996 s
+      [stage group, wall]
+      embed                            0.014 s
+      down                             4.557 s
+      mid                              1.165 s
+      up                               7.237 s
+      conv_out                         0.022 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          1.057 s
+      transformer (attn/gemm)         11.738 s
+        -> attention only              9.218 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=5 cudaFree=4 alloc=187000
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=5 cudaFree=4 alloc=1824
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       9.863 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             3.435 s
+      mid                              0.851 s
+      up                               5.551 s
+      conv_out                         0.017 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.971 s
+      transformer (attn/gemm)          8.707 s
+        -> attention only              6.386 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       9.876 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             3.435 s
+      mid                              0.853 s
+      up                               5.561 s
+      conv_out                         0.017 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.972 s
+      transformer (attn/gemm)          8.718 s
+        -> attention only              6.386 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=6 cudaFree=5 alloc=237164
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=6 cudaFree=5 alloc=2304
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       9.730 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             3.406 s
+      mid                              0.846 s
+      up                               5.454 s
+      conv_out                         0.015 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.853 s
+      transformer (attn/gemm)          8.694 s
+        -> attention only              6.385 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+
+===== DOLLAMA_PROFILE / generate_txt2img (CFG path) -- ABSOLUTE SECONDS ONLY =====
+  diffusion steps=20   unet forwards (launch_unet_impl calls)=20   batch2=1
+  NOTE: with batch2 one diffusion step is ONE batched forward (B=2);
+        with default one diffusion step is TWO forwards (cond + uncond, B=1).
+        Do not compare these seconds across configs: the per-step work differs.
+  NOTE: percent columns and the TOTAL row are absent on purpose --
+        total_sec is NOT measured on this path (see generate() for that).
+  weight upload+malloc             n/a (outside this window; a 0 here is NOT evidence of warm)
+  UNet step total (all forwards)       9.729 s
+      [stage group, wall]
+      embed                            0.009 s
+      down                             3.407 s
+      mid                              0.845 s
+      up                               5.453 s
+      conv_out                         0.015 s
+      [kernel category, orthogonal to stage groups]
+      resnet (conv/groupnorm)          0.854 s
+      transformer (attn/gemm)          8.693 s
+        -> attention only              6.387 s   (subset of transformer)
+  VAE decode                       n/a (not timed on this path)
+  host roundtrip                   n/a (not timed on this path)
+==================================================================================
+
+[ALLOC] arena=unet cap=6080MiB reserved=6080MiB live_peak=5914MiB cursor_peak=5914MiB chunks=1 cudaMalloc=7 cudaFree=6 alloc=287328
+[ALLOC] arena=unet_persist cap=176MiB reserved=176MiB live_peak=137MiB cursor_peak=137MiB chunks=1 cudaMalloc=7 cudaFree=6 alloc=2784
+[test_diffusion_batch2] BENCH e2e (min ms): default=13999.6 attn+batch2(composite / not CLI-reachable)=10879.7 fast+epilogue(shipping `--fast`)=10735.9
+[test_diffusion_batch2] BENCH speedup vs default: attn+batch2 x1.28676  fast+epi(shipping) x1.30399  (速度はハード合否を課さない・監視のみ)
+[test_diffusion_batch2] BENCH (fast+epi) vs attn+batch2 @g=7.5: MAE=1.87727 max_abs=144 SSIM=0.984091 (characterization・合否なし / ハード判定は parity 節 GATE4 @g=1.0)
+[test_diffusion_batch2] BENCH (fast+epi) vs default @g=7.5: MAE=1.37712 max_abs=154 SSIM=0.990551 (characterization・合否なし / batch2+epilogue の CFG 増幅込み総和)
+[test_diffusion_batch2] ALL PASSED

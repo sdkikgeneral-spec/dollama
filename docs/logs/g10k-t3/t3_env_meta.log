@@ -1,0 +1,31 @@
+=== date ===
+2026年 9月 12日 土曜日 11:07:59    
+=== host ===
+KIK-WIN-RTX58
+=== git HEAD (T3 コミット前) ===
+646cc6657f0af80cecea53b56b173d4199cd0c5d
+ M src/kernels/gemm.cu
+ M src/kernels/gemm.cuh
+ M src/meson.build
+ M src/tests/test_gemm.cu
+?? docs/logs/g10k-t3/
+=== nvcc ===
+Built on Fri_Apr_24_19:26:09_Pacific_Daylight_Time_2026
+Cuda compilation tools, release 13.3, V13.3.33
+Build cuda_13.3.r13.3/compiler.37862127_0
+=== SAC (VerifiedAndReputablePolicyState) ===
+0
+=== env (relevant) ===
+DOLLAMA_GEMM = <unset>
+DOLLAMA_PROFILE = <unset>
+DOLLAMA_POOL = <unset>
+DOLLAMA_CONV_BATCH = <unset>
+DOLLAMA_EPILOGUE = <unset>
+DOLLAMA_VAE_GEMM = <unset>
+=== exe sha256 (final tree) ===
+159d9725da83feacb7e991dd8688b0211543e8ce2aff780b9357cf02c033ca46 *build/src/test_gemm.exe
+=== source sha256 ===
+4eec27b5175ac4cc011fa924e3f162e079236b080b25c7146490dae072944203 *src/kernels/gemm.cu
+d05ab62c5b6307d6e447b5201ee9342e1304ad730fa4727ed121225e0a5629b6 *src/kernels/gemm.cuh
+8957011543044882278a5b570245659a04a422da6c9cb0e8798a04d6970e3740 *src/tests/test_gemm.cu
+9cf9b2ae7520b98c281b0ae8d293dfd013051e2643575b4a7ae8a0953fb7d72b *src/meson.build

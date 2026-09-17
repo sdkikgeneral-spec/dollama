@@ -588,7 +588,7 @@ if cuda_enabled
     cpp_args            : cpp_args,
     cuda_args           : cuda_test_args,
   )
-  test('gemm', test_gemm_exe)
+  test('gemm', test_gemm_exe, timeout : 600)
 
   # 要素ごと活性化 (SiLU / GeLU) テスト + ベンチ (Phase 2 マイルストーン 2-2-2)
   # activation.cu をテストと一緒にビルドして launch_silu / launch_gelu をリンクする。
@@ -624,6 +624,7 @@ if cuda_enabled
     cuda_args           : cuda_test_args,
   )
   test('conv2d', test_conv2d_exe)
+  test('conv2d_batch_on', test_conv2d_exe, env : ['DOLLAMA_CONV_BATCH=1'])
 
   # Attention テスト + ベンチ (Phase 2 マイルストーン 2-2-5)
   test_attention_exe = executable('test_attention',

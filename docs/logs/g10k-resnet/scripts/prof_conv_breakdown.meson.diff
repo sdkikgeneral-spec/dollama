@@ -1,0 +1,21 @@
+diff --git a/src/meson.build b/src/meson.build
+index 9c24e3e..9eb2842 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -626,6 +626,16 @@ if cuda_enabled
+   test('conv2d', test_conv2d_exe)
+   test('conv2d_batch_off', test_conv2d_exe, env : ['DOLLAMA_CONV_BATCH=0'])
+ 
++  # G-10k T6r 一時計測 exe (コミットしない・作業ツリー限定)
++  prof_conv_breakdown_exe = executable('prof_conv_breakdown',
++    sources             : files('tests/prof_conv_breakdown.cu', 'kernels/conv2d.cu', 'kernels/gemm.cu',
++                          'kernels/device_arena.cu'),
++    include_directories : src_inc,
++    dependencies        : deps,
++    cpp_args            : cpp_args,
++    cuda_args           : cuda_test_args,
++  )
++
+   # Attention テスト + ベンチ (Phase 2 マイルストーン 2-2-5)
+   test_attention_exe = executable('test_attention',
+     sources             : files('tests/test_attention.cu', 'kernels/attention.cu'),

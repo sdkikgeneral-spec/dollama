@@ -31,6 +31,7 @@
 #include <cuda_fp16.h>
 #include "kernels/conv2d.cuh"
 #include "kernels/device_arena.cuh"
+#include "kernels/gemm.cuh"   // G-10k T4: batched GEMM 分岐カウンタ (経路の実証に使う)
 #include "kernels/utils.cuh"
 #endif
 
@@ -194,20 +195,24 @@ static std::vector<float> cpu_conv2d(const std::vector<float>& in,
     return out;
 }
 
-// device 経由で conv2d を実行し FP16 結果をデコードして返す。
+// device 経由で conv2d を実行し FP16 結果を「ビット列のまま」返す (G-10k T4 で切り出し)。
+// memcmp 系のゲート ([G1] / [G2a] / [G2b] / [G3] / [G5]) はデコード前のこの列で突合する。
 // force_direct=true なら GEMM 経路をバイパスして必ず direct conv で計算する
 // (大形状の GPU-vs-direct 突合の「参照」側に使う)。
 // bias_h が空のときは nullptr で起動する。
-static std::vector<float> run_gpu_conv(const std::vector<__half>& in,
-                                       const std::vector<__half>& weight,
-                                       const std::vector<__half>& bias_h,
-                                       int N, int Cin, int H, int W,
-                                       int Cout, int KH, int KW,
-                                       int stride_h, int stride_w,
-                                       int pad_h, int pad_w,
-                                       int dilation_h, int dilation_w,
-                                       bool force_direct = false)
+static std::vector<__half> run_gpu_conv_raw(const std::vector<__half>& in,
+                                            const std::vector<__half>& weight,
+                                            const std::vector<__half>& bias_h,
+                                            int N, int Cin, int H, int W,
+                                            int Cout, int KH, int KW,
+                                            int stride_h, int stride_w,
+                                            int pad_h, int pad_w,
+                                            int dilation_h, int dilation_w,
+                                            bool force_direct,
+                                            int out_fill = -1)
 {
+    // out_fill >= 0 のときは出力バッファをそのバイト値で汚してから conv を呼ぶ
+    // (G-10k T4 [G3] poison 用。書き残しがあれば検出できる。既定 -1 = 汚さない)。
     const int Hout = out_dim(H, pad_h, dilation_h, KH, stride_h);
     const int Wout = out_dim(W, pad_w, dilation_w, KW, stride_w);
     const size_t out_n = static_cast<size_t>(N) * Cout * Hout * Wout;
@@ -228,6 +233,10 @@ static std::vector<float> run_gpu_conv(const std::vector<__half>& in,
                               cudaMemcpyHostToDevice));
     }
     CUDA_CHECK(cudaMalloc(&d_out, out_n * sizeof(__half)));
+    if (out_fill >= 0)
+    {
+        CUDA_CHECK(cudaMemset(d_out, out_fill, out_n * sizeof(__half)));
+    }
 
     if (force_direct)
     {
@@ -251,13 +260,34 @@ static std::vector<float> run_gpu_conv(const std::vector<__half>& in,
         CUDA_CHECK(cudaFree(d_bias));
     }
     CUDA_CHECK(cudaFree(d_out));
+    return h_out;
+}
 
-    std::vector<float> out(out_n);
-    for (size_t i = 0; i < out_n; ++i)
+// FP16 ビット列をデコードして float 列にする。
+static std::vector<float> decode_half(const std::vector<__half>& h)
+{
+    std::vector<float> out(h.size());
+    for (size_t i = 0; i < h.size(); ++i)
     {
-        out[i] = __half2float(h_out[i]);
+        out[i] = __half2float(h[i]);
     }
     return out;
+}
+
+// device 経由で conv2d を実行し FP16 結果をデコードして返す (従来の入口・挙動不変)。
+static std::vector<float> run_gpu_conv(const std::vector<__half>& in,
+                                       const std::vector<__half>& weight,
+                                       const std::vector<__half>& bias_h,
+                                       int N, int Cin, int H, int W,
+                                       int Cout, int KH, int KW,
+                                       int stride_h, int stride_w,
+                                       int pad_h, int pad_w,
+                                       int dilation_h, int dilation_w,
+                                       bool force_direct = false)
+{
+    return decode_half(run_gpu_conv_raw(in, weight, bias_h, N, Cin, H, W, Cout, KH, KW,
+                                        stride_h, stride_w, pad_h, pad_w,
+                                        dilation_h, dilation_w, force_direct));
 }
 
 // 1 ケースを GPU 実行・CPU 参照と比較する共通ルーチン (小形状ゴールデン用)。
@@ -441,12 +471,141 @@ static bool test_conv_gemm_large()
     return ok;
 }
 
+// ================================================================
+// G-10k T4 ヘルパ群 (docs/g10k-plan.md §7 の 7 ゲート用)。
+//
+// ★2 プロセス体制について (§9-4 / §9-7):
+//   conv2d.cu の opt-in スイッチ DOLLAMA_CONV_BATCH は getenv キャッシュ型 = プロセス単位固定
+//   なので、[G1] (既定 = per-n 直列の旧経路) と [G2a]〜[G4] (DOLLAMA_CONV_BATCH=1 の新経路) は
+//   同一プロセスでは両方取れない。本 exe は env の値を読んで「このプロセスがどちらの経路か」を
+//   知り、各ゲートの期待値を切り替える (meson test 自動枠 = 素の test_conv2d が既定経路 /
+//   conv2d_batch_on(=1) が新経路)。
+//   ★これは「同一プロセス内で切り替えた」のではない。記録にもそう書かないこと。
+//   env の値を読むこと自体は分岐の証拠にならないので、各ゲートは必ず
+//   「実際に通った枝」の計器 (gemm_batched_stats の差分・アリーナ alloc 回数の差分) と
+//   突き合わせる = env 表示と実経路が食い違えば赤になる (opt-in 迂回の負のコントロールは
+//   ここで捕まる)。
+// ================================================================
+
+// このプロセスが per-n 直列の旧経路 (既定 = DOLLAMA_CONV_BATCH が未設定/空/"1"以外) か。
+static bool t4_conv_batch_off()
+{
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+    const char* v = std::getenv("DOLLAMA_CONV_BATCH");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+    return !(v != nullptr && std::strcmp(v, "1") == 0);
+}
+
+// FP16 ビット列の範囲 memcmp。
+static bool t4_half_range_equal(const std::vector<__half>& a, size_t off_a,
+                                const std::vector<__half>& b, size_t off_b, size_t n)
+{
+    if (off_a + n > a.size() || off_b + n > b.size())
+    {
+        return false;
+    }
+    return std::memcmp(a.data() + off_a, b.data() + off_b, n * sizeof(__half)) == 0;
+}
+
+// 経路計器の差分 (gemm batched 分岐カウンタ + アリーナ alloc 回数)。
+struct T4PathDelta
+{
+    uint64_t wrapper  = 0; // launch_gemm_fp16_batched 呼び出し回数
+    uint64_t cublas   = 0; // cuBLAS strided batched 発行回数
+    uint64_t fallback = 0; // フォールバック直列ループ回数
+    uint64_t arena    = 0; // device_arena alloc() 回数 (im2col col / 帯バッファ)
+};
+
+struct T4PathSnapshot
+{
+    GemmBatchedStats g;
+    DeviceArenaStats a;
+};
+
+static T4PathSnapshot t4_snapshot()
+{
+    T4PathSnapshot s;
+    s.g = gemm_batched_stats();
+    s.a = device_arena_stats(DeviceArenaId::UNet);
+    return s;
+}
+
+static T4PathDelta t4_delta(const T4PathSnapshot& s0, const T4PathSnapshot& s1)
+{
+    T4PathDelta d;
+    d.wrapper  = s1.g.wrapper_calls        - s0.g.wrapper_calls;
+    d.cublas   = s1.g.cublas_batched_calls - s0.g.cublas_batched_calls;
+    d.fallback = s1.g.fallback_loops       - s0.g.fallback_loops;
+    d.arena    = s1.a.alloc_calls          - s0.a.alloc_calls;
+    return d;
+}
+
+static void t4_print_delta(const char* tag, const T4PathDelta& d)
+{
+    std::cout << "[" << tag << "] path counters: gemm_batched wrapper +" << d.wrapper
+              << " cublas_batched +" << d.cublas << " fallback_loops +" << d.fallback
+              << " | arena alloc +" << d.arena << "\n";
+}
+
+// 2 サンプル (X, Y) を連結した N=2 入力を作る。
+static std::vector<__half> t4_concat(const std::vector<__half>& x, const std::vector<__half>& y)
+{
+    std::vector<__half> cat;
+    cat.reserve(x.size() + y.size());
+    cat.insert(cat.end(), x.begin(), x.end());
+    cat.insert(cat.end(), y.begin(), y.end());
+    return cat;
+}
+
+// MAE / max_abs / max_rel / exact 率を print する (合否なし・characterization)。
+static void t4_print_numeric(const char* tag, const std::vector<float>& got,
+                             const std::vector<float>& ref)
+{
+    double sad = 0.0;
+    float  max_abs = 0.0f;
+    float  max_rel = 0.0f;
+    size_t exact = 0;
+    for (size_t i = 0; i < got.size(); ++i)
+    {
+        const float d = std::fabs(got[i] - ref[i]);
+        sad += d;
+        if (d > max_abs) max_abs = d;
+        if (got[i] == ref[i]) ++exact;
+        if (std::fabs(ref[i]) > 1e-3f)
+        {
+            max_rel = std::max(max_rel, d / std::fabs(ref[i]));
+        }
+    }
+    const double mae = sad / static_cast<double>(got.size());
+    std::cout << "[" << tag << "] MAE=" << mae << " max_abs=" << max_abs
+              << " max_rel=" << max_rel
+              << " exact=" << exact << "/" << got.size()
+              << " (" << (100.0 * static_cast<double>(exact) / static_cast<double>(got.size()))
+              << "%)"
+              << (max_abs == 0.0f ? " BIT-EXACT" : " not bit-exact")
+              << " | characterization: G-2k S2 per-sample MAE 6.4e-05 と同オーダーか (合否なし)\n";
+}
+
 // ----------------------------------------------------------------
 // 9. N>1 バッチ GEMM 経路 (G-2k S1)。CFG cond/uncond の B=2 束ねの下地。
-//    改修後 launch_conv2d の N=2 出力 (per-n バッチループ) を、per-sample に
-//    N=1 で 2 回呼んだ出力 (= 既存 N==1 GEMM 経路そのまま) と突合する。
-//    各サンプルは独立ゆえ蓄積順は N==1 と不変 → ビット一致 (MAE=0) を第一目標に、
-//    届かねば tol 内 (compare) を許容する。Cout/HW/K は GEMM 下限 (16) 以上にする。
+//    launch_conv2d の N=2 出力を、per-sample に N=1 で 2 回呼んだ出力
+//    (= 既存 N==1 GEMM 経路そのまま) と突合する。Cout/HW/K は GEMM 下限 (16) 以上にする。
+//
+//    G-10k T4 で [G1] へ昇格 (docs/g10k-plan.md §7・§8 ケース B で opt-in 降格後も維持):
+//      - 既定のプロセス (= per-n 直列の旧経路。DOLLAMA_CONV_BATCH が未設定/空/"1"以外) では、
+//        N=2 出力と per-sample 参照の **memcmp 一致を hard 合否**にする (各サンプルは独立で
+//        K-loop 順・蓄積順が N==1 と完全同一 = 既に観測済みの性質の固定)。
+//        加えて「旧経路は batched GEMM ラッパを 1 度も呼ばない」ことを計器差分で hard 化する
+//        (旧経路が新経路へ迂回していれば wrapper 差分が非 0 になり赤)。
+//      - DOLLAMA_CONV_BATCH=1 のプロセス (= 新経路) では bit 一致は要求しない (batched の
+//        タイル選択差 = FP16 tol 内が設計・§5)。bit 一致の有無は print のみ (characterization)。
+//      - どちらのプロセスでも既存 compare(..., K, ...) は floor として維持する
+//        (緩和ではなく分岐。超えたら緩めず BLOCK)。
 // ----------------------------------------------------------------
 static bool run_case_batch_vs_persample(const char* name,
                                         int Cin, int H, int W,
@@ -476,57 +635,76 @@ static bool run_case_batch_vs_persample(const char* name,
     }
 
     // N=2 バッチ入力 (in0 ++ in1)。
-    std::vector<__half> in_batch;
-    in_batch.reserve(static_cast<size_t>(2) * per_in);
-    in_batch.insert(in_batch.end(), in0.h.begin(), in0.h.end());
-    in_batch.insert(in_batch.end(), in1.h.begin(), in1.h.end());
+    const std::vector<__half> in_batch = t4_concat(in0.h, in1.h);
 
-    // 被験: 改修後 launch_conv2d に N=2 で通す (per-n バッチ GEMM ループ)。
-    std::vector<float> got = run_gpu_conv(in_batch, w.h, bias_h, 2, Cin, H, W, Cout, KH, KW,
-                                          stride_h, stride_w, pad_h, pad_w,
-                                          dilation_h, dilation_w, /*force_direct=*/false);
+    // 被験: launch_conv2d に N=2 で通す。経路計器の差分も採る。
+    const T4PathSnapshot s0 = t4_snapshot();
+    const std::vector<__half> got_h = run_gpu_conv_raw(in_batch, w.h, bias_h, 2, Cin, H, W,
+                                                       Cout, KH, KW,
+                                                       stride_h, stride_w, pad_h, pad_w,
+                                                       dilation_h, dilation_w,
+                                                       /*force_direct=*/false);
+    const T4PathDelta d = t4_delta(s0, t4_snapshot());
 
     // 参照: 各サンプルを N=1 で個別に通し (= 既存 N==1 GEMM 経路)、連結する。
-    std::vector<float> ref0 = run_gpu_conv(in0.h, w.h, bias_h, 1, Cin, H, W, Cout, KH, KW,
-                                           stride_h, stride_w, pad_h, pad_w,
-                                           dilation_h, dilation_w, /*force_direct=*/false);
-    std::vector<float> ref1 = run_gpu_conv(in1.h, w.h, bias_h, 1, Cin, H, W, Cout, KH, KW,
-                                           stride_h, stride_w, pad_h, pad_w,
-                                           dilation_h, dilation_w, /*force_direct=*/false);
-    std::vector<float> ref;
-    ref.reserve(static_cast<size_t>(2) * per_out);
-    ref.insert(ref.end(), ref0.begin(), ref0.end());
-    ref.insert(ref.end(), ref1.begin(), ref1.end());
+    const std::vector<__half> ref0_h = run_gpu_conv_raw(in0.h, w.h, bias_h, 1, Cin, H, W,
+                                                        Cout, KH, KW,
+                                                        stride_h, stride_w, pad_h, pad_w,
+                                                        dilation_h, dilation_w,
+                                                        /*force_direct=*/false);
+    const std::vector<__half> ref1_h = run_gpu_conv_raw(in1.h, w.h, bias_h, 1, Cin, H, W,
+                                                        Cout, KH, KW,
+                                                        stride_h, stride_w, pad_h, pad_w,
+                                                        dilation_h, dilation_w,
+                                                        /*force_direct=*/false);
+    const std::vector<__half> ref_h = t4_concat(ref0_h, ref1_h);
 
-    // ビット一致 (MAE=0) の明示チェック。SSIM は完全一致なら 1。
-    double sad = 0.0;
-    float  max_abs = 0.0f;
-    size_t exact = 0;
-    for (size_t i = 0; i < got.size(); ++i)
-    {
-        const float d = std::fabs(got[i] - ref[i]);
-        sad += d;
-        if (d > max_abs) max_abs = d;
-        if (got[i] == ref[i]) ++exact;
-    }
-    const double mae = sad / static_cast<double>(got.size());
-    const bool bit_exact = (max_abs == 0.0f);
-    std::cout << "[" << name << "] MAE=" << mae << " max_abs=" << max_abs
-              << " exact=" << exact << "/" << got.size()
-              << " SSIM=" << (bit_exact ? 1.0 : -1.0)
-              << (bit_exact ? " (BIT-EXACT)" : " (not bit-exact)") << "\n";
+    const std::vector<float> got = decode_half(got_h);
+    const std::vector<float> ref = decode_half(ref_h);
 
+    // ビット一致 (memcmp) の明示チェック + 数値 characterization。
+    const bool bit_exact = t4_half_range_equal(got_h, 0, ref_h, 0, static_cast<size_t>(2) * per_out);
+    t4_print_numeric(name, got, ref);
+    t4_print_delta(name, d);
+
+    bool ok = true;
     const int K = Cin * KH * KW;
-    // ビット一致が第一目標。届かなくても FP16 相応 tol 内なら緑 (>=0.9999 相当)。
-    return compare(got, ref, K, name);
+    if (t4_conv_batch_off())
+    {
+        // [G1] hard: 既定 (旧経路) は per-sample と memcmp 一致、かつ batched ラッパ非経由。
+        const bool g1_bits = bit_exact;
+        const bool g1_path = (d.wrapper == 0) && (d.cublas == 0) && (d.fallback == 0);
+        std::cout << "[G1:" << name << "] default (per-n serial path) process: memcmp vs per-sample "
+                  << (g1_bits ? "BIT-EXACT" : "MISMATCH")
+                  << " / batched wrapper untouched (expected +0): "
+                  << (g1_path ? "yes" : "NO")
+                  << " -> " << ((g1_bits && g1_path) ? "PASSED" : "FAILED") << "\n";
+        ok = g1_bits && g1_path && ok;
+    }
+    else
+    {
+        // DOLLAMA_CONV_BATCH=1 プロセス (新経路): [G1] は本プロセスでは検査しない (別プロセスで採る)。
+        // bit 一致の有無は上の print (characterization) のみ。
+        std::cout << "[G1:" << name << "] n/a in this process (batched path;"
+                  << " [G1] is taken in a separate default (DOLLAMA_CONV_BATCH unset) process)\n";
+    }
+
+    // floor: 既存 compare(..., K, ...) は両プロセスで維持 (超えたら緩めず BLOCK)。
+    ok = compare(got, ref, K, name) && ok;
+    return ok;
 }
 
 // ----------------------------------------------------------------
 // 9b. N=2 バッチ GEMM 突合ケース群。1x1 / 3x3 same / 3x3 stride2 / bias 有無。
+//     G-10k T4: この 5 ケースが [G1] の対象 (既定=DOLLAMA_CONV_BATCH 未設定のプロセスで hard memcmp)。
 // ----------------------------------------------------------------
 static bool test_conv_batch_gemm()
 {
     bool ok = true;
+    std::cout << "[test_conv_batch_gemm] process mode: "
+              << (t4_conv_batch_off() ? "default (per-n serial path; [G1] hard)"
+                                      : "DOLLAMA_CONV_BATCH=1 (batched path; [G1] n/a here)")
+              << "\n";
     // 1x1 GEMM バッチ — Cin=24 Cout=32 20x20。
     ok = run_case_batch_vs_persample("batch2_1x1", 24, 20, 20, 32, 1, 1, 1, 1, 0, 0, 1, 1,
                                      false, 901) && ok;
@@ -542,6 +720,320 @@ static bool test_conv_batch_gemm()
     // UNet 相当 (CFG B=2 の代表): Cin=Cout=320 64x64 3x3 same。
     ok = run_case_batch_vs_persample("batch2_unet_c320_64", 320, 64, 64, 320, 3, 3, 1, 1, 1, 1,
                                      1, 1, true, 905) && ok;
+    return ok;
+}
+
+// ----------------------------------------------------------------
+// 10. G-10k T4: 新経路 (真 batch2) のゲート [G2a] / [G2b] / [G2] / [G3] / [G4] / [G5]。
+//
+//   検査する性質 (docs/g10k-plan.md §7・実装方法は台帳が指定しない):
+//     [G2a] 同一データを sample0/1 に入れたとき出力の前半/後半が memcmp 一致 (hard)。
+//           stride / オフセット誤り・サンプル間の漏れを tol 無しで捕まえる。
+//           ★全サンプルで一様にずれる bias バグは捕まえない (受け皿は [G2] floor)。
+//     [G2b] (X,Y) と (Y,X) の出力が入れ替えで memcmp 一致 (hard)。非対称バグ。
+//     [G2]  batched vs per-sample 参照を既存 compare(..., K, ...) で判定 (floor・超えたら BLOCK)。
+//           MAE / max_abs / max_rel / exact 率を print (characterization)。
+//     [G3]  同一設定 3 runs が memcmp 一致 (hard)。方式は 9d `test_g8k_arena_bitexact` と同型:
+//           run1 / run2 の前にアリーナを 0xFF / 0x00 で汚染 (poison_arena) してから rewind し、
+//           次の run が同じ領域 (col + 帯バッファ) を再利用するよう仕向ける。出力バッファも
+//           0xCD で汚す。poison 量は「新経路の実使用量を覆う上限」を形状から先験的に決め
+//           (col <= min(N*K*Hout*Wout*2B, IM2COL_TILE_BYTES) + 帯 <= N*Cout*Hout*Wout*2B
+//           + 整列余裕 1MiB)、実走の arena peak_request がその中に収まることを同時に hard 化する
+//           (収まらなければ汚染が実使用域を覆っておらず、[G3] は空撃ちになるため)。
+//           ★poison 無しの素の 3 連走では「前走の書き残しをそのまま読む」種類のバグを
+//             捕まえられない (T4 初版の [G3] がそうだった・台帳 §7「[G3] への poison 追加」)。
+//     [G4]  rows_cap を N で割った結果、帯分割が発動する形状で [G2a]/[G2b]/[G3] を通す (hard)。
+//           帯分割が「実際に発動した」ことは計器で示す: アリーナ alloc が 1 call あたり
+//           +2 (col + 帯バッファ) / batched GEMM 発行が 1 call あたり >= 2 (帯の数)。
+//     [G5]  GEMM 下限割れの N=2 形状が direct 経路のまま通る (hard)。
+//           direct 強制呼びと memcmp 一致 + batched ラッパ非経由 + アリーナ alloc 0。
+//
+//   ★空撃ち防止: [G2a]/[G2b]/[G3] は「ラッパが内部で直列ループしているだけ」でも緑になる。
+//     そのため DOLLAMA_CONV_BATCH=1 プロセスでは各 launch_conv2d(N=2) 呼び出しで
+//     「cuBLAS strided batched が実際に >= 1 回発行された (fallback 0)」ことを計器差分で hard 化する
+//     (T3 の [H6] と同じ役割)。DOLLAMA_GEMM=wmma を付けた走行ではこの検査は設計上 red になる
+//     (全ケースがフォールバック枝に落ちるため・§9-7)。T4 は wmma 走行を要求しない。
+//   ★既定 (DOLLAMA_CONV_BATCH 未設定) のプロセスでは、同じ性質 ([G2a]/[G2b]/[G3]/floor) は
+//     per-n 直列でも自明に成立するので同様に通し、経路計器は「wrapper +0」を期待する。
+//
+//   [G4] の形状選定 (実装者が rows_cap の実値から選んだ・N=2):
+//     rows_cap(N) = IM2COL_TILE_BYTES / (K*Wout*2*N)。
+//     - Cin=640 -> Cout=320 128^2 3x3 (up_block_2 の resnet 2/3 の conv1 相当):
+//         K=5760, Wout=128 -> bytes_per_row=1474560
+//         N=1: rows_cap=182 >= Hout=128 -> 帯分割なし (test 8 の "up_block_2 単帯" と同じ)
+//         N=2: rows_cap=91  <  Hout=128 -> 帯分割 2 本 (91 行 + 37 行)  ★N 分割で初めて発動
+//       = 「rows_cap を N で割った結果として発動する」形状そのもの。これを [G4] の正典にする。
+//     - 補助: Cin=960 -> Cout=320 128^2 (up_block_2 concat・N=1 でも帯分割):
+//         K=8640 -> bytes_per_row=2211840。N=1: rows_cap=121 (2 帯) / N=2: rows_cap=60 (3 帯 = 60+60+8)
+//       端数の小さい最終帯 (8 行) を含む 3 帯を踏む。
+//     代表形状 3 つ (320/128^2・640/64^2・1280/32^2) は N=2 でも rows_cap=182 >= Hout で帯分割なし。
+// ----------------------------------------------------------------
+
+// 9d (G-8k S1b) のアリーナ汚染ヘルパ (定義は後方)。[G3] の poison に共用する。
+static void poison_arena(size_t bytes, int pattern);
+
+struct T4Shape
+{
+    const char* name;
+    int Cin, H, W, Cout, KH, KW, stride, pad;
+    bool with_bias;
+    unsigned seed;
+    bool expect_banded;  // 新経路で帯分割が発動する形状か (計器の期待値に使う)
+    bool is_1x1;         // 1x1 経路 (アリーナ alloc 0 が期待値)
+};
+
+static bool run_case_t4_batched(const T4Shape& sh)
+{
+    const int Hout = out_dim(sh.H, sh.pad, 1, sh.KH, sh.stride);
+    const int Wout = out_dim(sh.W, sh.pad, 1, sh.KW, sh.stride);
+    const size_t per_in  = static_cast<size_t>(sh.Cin) * sh.H * sh.W;
+    const size_t per_out = static_cast<size_t>(sh.Cout) * Hout * Wout;
+    const size_t w_n     = static_cast<size_t>(sh.Cout) * sh.Cin * sh.KH * sh.KW;
+    const int K = sh.Cin * sh.KH * sh.KW;
+    const bool off = t4_conv_batch_off();
+
+    HalfBuffer X = make_half(static_cast<int>(per_in), sh.seed);
+    HalfBuffer Y = make_half(static_cast<int>(per_in), sh.seed + 10);
+    HalfBuffer w = make_half(static_cast<int>(w_n), sh.seed + 1);
+    std::vector<__half> bias_h;
+    if (sh.with_bias)
+    {
+        HalfBuffer bb = make_half(sh.Cout, sh.seed + 2, -0.5f, 0.5f);
+        bias_h = bb.h;
+    }
+
+    auto run2 = [&](const std::vector<__half>& in2, T4PathDelta* d,
+                    int out_fill = -1) -> std::vector<__half>
+    {
+        const T4PathSnapshot s0 = t4_snapshot();
+        std::vector<__half> o = run_gpu_conv_raw(in2, w.h, bias_h, 2, sh.Cin, sh.H, sh.W,
+                                                 sh.Cout, sh.KH, sh.KW,
+                                                 sh.stride, sh.stride, sh.pad, sh.pad, 1, 1,
+                                                 /*force_direct=*/false, out_fill);
+        if (d != nullptr)
+        {
+            *d = t4_delta(s0, t4_snapshot());
+        }
+        return o;
+    };
+    auto run1 = [&](const std::vector<__half>& in1) -> std::vector<__half>
+    {
+        return run_gpu_conv_raw(in1, w.h, bias_h, 1, sh.Cin, sh.H, sh.W,
+                                sh.Cout, sh.KH, sh.KW,
+                                sh.stride, sh.stride, sh.pad, sh.pad, 1, 1,
+                                /*force_direct=*/false);
+    };
+
+    // 経路計器の期待値 (1 回の launch_conv2d(N=2) あたり)。
+    //   =1  : wrapper >= 1 かつ wrapper == cublas (全発行が cuBLAS batched) かつ fallback 0。
+    //         帯分割形状なら wrapper >= 2 (帯の数)。アリーナ alloc は 1x1=0 / 非帯=1 / 帯=2。
+    //   既定: wrapper == 0 (旧経路は batched ラッパを経由しない)。
+    auto path_ok = [&](const char* tag, const T4PathDelta& d) -> bool
+    {
+        t4_print_delta(tag, d);
+        bool ok = true;
+        if (off)
+        {
+            ok = (d.wrapper == 0) && (d.cublas == 0) && (d.fallback == 0);
+            std::cout << "[" << tag << "] path check (default: expected wrapper +0) -> "
+                      << (ok ? "PASSED" : "FAILED") << "\n";
+            return ok;
+        }
+        const uint64_t min_calls = sh.expect_banded ? 2 : 1;
+        const uint64_t exp_arena = sh.is_1x1 ? 0 : (sh.expect_banded ? 2 : 1);
+        ok = (d.wrapper >= min_calls) && (d.cublas == d.wrapper) && (d.fallback == 0)
+             && (d.arena == exp_arena);
+        std::cout << "[" << tag << "] path check (DOLLAMA_CONV_BATCH=1: expected wrapper>=" << min_calls
+                  << " cublas==wrapper fallback==0 arena==" << exp_arena << ") -> "
+                  << (ok ? "PASSED" : "FAILED") << "\n";
+        return ok;
+    };
+
+    bool ok = true;
+    std::string tag;
+
+    // ---- [G2a] 同一データ 2 本 -> 前半/後半 memcmp ----
+    {
+        T4PathDelta d;
+        const std::vector<__half> o = run2(t4_concat(X.h, X.h), &d);
+        const bool g2a = t4_half_range_equal(o, 0, o, per_out, per_out);
+        tag = std::string("G2a:") + sh.name;
+        std::cout << "[" << tag << "] uniform (X,X): sample0 vs sample1 memcmp "
+                  << (g2a ? "BIT-EXACT PASSED" : "MISMATCH FAILED") << "\n";
+        ok = g2a && ok;
+        ok = path_ok(tag.c_str(), d) && ok;
+    }
+
+    // ---- 本走行 (X,Y) + [G2b] 置換 (Y,X) + [G3] 3 runs ----
+    T4PathDelta dxy;
+    const std::vector<__half> o_xy = run2(t4_concat(X.h, Y.h), &dxy);
+    {
+        const std::vector<__half> o_yx = run2(t4_concat(Y.h, X.h), nullptr);
+        const bool sw0 = t4_half_range_equal(o_xy, 0,       o_yx, per_out, per_out);
+        const bool sw1 = t4_half_range_equal(o_xy, per_out, o_yx, 0,       per_out);
+        tag = std::string("G2b:") + sh.name;
+        std::cout << "[" << tag << "] swap (X,Y) vs (Y,X): "
+                  << (sw0 && sw1 ? "BIT-EXACT PASSED" : "MISMATCH FAILED")
+                  << " (s0==s1' " << (sw0 ? "yes" : "no") << " / s1==s0' " << (sw1 ? "yes" : "no")
+                  << ")\n";
+        ok = sw0 && sw1 && ok;
+        ok = path_ok(tag.c_str(), dxy) && ok;
+    }
+    {
+        // poison 量 = この形状の中間バッファの先験的上限 (実測から決めない):
+        //   col  <= min(N*K*Hout*Wout*2B, IM2COL_TILE_BYTES=256MiB)  (新経路・旧経路とも)
+        //   帯   <= N*Cout*Hout*Wout*2B                              (tile_rows <= Hout)
+        //   + 1MiB (alloc 2 本の個別整列の余裕)
+        // 1x1 経路はアリーナ alloc 0 なので poison は素通り (害なし)。
+        const size_t kTileCap = static_cast<size_t>(256) << 20;
+        const size_t col_bound  = std::min(static_cast<size_t>(2) * K * Hout * Wout * sizeof(__half),
+                                           kTileCap);
+        const size_t band_bound = static_cast<size_t>(2) * per_out * sizeof(__half);
+        const size_t poison_bytes = col_bound + band_bound + (static_cast<size_t>(1) << 20);
+
+        // run1: 0xFF 汚染 (FP16 では NaN) / run2: 0x00 汚染。出力バッファは 0xCD で汚す。
+        // 各 run の前にアリーナ計数を reset し、その run の peak_request が poison に
+        // 収まっているか (= 汚染が実使用域を覆っているか) を採る。
+        const int patterns[2] = {0xFF, 0x00};
+        std::vector<__half> runs[2];
+        size_t peaks[2] = {0, 0};
+        for (int r = 0; r < 2; ++r)
+        {
+            poison_arena(poison_bytes, patterns[r]);
+            device_arena_reset_counters(DeviceArenaId::UNet);
+            runs[r] = run2(t4_concat(X.h, Y.h), nullptr, /*out_fill=*/0xCD);
+            peaks[r] = device_arena_stats(DeviceArenaId::UNet).peak_request_bytes;
+        }
+        const bool eq01 = t4_half_range_equal(o_xy, 0, runs[0], 0, 2 * per_out);
+        const bool eq02 = t4_half_range_equal(o_xy, 0, runs[1], 0, 2 * per_out);
+        const bool covered = (peaks[0] <= poison_bytes) && (peaks[1] <= poison_bytes);
+        const bool g3 = eq01 && eq02 && covered;
+        tag = std::string("G3:") + sh.name;
+        std::cout << "[" << tag << "] 3 runs memcmp: run0==run1(0xFF poisoned): "
+                  << (eq01 ? "BIT-EXACT" : "DIFF")
+                  << " / run0==run2(0x00 poisoned): " << (eq02 ? "BIT-EXACT" : "DIFF")
+                  << " | poison=" << (poison_bytes >> 20) << "MiB"
+                  << " (col_bound " << (col_bound >> 20) << " + band_bound " << (band_bound >> 20)
+                  << " + 1) covers peak_request " << (peaks[0] >> 20) << "/" << (peaks[1] >> 20)
+                  << "MiB: " << (covered ? "yes" : "NO")
+                  << " -> " << (g3 ? "PASSED" : "FAILED") << "\n";
+        ok = g3 && ok;
+    }
+
+    // ---- [G2] floor: batched vs per-sample (N=1 x2) を既存 compare で判定 ----
+    {
+        const std::vector<__half> ref_h = t4_concat(run1(X.h), run1(Y.h));
+        const std::vector<float> got = decode_half(o_xy);
+        const std::vector<float> ref = decode_half(ref_h);
+        tag = std::string("G2:") + sh.name;
+        t4_print_numeric(tag.c_str(), got, ref);
+        ok = compare(got, ref, K, tag.c_str()) && ok;
+    }
+
+    return ok;
+}
+
+// [G4] 帯分割形状の VRAM characterization: 1 回の launch_conv2d(N=2) が要求した
+// アリーナ同時生存量のピークを print (IM2COL_TILE_BYTES=256MiB が N 込み上限であることの観測)。
+static void t4_print_band_peak(const T4Shape& sh)
+{
+    const int Hout = out_dim(sh.H, sh.pad, 1, sh.KH, sh.stride);
+    const int Wout = out_dim(sh.W, sh.pad, 1, sh.KW, sh.stride);
+    const size_t per_in  = static_cast<size_t>(sh.Cin) * sh.H * sh.W;
+    const size_t per_out = static_cast<size_t>(sh.Cout) * Hout * Wout;
+    const size_t w_n     = static_cast<size_t>(sh.Cout) * sh.Cin * sh.KH * sh.KW;
+
+    HalfBuffer X = make_half(static_cast<int>(2 * per_in), sh.seed + 100);
+    HalfBuffer w = make_half(static_cast<int>(w_n), sh.seed + 101);
+
+    __half *d_in = nullptr, *d_w = nullptr, *d_out = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_in, 2 * per_in * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_w, w_n * sizeof(__half)));
+    CUDA_CHECK(cudaMalloc(&d_out, 2 * per_out * sizeof(__half)));
+    CUDA_CHECK(cudaMemcpy(d_in, X.h.data(), 2 * per_in * sizeof(__half), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_w, w.h.data(), w_n * sizeof(__half), cudaMemcpyHostToDevice));
+
+    device_arena_reset_counters(DeviceArenaId::UNet);
+    launch_conv2d(d_in, d_w, nullptr, d_out, 2, sh.Cin, sh.H, sh.W, sh.Cout, sh.KH, sh.KW,
+                  sh.stride, sh.stride, sh.pad, sh.pad, 1, 1);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    const DeviceArenaStats st = device_arena_stats(DeviceArenaId::UNet);
+    std::cout << "[G4:" << sh.name << "] arena peak_request during one launch_conv2d(N=2) = "
+              << (st.peak_request_bytes >> 20) << " MiB"
+              << " (col total cap = 256 MiB incl. N; band buffer is extra)"
+              << " alloc=" << st.alloc_calls << " | characterization only\n";
+
+    CUDA_CHECK(cudaFree(d_in));
+    CUDA_CHECK(cudaFree(d_w));
+    CUDA_CHECK(cudaFree(d_out));
+}
+
+static bool test_g10k_t4_gates()
+{
+    bool ok = true;
+    std::cout << "[test_g10k_t4_gates] process mode: "
+              << (t4_conv_batch_off() ? "default (per-n serial path)" : "DOLLAMA_CONV_BATCH=1 (batched path)")
+              << "\n";
+
+    // 小形状 (端数あり): 1x1+bias (17x19, Cout=20) / 3x3 stride2 (33->17)。
+    const T4Shape small_1x1 = {"small_1x1_bias_17x19", 24, 17, 19, 20, 1, 1, 1, 0, true, 1901, false, true};
+    const T4Shape small_s2  = {"small_3x3_s2_33to17",  16, 33, 33, 32, 3, 3, 2, 1, true, 1902, false, false};
+    ok = run_case_t4_batched(small_1x1) && ok;
+    ok = run_case_t4_batched(small_s2)  && ok;
+
+    // 1x1 の UNet 代表 (ResBlock skip 相当 320->640, 32^2)。
+    const T4Shape unet_1x1 = {"unet_1x1_320to640_32", 320, 32, 32, 640, 1, 1, 1, 0, true, 1903, false, true};
+    ok = run_case_t4_batched(unet_1x1) && ok;
+
+    // 代表形状 3 つ (§5): 320/128^2・640/64^2・1280/32^2 (3x3 same + bias)。N=2 でも帯分割なし。
+    const T4Shape rep_320  = {"rep_320_128",  320, 128, 128, 320,  3, 3, 1, 1, true, 1911, false, false};
+    const T4Shape rep_640  = {"rep_640_64",   640,  64,  64, 640,  3, 3, 1, 1, true, 1912, false, false};
+    const T4Shape rep_1280 = {"rep_1280_32", 1280,  32,  32, 1280, 3, 3, 1, 1, true, 1913, false, false};
+    ok = run_case_t4_batched(rep_320)  && ok;
+    ok = run_case_t4_batched(rep_640)  && ok;
+    ok = run_case_t4_batched(rep_1280) && ok;
+
+    // [G4] 帯分割形状 (正典): 640->320 128^2 = N=2 で初めて帯分割 (91+37 行)。
+    const T4Shape g4_band = {"G4_band_640to320_128", 640, 128, 128, 320, 3, 3, 1, 1, true, 1921, true, false};
+    ok = run_case_t4_batched(g4_band) && ok;
+    // [G4] 補助: 960->320 128^2 = N=2 で 3 帯 (60+60+8 行)。
+    const T4Shape g4_band3 = {"G4_band_960to320_128", 960, 128, 128, 320, 3, 3, 1, 1, true, 1922, true, false};
+    ok = run_case_t4_batched(g4_band3) && ok;
+    if (!t4_conv_batch_off())
+    {
+        t4_print_band_peak(g4_band);
+        t4_print_band_peak(g4_band3);
+    }
+
+    // ---- [G5] GEMM 下限割れの N=2 形状 (test 5 と同一: Cin=5 14x18 Cout=7 3x3) は direct のまま ----
+    {
+        const int N = 2, Cin = 5, H = 14, W = 18, Cout = 7, KH = 3, KW = 3;
+        const int Hout = out_dim(H, 1, 1, KH, 1);
+        const int Wout = out_dim(W, 1, 1, KW, 1);
+        HalfBuffer in = make_half(N * Cin * H * W, 501);
+        HalfBuffer w  = make_half(Cout * Cin * KH * KW, 502);
+        HalfBuffer bb = make_half(Cout, 503, -0.5f, 0.5f);
+
+        const T4PathSnapshot s0 = t4_snapshot();
+        const std::vector<__half> got = run_gpu_conv_raw(in.h, w.h, bb.h, N, Cin, H, W, Cout, KH, KW,
+                                                         1, 1, 1, 1, 1, 1, /*force_direct=*/false);
+        const T4PathDelta d = t4_delta(s0, t4_snapshot());
+        const std::vector<__half> ref = run_gpu_conv_raw(in.h, w.h, bb.h, N, Cin, H, W, Cout, KH, KW,
+                                                         1, 1, 1, 1, 1, 1, /*force_direct=*/true);
+        const bool bits = t4_half_range_equal(got, 0, ref, 0, static_cast<size_t>(N) * Cout * Hout * Wout);
+        const bool path = (d.wrapper == 0) && (d.arena == 0);
+        t4_print_delta("G5:direct_N2_Cout7", d);
+        std::cout << "[G5:direct_N2_Cout7] launch_conv2d vs forced direct memcmp "
+                  << (bits ? "BIT-EXACT" : "MISMATCH")
+                  << " / batched wrapper +0 and arena alloc +0: " << (path ? "yes" : "NO")
+                  << " -> " << ((bits && path) ? "PASSED" : "FAILED") << "\n";
+        ok = bits && path && ok;
+    }
+
+    if (!ok)
+    {
+        std::cerr << "[test_g10k_t4_gates] FAILED\n";
+    }
     return ok;
 }
 
@@ -721,6 +1213,9 @@ static bool test_g8k_arena_bitexact()
 // ----------------------------------------------------------------
 // 9c. warm ベンチ: N=2 バッチ GEMM (1 forward) vs N=1 を 2 回逐次呼び。
 //    per-call ms (中央値) を報告。CFG B=2 束ねの launch オーバーヘッド低減を観測する。
+//    ★既定プロセス (DOLLAMA_CONV_BATCH 未設定) では batched 経路自体が per-n 直列に
+//      フォールバックするため、この比は 1.0 付近になり T6 としての意味を持たない。
+//      T6 の意味を持つ計測は `conv2d_batch_on` (DOLLAMA_CONV_BATCH=1) 側のみ。
 // ----------------------------------------------------------------
 static void bench_batch_vs_persample(int Cin, int H, int W, int Cout, int KH, int KW,
                                      int stride_h, int stride_w, int pad_h, int pad_w,
@@ -897,6 +1392,13 @@ static void bench_conv2d()
     bench_one(1, 512, 64, 64, 512, 1, 1, 1, 1, 0, 0, 1, 1, "vae_1x1_512_64");
     // G-2k S1: CFG B=2 束ねの効果観測 (UNet C320 64x64 3x3 same)。
     bench_batch_vs_persample(320, 64, 64, 320, 3, 3, 1, 1, 1, 1, "unet_c320_64");
+    // G-10k T4 (T6 の計器): 代表形状 3 つ (§5) + [G4] の帯分割形状。
+    //   T6 の合否 = 全形状で batched median / seq median <= 0.95 (判定は T6 側・ここは計器のみ)。
+    //   ★per-call ms であり e2e 秒には翻訳できない。
+    bench_batch_vs_persample(320, 128, 128, 320, 3, 3, 1, 1, 1, 1, "rep_320_128");
+    bench_batch_vs_persample(640, 64, 64, 640, 3, 3, 1, 1, 1, 1, "rep_640_64");
+    bench_batch_vs_persample(1280, 32, 32, 1280, 3, 3, 1, 1, 1, 1, "rep_1280_32");
+    bench_batch_vs_persample(640, 128, 128, 320, 3, 3, 1, 1, 1, 1, "G4_band_640to320_128");
 }
 
 #endif // HAVE_CUDA
@@ -920,6 +1422,7 @@ int main()
     ok = dollama::test_conv_gemm_large()  && ok;
     ok = dollama::test_conv_batch_gemm()  && ok;
     ok = dollama::test_g8k_arena_bitexact() && ok;
+    ok = dollama::test_g10k_t4_gates()    && ok;
 
     if (!ok)
     {

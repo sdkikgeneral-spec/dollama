@@ -38,6 +38,8 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -569,6 +571,247 @@ void launch_gemm_f32(const float* d_A,
 {
     assert(!transA); // VAE im2col 経路は transA=false のみ
     gemm_cublas_f32(d_A, d_B, d_C, M, N, K, alpha, beta, transB);
+}
+
+// ================================================================
+// batched FP16 GEMM (G-10k T3) — ここから下は純追加。
+// 上の gemm_cublas / launch_gemm_fp16 / use_cublas は 1 行も変更していない。
+// ================================================================
+
+// ----------------------------------------------------------------
+// 記述子の validator (純関数・副作用なし・GPU 不要)。
+// ----------------------------------------------------------------
+
+// item ごとの要素数 (transA 非対応なので A は常に [M,K]、B は transB に依らず K*N 個)。
+static long long batched_extent_a(const GemmBatchedDesc& d)
+{
+    return static_cast<long long>(d.M) * d.K;
+}
+
+static long long batched_extent_b(const GemmBatchedDesc& d)
+{
+    return static_cast<long long>(d.K) * d.N;
+}
+
+static long long batched_extent_c(const GemmBatchedDesc& d)
+{
+    return static_cast<long long>(d.M) * d.N;
+}
+
+// base から stride で batch 個並ぶ item 群が占める「union 区間」をバイト単位で返す。
+// stride が負でも正しく畳めるように min/max を取る (保守的 = 途中の隙間も含める)。
+static void batched_span(const __half* base,
+                         long long     stride,
+                         int           batch,
+                         long long     extent,
+                         std::uintptr_t& lo,
+                         std::uintptr_t& hi)
+{
+    const long long last  = stride * static_cast<long long>(batch - 1);
+    const long long off_lo = (last < 0) ? last : 0;
+    const long long off_hi = ((last > 0) ? last : 0) + extent;
+
+    const std::uintptr_t p = reinterpret_cast<std::uintptr_t>(base);
+    lo = p + static_cast<std::uintptr_t>(off_lo * static_cast<long long>(sizeof(__half)));
+    hi = p + static_cast<std::uintptr_t>(off_hi * static_cast<long long>(sizeof(__half)));
+}
+
+// 半開区間 [lo1,hi1) と [lo2,hi2) が交差するか。
+static bool batched_spans_overlap(std::uintptr_t lo1, std::uintptr_t hi1,
+                                  std::uintptr_t lo2, std::uintptr_t hi2)
+{
+    return (lo1 < hi2) && (lo2 < hi1);
+}
+
+GemmBatchedValidation gemm_batched_validate(const GemmBatchedDesc& desc,
+                                            const __half*          d_A,
+                                            const __half*          d_B,
+                                            const __half*          d_C)
+{
+    if (desc.batch < 1)
+    {
+        return GemmBatchedValidation::BadBatch;
+    }
+    if (desc.M <= 0 || desc.N <= 0 || desc.K <= 0)
+    {
+        return GemmBatchedValidation::BadDims;
+    }
+    if (d_A == nullptr || d_B == nullptr || d_C == nullptr)
+    {
+        return GemmBatchedValidation::NullPointer;
+    }
+
+    const long long ext_a = batched_extent_a(desc);
+    const long long ext_b = batched_extent_b(desc);
+    const long long ext_c = batched_extent_c(desc);
+
+    // C の item 同士が互いに素であること。一様 stride なので |stride_c| >= M*N で判定できる
+    // (stride_c == 0 かつ batch > 1 は全 item が同じ領域を叩くので当然 NG)。
+    if (desc.batch > 1)
+    {
+        const long long abs_sc = (desc.stride_c < 0) ? -desc.stride_c : desc.stride_c;
+        if (abs_sc < ext_c)
+        {
+            return GemmBatchedValidation::OverlapC;
+        }
+    }
+
+    std::uintptr_t a_lo = 0, a_hi = 0, b_lo = 0, b_hi = 0, c_lo = 0, c_hi = 0;
+    batched_span(d_A, desc.stride_a, desc.batch, ext_a, a_lo, a_hi);
+    batched_span(d_B, desc.stride_b, desc.batch, ext_b, b_lo, b_hi);
+    batched_span(d_C, desc.stride_c, desc.batch, ext_c, c_lo, c_hi);
+
+    // C は beta != 0 で読みもするので、read/write を問わず A/B と重なってはいけない。
+    // A と B が互いに重なるのは許可 (禁止するのは C との重なりのみ)。
+    if (batched_spans_overlap(c_lo, c_hi, a_lo, a_hi))
+    {
+        return GemmBatchedValidation::OverlapCA;
+    }
+    if (batched_spans_overlap(c_lo, c_hi, b_lo, b_hi))
+    {
+        return GemmBatchedValidation::OverlapCB;
+    }
+
+    return GemmBatchedValidation::Ok;
+}
+
+const char* gemm_batched_validation_str(GemmBatchedValidation v)
+{
+    switch (v)
+    {
+    case GemmBatchedValidation::Ok:
+        return "Ok";
+    case GemmBatchedValidation::BadBatch:
+        return "BadBatch";
+    case GemmBatchedValidation::BadDims:
+        return "BadDims";
+    case GemmBatchedValidation::NullPointer:
+        return "NullPointer";
+    case GemmBatchedValidation::OverlapC:
+        return "OverlapC";
+    case GemmBatchedValidation::OverlapCA:
+        return "OverlapCA";
+    case GemmBatchedValidation::OverlapCB:
+        return "OverlapCB";
+    }
+    return "Unknown";
+}
+
+// ----------------------------------------------------------------
+// 分岐カウンタ。プロセス global・非 atomic (単一 stream / 単一スレッド前提)。
+// DOLLAMA_PROFILE には依存させない (常時生存)。
+// ----------------------------------------------------------------
+static GemmBatchedStats g_gemm_batched_stats;
+
+GemmBatchedStats gemm_batched_stats()
+{
+    return g_gemm_batched_stats;
+}
+
+void gemm_batched_stats_reset()
+{
+    g_gemm_batched_stats = GemmBatchedStats();
+}
+
+// ----------------------------------------------------------------
+// cuBLAS strided batched 経路。
+//
+// stride 写像の導出 (既存 gemm_cublas `:423` の cublasGemmEx 呼出から):
+//   既存は row-major の C[M,N] を col-major の C^T[N,M] とみなして
+//     C^T = op(B)^T @ op(A)^T
+//   を計算している。つまり cuBLAS の「第一行列 (A スロット)」へ渡っているのは
+//   こちらの B であり、「第二行列 (B スロット)」へ渡っているのは こちらの A である
+//   (m=N, n=M, k=K / lda=ldB, ldb=ldA / ldc=N)。
+//
+//   cublasGemmStridedBatchedEx の引数順は
+//     (transa, transb, m, n, k, alpha, A, Atype, lda, strideA,
+//                               B, Btype, ldb, strideB,
+//                        beta,  C, Ctype, ldc, strideC, batchCount, ...)
+//   なので、上の入れ替えがそのまま stride 側にも効く:
+//     strideA スロット <- desc.stride_b   (こちらの B の item stride)
+//     strideB スロット <- desc.stride_a   (こちらの A の item stride。重み共有なら 0)
+//     strideC スロット <- desc.stride_c
+//   ★この「A/B の入れ替え」が本経路の唯一の非自明点であり、取り違えると
+//     「動くが数値が違う」形で通る。検証は test_gemm の [H2] (置換不変性) が持つ:
+//     strideA スロットへ誤って stride_a (=0) を渡すと全 item が item0 の B を読むため
+//     [H2] が memcmp で落ちる (負のコントロール 1 と同じ壊れ方)。
+//   stride の単位は要素数 (cuBLAS も long long の要素数 stride)。
+// ----------------------------------------------------------------
+static void gemm_cublas_batched(const __half*          d_A,
+                                const __half*          d_B,
+                                __half*                d_C,
+                                const GemmBatchedDesc& desc)
+{
+    cublasHandle_t h = cublas_handle();
+
+    const cublasOperation_t opB = desc.trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    const int ldB = desc.trans_b ? desc.K : desc.N; // transB=true: B[N,K] ld=K / false: B[K,N] ld=N
+    const int ldA = desc.K;                         // A row-major [M,K] = col-major [K,M] ld=K
+    const int ldC = desc.N;                         // C row-major [M,N] = col-major [N,M] ld=N
+
+    const float alpha = desc.alpha;
+    const float beta  = desc.beta;
+
+    CUBLAS_CHECK(cublasGemmStridedBatchedEx(h,
+                                            opB, CUBLAS_OP_N,
+                                            desc.N, desc.M, desc.K,
+                                            &alpha,
+                                            d_B, CUDA_R_16F, ldB, desc.stride_b,
+                                            d_A, CUDA_R_16F, ldA, desc.stride_a,
+                                            &beta,
+                                            d_C, CUDA_R_16F, ldC, desc.stride_c,
+                                            desc.batch,
+                                            CUBLAS_COMPUTE_32F,
+                                            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+}
+
+void launch_gemm_fp16_batched(const __half*          d_A,
+                              const __half*          d_B,
+                              __half*                d_C,
+                              const GemmBatchedDesc& desc)
+{
+    // release ビルドでも生きる引数検査 (assert は使わない / NDEBUG に依存しない)。
+    const GemmBatchedValidation v = gemm_batched_validate(desc, d_A, d_B, d_C);
+    if (v != GemmBatchedValidation::Ok)
+    {
+        std::fprintf(stderr,
+                     "[GEMM] launch_gemm_fp16_batched: invalid descriptor (%s)"
+                     " batch=%d M=%d N=%d K=%d strideA=%lld strideB=%lld strideC=%lld"
+                     " beta=%g -- see gemm_batched_validate() in src/kernels/gemm.cu"
+                     " (C items must be pairwise disjoint and must not overlap A or B;"
+                     " A stride 0 is allowed, A/B overlap is allowed)\n",
+                     gemm_batched_validation_str(v),
+                     desc.batch, desc.M, desc.N, desc.K,
+                     desc.stride_a, desc.stride_b, desc.stride_c,
+                     static_cast<double>(desc.beta));
+        std::fflush(stderr);
+        std::abort();
+    }
+
+    g_gemm_batched_stats.wrapper_calls += 1;
+
+    // 適格判定は既存 launch_gemm_fp16 と同じ use_cublas に従う (transA は本経路に無いので false)。
+    if (use_cublas(desc.M, desc.N, desc.K, false))
+    {
+        // ★カウンタは「実際に通った枝の本体の中」で加算する (述語の鏡写しを避ける)。
+        g_gemm_batched_stats.cublas_batched_calls += 1;
+        gemm_cublas_batched(d_A, d_B, d_C, desc);
+        return;
+    }
+
+    // フォールバック: cuBLAS 不適格形状では既存経路を per-item にそのまま呼ぶ。
+    // これは [H4] (batched vs N 回直列が memcmp 一致) の設計要件そのもの。
+    g_gemm_batched_stats.fallback_loops += 1;
+    for (int n = 0; n < desc.batch; ++n)
+    {
+        g_gemm_batched_stats.fallback_items += 1;
+        launch_gemm_fp16(d_A + desc.stride_a * n,
+                         d_B + desc.stride_b * n,
+                         d_C + desc.stride_c * n,
+                         desc.M, desc.N, desc.K,
+                         desc.alpha, desc.beta,
+                         false, desc.trans_b);
+    }
 }
 
 } // namespace dollama

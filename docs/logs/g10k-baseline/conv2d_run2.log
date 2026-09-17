@@ -1,0 +1,93 @@
+=== T2a conv2d バイト列基準 走行 #2 (test_conv2d) ===
+開始 : 2026-09-04 20:36:36
+終了 : 2026-09-04 20:36:40
+経過秒: 4.006
+exit code: 0
+exe  : E:\Develop\Projects\dollama\build\src\test_conv2d.exe
+exe sha256 : C14BB9E88B381D8A222B499B163F1D73FDEF1642EF38EA289B4EC5EB685FFC9C
+env  : DOLLAMA_G8K_DUMP=E:\Develop\logs\g10k-t2a\bin_run2\conv
+       DOLLAMA_PROFILE=(未設定) DOLLAMA_POOL=(未設定=既定 ON)
+seed : 各形状ごとに test_conv2d.cu:696-703 でハードコード (3101..3107)
+
+=== 生成物 .bin の sha256 (7 件) ===
+conv_b1_128_512.bin          67108864 bytes  sha256=30B7B87FE0D6EA373D9DA4BEA81ED83507894826110F48FBDCCD880268794231
+conv_b1_1280_32.bin           2621440 bytes  sha256=479C9E7EFEFCC45596A394E7ED2FA6C8BFA50BA3BDCE237DC759B24D3AD19572
+conv_b1_320_128.bin          10485760 bytes  sha256=A8E5F3E3653FE43AEA48F01A774C9635B10B2C8A41CE17239299C7369E671008
+conv_b1_640_64.bin            5242880 bytes  sha256=FCC32AE4D5555898019013CC2A37072A3678041A2B9CF941F883E76326ABA0AF
+conv_b2_1280_32.bin           5242880 bytes  sha256=E154131B7002C12716E2912A2B5782F391F38F44AB483EBE6175BC9FB2C023E3
+conv_b2_320_128.bin          20971520 bytes  sha256=2CA054357670F2C93F6538AE575BCA8BC65CB8779C7DE19B1E2396CDC36E9F08
+conv_b2_640_64.bin           10485760 bytes  sha256=F67AECD2AF7009CBF842B27D63F9680753EB7C584ECDDDAAA0F887E609E59EE4
+
+--- stdout ---
+[conv_1x1[odd]] MAE=0.000113135 max_abs=0.000952721
+[conv_1x1[odd]] PASSED (max_rel=0.000476688 atol=0.00316 rtol=0.00508 K=8)
+[conv_1x1[even]] MAE=0.00012104 max_abs=0.000959396
+[conv_1x1[even]] PASSED (max_rel=0.000482376 atol=0.00316 rtol=0.00508 K=8)
+[conv_3x3_s1p1[odd]] MAE=0.000260227 max_abs=0.00187492
+[conv_3x3_s1p1[odd]] PASSED (max_rel=0.000470109 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s1p1[even]] MAE=0.000256208 max_abs=0.0019002
+[conv_3x3_s1p1[even]] PASSED (max_rel=0.000466174 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[odd]] MAE=0.000263331 max_abs=0.00192165
+[conv_3x3_s2p1[odd]] PASSED (max_rel=0.000471884 atol=0.00372 rtol=0.00536 K=36)
+[conv_3x3_s2p1[even]] MAE=0.00025897 max_abs=0.00181532
+[conv_3x3_s2p1[even]] PASSED (max_rel=0.000447237 atol=0.00372 rtol=0.00536 K=36)
+[conv_bias[off]] MAE=0.000318443 max_abs=0.00191593
+[conv_bias[off]] PASSED (max_rel=0.000473849 atol=0.00408 rtol=0.00554 K=54)
+[conv_bias[on]] MAE=0.000324684 max_abs=0.00193834
+[conv_bias[on]] PASSED (max_rel=0.000477358 atol=0.00408 rtol=0.00554 K=54)
+[conv_batch_multi] MAE=0.000312098 max_abs=0.00197601
+[conv_batch_multi] PASSED (max_rel=0.000486143 atol=0.0039 rtol=0.00545 K=45)
+[conv_dil2[pad2]] MAE=0.000269038 max_abs=0.00191307
+[conv_dil2[pad2]] PASSED (max_rel=0.000483434 atol=0.00372 rtol=0.00536 K=36)
+[conv_dil2[pad0]] MAE=0.000294441 max_abs=0.0019455
+[conv_dil2[pad0]] PASSED (max_rel=0.000480011 atol=0.00372 rtol=0.00536 K=36)
+[gemm_1x1] MAE=0.000228003 max_abs=0.00194454
+[gemm_1x1] PASSED (max_rel=0.000485548 atol=0.00348 rtol=0.00524 K=24)
+[gemm_1x1_bias] MAE=0.000441855 max_abs=0.0042882
+[gemm_1x1_bias] PASSED (max_rel=0.275472 atol=0.00348 rtol=0.00524 K=24)
+[gemm_3x3_same] MAE=0.000850637 max_abs=0.0146141
+[gemm_3x3_same] PASSED (max_rel=0.0445346 atol=0.0066 rtol=0.0068 K=180)
+[gemm_3x3_s2] MAE=0.00100121 max_abs=0.00968552
+[gemm_3x3_s2] PASSED (max_rel=0.899619 atol=0.00588 rtol=0.00644 K=144)
+[gemm_unet_like] MAE=0.00147407 max_abs=0.0153656
+[gemm_unet_like] PASSED (max_rel=0.108345 atol=0.01452 rtol=0.01076 K=576)
+[large_down0_320_128] MAE=4.8228e-05 max_abs=0.0625
+[large_down0_320_128] PASSED (max_rel=0.0602007 atol=0.0606 rtol=0.0338 K=2880)
+[large_up2_640to320_128] MAE=0.0035186 max_abs=0.125
+[large_up2_640to320_128] PASSED (max_rel=0.192084 atol=0.1182 rtol=0.0626 K=5760)
+[large_up2_concat_960to320_128] MAE=0.00429036 max_abs=0.125
+[large_up2_concat_960to320_128] PASSED (max_rel=0.449057 atol=0.1758 rtol=0.0914 K=8640)
+[large_vae_c128_512_band] MAE=0.00155172 max_abs=0.03125
+[large_vae_c128_512_band] PASSED (max_rel=0.123793 atol=0.02604 rtol=0.01652 K=1152)
+[batch2_1x1] MAE=0 max_abs=0 exact=25600/25600 SSIM=1 (BIT-EXACT)
+[batch2_1x1] MAE=0 max_abs=0
+[batch2_1x1] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[batch2_1x1_bias] MAE=0 max_abs=0 exact=12920/12920 SSIM=1 (BIT-EXACT)
+[batch2_1x1_bias] MAE=0 max_abs=0
+[batch2_1x1_bias] PASSED (max_rel=0 atol=0.00348 rtol=0.00524 K=24)
+[batch2_3x3_same] MAE=0 max_abs=0 exact=15552/15552 SSIM=1 (BIT-EXACT)
+[batch2_3x3_same] MAE=0 max_abs=0
+[batch2_3x3_same] PASSED (max_rel=0 atol=0.0066 rtol=0.0068 K=180)
+[batch2_3x3_s2] MAE=0 max_abs=0 exact=18496/18496 SSIM=1 (BIT-EXACT)
+[batch2_3x3_s2] MAE=0 max_abs=0
+[batch2_3x3_s2] PASSED (max_rel=0 atol=0.00588 rtol=0.00644 K=144)
+[batch2_unet_c320_64] MAE=0 max_abs=0 exact=2621440/2621440 SSIM=1 (BIT-EXACT)
+[batch2_unet_c320_64] MAE=0 max_abs=0
+[batch2_unet_c320_64] PASSED (max_rel=0 atol=0.0606 rtol=0.0338 K=2880)
+[g8k_arena] b1_320_128 N=1 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_320_128 N=2 C=320 128x128 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_640_64 N=1 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_640_64 N=2 C=640 64x64 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_1280_32 N=1 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +5 chunks=2 cap=512MiB
+[g8k_arena] b2_1280_32 N=2 C=1280 32x32 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] b1_128_512 N=1 C=128 512x512 run0==run1(0xFF poisoned): BIT-EXACT / run0==run2(0x00 poisoned): BIT-EXACT | pool=on cudaMalloc +0 cudaFree +0 alloc +8 chunks=2 cap=512MiB
+[g8k_arena] 累計: cudaMalloc=2 cudaFree=0 alloc=68 chunk_alloc=2 chunks=2 capacity=512MiB peak_in_use=284MiB
+[bench_conv2d] unet_c320_64 N=1 Cin=320 H=64 W=64 Cout=320 K=3x3 s=1 p=1 -> 64x64 median=0.16048 ms (min=0.159712 max=0.169568) 47044.8 GFLOPS BW=44.1555 GB/s (N=100)
+[bench_conv2d] vae_c128_512 N=1 Cin=128 H=512 W=512 Cout=128 K=3x3 s=1 p=1 -> 512x512 median=2.69402 ms (min=2.66125 max=2.73814) 28696.7 GFLOPS BW=49.9302 GB/s (N=100)
+[bench_conv2d] unet_1x1_320to640 N=1 Cin=320 H=32 W=32 Cout=640 K=1x1 s=1 p=0 -> 32x32 median=0.028544 ms (min=0.023168 max=0.062752) 14694.2 GFLOPS BW=83.2287 GB/s (N=100)
+[bench_conv2d] vae_1x1_512_64 N=1 Cin=512 H=64 W=64 Cout=512 K=1x1 s=1 p=0 -> 64x64 median=0.06336 ms (min=0.043264 max=0.10416) 33893.4 GFLOPS BW=140.671 GB/s (N=100)
+[bench_batch] unet_c320_64 N=2 batch median=0.31408 ms | N=1x2 seq median=0.314048 ms
+[test_conv2d] ALL PASSED
+
+--- stderr ---
+(空)

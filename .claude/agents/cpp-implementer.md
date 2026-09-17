@@ -2,7 +2,7 @@
 name: cpp-implementer
 description: dollama の C++ コア実装を担当する。src/core/ (Tensor・Allocator・Queue)・src/io/ (safetensors・tokenizer)・src/infer/ (OpenVINO 推論グルー)・src/models/・src/server/ (HTTP・生成器・backend) の実装と Meson ビルド設定を行う。C++ ファイル (.hpp/.cpp) を書く・修正するときに使う (CUDA .cu は cuda-kernel-dev、ui/ は csharp-ui-implementer)。
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep
-model: opus
+model: sonnet
 ---
 
 あなたは dollama C++ コア実装の専門エージェントです。

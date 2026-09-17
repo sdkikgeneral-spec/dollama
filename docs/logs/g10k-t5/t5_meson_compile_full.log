@@ -1,0 +1,13 @@
+HEAD=e16b7008995987a6d9164c45af70439681996ab7
+porcelain=[?? docs/logs/g10k-t5/|]
+start=2026-09-12 23:36:12
+'vswhere.exe' は、内部コマンドまたは外部コマンド、
+操作可能なプログラムまたはバッチ ファイルとして認識されていません。
+ninja: Entering directory `E:/Develop/Projects/dollama/build'
+ninja: no work to do.
+Activating VS 18.9.3
+INFO: automatically activated MSVC compiler environment
+INFO: autodetecting backend as ninja
+INFO: calculating backend command to run: "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.EXE" -C E:/Develop/Projects/dollama/build
+compile_exit=0
+end=2026-09-12 23:36:14
