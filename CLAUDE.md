@@ -272,7 +272,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 | 自作フル拡散 (2-6a) | 20step 1024² 84.07s → **11.30s** (2-6 最適化後・律速 UNet attn 4.60s) | test_diffusion |
 | 本番 txt2img (2-6b) | prompt→画像 dual encoder+CFG / var=2300 / NaN・Inf なし | test_txt2img |
 | 拡散 backend プラグイン枠 (2-6c) | `IDiffusionBackend` registry (`make_backend` "sdxl"/"sd35") + `BackendImageGenerator` 共通後処理 / 純 cpp・全 46 test 緑 | test_diffusion_backend |
-| アニメ特化 SDXL 3 preset (2-6d) | `models/presets/{noobai-xl,animagine-xl-4,illustrious-xl}/` = unet/vae/TE-L/TE-G 4 ファイル差し替え・**既定 illustrious-xl** (`--preset base` で素 SDXL)。照合: UNet 1680 キー名+shape/dtype base 一致・tokenizer sha256 base 一致・TE 変換誤差 1e-5 台 (3 preset)。12 枚比較 (seed 1234・N=1) のユーザー目視順位 illustrious > noobai > animagine。後続 (未着手): preset.json `prompt_prefix` の C++ 自動付与 / HTTP API preset / UI 選択。残債 (illustrious VAE scaling_factor 0.18215 表記・正しい値未確定) は measurements-log 「2-6d」節 | test_preset |
+| アニメ特化 SDXL 3 preset (2-6d) | `models/presets/{noobai-xl,animagine-xl-4,illustrious-xl}/` = unet/vae/TE-L/TE-G 4 ファイル差し替え・**既定 illustrious-xl** (`--preset base` で素 SDXL)。照合: UNet 1680 キー名+shape/dtype base 一致・tokenizer sha256 base 一致・TE 変換誤差 1e-5 台 (3 preset)。12 枚比較 (seed 1234・N=1) のユーザー目視順位 illustrious > noobai > animagine。✅ 2-6e prefix 自動付与 (`--no-preset-prefix` / HTTP `preset_prefix:false` で OFF・出荷経路 = 2-6d 評価条件 sha256 一致 3/3)。未着手: HTTP API preset / UI 選択。残債 (illustrious VAE scaling_factor 0.18215 表記・正しい値未確定) は measurements-log 「2-6d」節 | test_preset |
 
 ## 次のタスク
 
@@ -295,7 +295,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - **2-6a** フル C++ 拡散統合 → **2-6 最適化** 84.07s→11.30s で一旦クローズ (律速 UNet attn 4.60s・以降はライブラリ余地で保留・本丸は Phase 4 へ)
 - **2-6b** prompt→画像 本結線 (dual encoder + CFG・`IDiffusionRunner` で OV/CUDA 隔離) ✅ — prompt 供給元は将来 Phase 4 A の自作 LM に差し替え
 - **2-6c** 拡散 backend プラグイン枠 ✅ — 品質天井は自作カーネルでなく拡散アーキ (重み) にあるため、prompt→RGB 境界を純 cpp interface `IDiffusionBackend` に切り出し registry (`make_backend`) 化。`SDXLBackend` (OV+CUDA 隔離) + `SD35Backend` (拡張点 stub・generate throw) + `BackendImageGenerator` (解像度 reject/seed/採点ログ/matting PNG 化の共通後処理を集約)。段1 DI を `Txt2ImgGenerator` から差し替え (env `DOLLAMA_BACKEND` で選択・既定 "sdxl")。ComfyUI 的 breadth は追わず「2D キャラ生成に要るアーキだけ芯を共有して差し替える」棲み分け ([[project-output-quality-over-features]])
-- **2-6d** アニメ特化 SDXL 3 preset ✅ (2026-09-17・`f3101a3`〜`660e538`) — 計測表「アニメ特化 SDXL 3 preset (2-6d)」行 / roadmap 2-6d / measurements-log 「2-6d」節。後続 (未着手): prompt_prefix 自動付与 / HTTP preset / UI 選択
+- **2-6d** アニメ特化 SDXL 3 preset ✅ (2026-09-17・`f3101a3`〜`660e538`) — 計測表「アニメ特化 SDXL 3 preset (2-6d)」行 / roadmap 2-6d / measurements-log 「2-6d」節。✅ 2-6e prefix 自動付与 (measurements-log 「2-6e」小節)。未着手: HTTP preset / UI 選択
 - 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
 - **G-10k (conv2d 真 batch2)** ✅ 陰性クローズ (2026-09-17・削減率 +3.38%/+1.87% = 秒中立・opt-in 降格 `c3ee3ca`)。resnet ≤0.95s ゲートは未達のまま・次の秒数レバーは未起票 (`docs/g10k-plan.md` §12)
 

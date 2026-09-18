@@ -542,11 +542,19 @@ test = `test_preset` (純 cpp・重み不要)。生ログ = `docs/logs/2-6d/` (R
    処置 (**未実施・後続**): `dollma_export_sdxl_preset.py` を「config ≠ 0.13025 でも VAE sha256 が既知 SDXL VAE と一致すれば警告付き続行・preset.json に config 値と使用値を両記録」へ改める。
 2. `--fast` の有無は log / logs README に記録が無く**未検証** (CLI 生成モードは fast フラグをログしない)。SAC 状態も未確認 (logs README)。
 3. base 3 枚は既定変更前 (HEAD `f0b1d80`) の走行のため「preset 未指定 = base」。`d8a9678` 以降は `--preset base` 明示が要る (同一条件の再走時に注意)。
-4. 後続 (スコープ外): preset.json `prompt_prefix`/`negative_prefix` の C++ 自動付与 / HTTP API preset フィールド / UI preset 選択。
+4. 後続 (スコープ外): preset.json `prompt_prefix`/`negative_prefix` の C++ 自動付与 (→ ✅ 2-6e・下の小節) / HTTP API preset フィールド / UI preset 選択 (未着手)。
 
 **出典 (本節の一次証拠)**: `git show f3101a3 f0b1d80 bafe0a5 660e538` / `src/server/{preset.hpp,cli_generate.hpp}` / `scripts/dollma_export_sdxl_preset.py` l.26,49,303-310 /
 `src/infer/diffusion.cu:41` / `models/presets/*/preset.json` / `models/presets/*/{unet,vae}_weights.safetensors` ヘッダ / `models/{sdxl-text-encoder-l,sdxl-text-encoder-g,presets/*/text-encoder-*}/model_ov.bin` sha256 /
 `~/.cache/huggingface/hub/models--*/snapshots/<rev>/{vae/config.json,tokenizer*/}` / HF API `api/models/<repo>` (2026-09-17) / `docs/logs/2-6d/*/p*.log` (12 本)。
+
+#### 2-6e — preset prefix 自動付与 (2026-09-19・branch `feat/2-6e-preset-prefix`・実装 `4d4a405`・生ログ `e9a5234`)
+
+- 仕様 (`src/server/backend_image_generator.hpp` `join_preset_prefix` / `cli_generate.hpp` / `api.cpp` / `preset_json.hpp`): preset 解決成功 (4 本すべて preset 採用・env override で重みが preset と違うときは付けない) のとき preset.json の `prompt_prefix`/`negative_prefix` を `prefix + ", " + user` で前置 (重複除去なし・2-6d の手動連結と同形式)。既定 ON。最終全文を `[gen] preset_prefix applied: prompt='…' negative='…'` でログ。
+- OFF 手段: CLI `--no-preset-prefix` / HTTP `"preset_prefix": false` (非 bool は 400)。preset 空 / OFF / prefix 不在の経路は不変。test = `test_preset` (read_preset_prefix 7 ケース + FakeBackend 注入 4 ケース・`4d4a405` 本文: 研究機 55/55 緑)。帰属: 実装 cpp-implementer (Sonnet)・Opus レビュー BLOCK 0 (中 1 = HTTP 非 bool を 400 化・軽微 4・提案 1 = json 読みを preset_json.hpp に分離、いずれも是正済)・検証 gpu-benchmarker。
+- 検証 (研究機・exe sha256 `4ed1d470…` = worktree `build/src/dollama.exe` 現物と一致・既定 illustrious-xl・`DOLLAMA_SEED=1234`・**素プロンプト**を CLI に渡す): `applied` 行の prompt/negative 全文が 2-6d `docs/logs/2-6d/illustrious-xl/p{1,2,3}.log` の `FULL_PROMPT:`/`FULL_NEGATIVE:` と**文字列一致 3/3**、PNG sha256 が 2-6d と**一致 3/3** (p1 `136d388f…` / p2 `3765065d…` / p3 `48553e0b…`・record-writer が両ディレクトリの sha256sum で再確認) = **出荷経路が 2-6d 目視評価の条件と bit 同一**。`--no-preset-prefix` (p1_noprefix) は `applied` 行なし・sha256 `7f1dc13e…` ≠ p1 = OFF が効く。`[warn]`/stub/フォールバック/`構築に失敗` は 4 log とも 0 件 (大文字小文字を区別する grep。`MISSING` を無視大小で引くと negative 内の「missing fingers」に当たるので注意)。
+- 未検証: `--fast` の有無は CLI 生成モードがフラグをログしないため 4 log から確認できない (2-6d 残債 2 と同型)。ただし PNG が 2-6d と bit 一致なので、拡散条件は 2-6d 走行と同一であることまでは言える。
+- 生ログ: `docs/logs/2-6e/` (README + p1/p2/p3/p1_noprefix の png/log)。
 
 
 ## 次のタスク
