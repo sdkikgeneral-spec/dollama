@@ -28,11 +28,27 @@
 #include "server/generator.hpp"
 #include "server/matter_runner.hpp"
 #include "server/matting_postprocess.hpp"
+#include "server/preset.hpp" // 2-6e: PresetPrefix (prompt_prefix/negative_prefix)
 #include "server/scorer_runner.hpp"
 #include "server/scoring_postprocess.hpp"
 
 namespace dollama
 {
+
+// 2-6e: prefix と user 文字列を連結する。両方非空なら "prefix, user"、片方のみ非空なら
+//   非空の方をそのまま返す (重複除去はしない・呼び出し側の責務外)。
+inline std::string join_preset_prefix(const std::string& prefix, const std::string& user)
+{
+    if (prefix.empty())
+    {
+        return user;
+    }
+    if (user.empty())
+    {
+        return prefix;
+    }
+    return prefix + ", " + user;
+}
 
 // env DOLLAMA_SEED を uint64_t として解決する (cli_generate.hpp の resolve_path と同流儀)。
 //   非空 かつ std::strtoull で全文字パースできたときのみ値を返す。それ以外 (未設定 / 空 /
@@ -68,8 +84,11 @@ public:
     // backend を受け取り所有する。nullptr は構築失敗として拒否する
     //   (呼び出し側 = build_image_generator は make_backend の nullptr を先に検知して
     //    段2/3 へ落ちるため、本クラスへ nullptr が渡ることは通常ない)。
-    explicit BackendImageGenerator(std::unique_ptr<IDiffusionBackend> backend)
-        : backend_(std::move(backend))
+    //   prefix: 2-6e: preset 付帯の prompt_prefix/negative_prefix (未指定/preset 無 → nullopt =
+    //     従来経路と無改変)。build_image_generator が preset 解決時のみ渡す。
+    explicit BackendImageGenerator(std::unique_ptr<IDiffusionBackend> backend,
+                                    std::optional<PresetPrefix> prefix = std::nullopt)
+        : backend_(std::move(backend)), prefix_(std::move(prefix))
     {
         if (!backend_)
         {
@@ -128,13 +147,25 @@ public:
             backend_->apply_loras(lr);
         }
 
+        // --- 2-6e: preset の prompt_prefix/negative_prefix を自動付与 (既定 ON) ---
+        //   req.preset_prefix が false、または preset 側に prefix が無ければ user 文字列そのまま。
+        std::string prompt = req.prompt;
+        std::string negative = req.negative_prompt;
+        if (req.preset_prefix && prefix_)
+        {
+            prompt = join_preset_prefix(prefix_->prompt, req.prompt);
+            negative = join_preset_prefix(prefix_->negative, req.negative_prompt);
+            std::clog << "[gen] preset_prefix applied: prompt='" << prompt
+                      << "' negative='" << negative << "'\n";
+        }
+
         // --- 拡散 backend 実行 (CFG は backend 側の既定に委譲: cfg=0 を渡す) ---
         //   backend が cfg<=0 のとき自前の既定 (SDXL は 7.5) を使う契約。
         std::vector<uint8_t> rgb;
         int w = 0, h = 0;
         try
         {
-            backend_->generate(req.prompt, req.negative_prompt, steps, seed,
+            backend_->generate(prompt, negative, steps, seed,
                                /*cfg=*/0.0f, /*w=*/1024, /*h=*/1024, rgb, w, h);
         }
         catch (...)
@@ -194,6 +225,7 @@ private:
     std::unique_ptr<IDiffusionBackend> backend_;
     std::unique_ptr<IMatter>           matter_; // M-6: set_matter で注入 (既定 nullptr = 不透明)
     std::unique_ptr<IScorer>           scorer_; // B-5-3: set_scorer で注入 (既定 nullptr = 不採点)
+    std::optional<PresetPrefix>        prefix_; // 2-6e: preset 付帯の prompt/negative 接頭辞
 };
 
 } // namespace dollama

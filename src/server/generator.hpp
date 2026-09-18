@@ -41,6 +41,8 @@ struct GenRequest
     int height = 1024;           // 出力高
     bool matting = true;         // M-6: マッティング既定 ON (透過 PNG)。--no-matting で OFF。
     std::vector<LoraSpec> loras; // L-2: ランタイム LoRA (未指定 = 空 = 従来経路・無改変)
+    bool preset_prefix = true;   // 2-6e: preset の prompt_prefix/negative_prefix 既定 ON
+                                  //   (--no-preset-prefix / JSON "preset_prefix":false で OFF)
 };
 
 // 生成結果 DTO (PNG バイト列まで; base64 化はサーバ層)

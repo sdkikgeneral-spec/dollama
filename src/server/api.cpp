@@ -161,6 +161,19 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
         gr.height = h;
     }
 
+    // 2-6e: preset の prompt_prefix/negative_prefix 自動付与 (任意項目・既定 ON)。
+    // 形式不正は 400 で明示的に弾く (loras と同流儀・黙って無視しない)。
+    if (body.contains("preset_prefix"))
+    {
+        if (!body["preset_prefix"].is_boolean())
+        {
+            write_error(res, 400, "'preset_prefix' は真偽値である必要があります",
+                        "invalid_request_error");
+            return;
+        }
+        gr.preset_prefix = body["preset_prefix"].get<bool>();
+    }
+
     // L-2: ランタイム LoRA (任意項目)。loras: [{ "name": str, "strength": float=1.0 }]。
     // 未指定 = 空 = 従来経路 (無改変)。形式不正は 400 で明示的に弾く (黙って無視しない)。
     if (body.contains("loras"))

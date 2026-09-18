@@ -1,6 +1,7 @@
 // 2-6d: preset 解決 (src/server/preset.hpp) 単体テスト
+// 2-6e: PresetPrefix (read_preset_prefix) + BackendImageGenerator への自動付与を追加。
 //
-// 純 cpp (std::filesystem のみ) ゆえ開発機でも SKIP なし常時実走する。
+// 純 cpp (std::filesystem + nlohmann/json) ゆえ開発機でも SKIP なし常時実走する。
 // テスト用の偽 checkpoint 一式を一時ディレクトリに作り、is_valid_preset_name /
 // resolve_preset_paths の挙動を検証する。
 //
@@ -13,6 +14,10 @@
 //      両方完全 → 1 番目を採用
 //   6. unet_weights.safetensors がディレクトリ → nullopt
 //   7. 0 バイトファイル → nullopt
+//   8. read_preset_prefix: 正常 / 片方欠落 / 不在 / 壊れ json / 両方空 /
+//      prompt_prefix が数値 (無視) / 非 object (配列)
+//   9. BackendImageGenerator への自動付与: ON 連結 / OFF 素通し / prefix なし素通し /
+//      片方空 join
 //
 // 全テスト通過時は "[test_preset] ALL PASSED" を出力して return 0。
 // 失敗時は std::cerr に出力して return 1。
@@ -26,7 +31,11 @@
 #include <string>
 #include <vector>
 
+#include "server/backend_image_generator.hpp" // BackendImageGenerator (⑨)
+#include "server/diffusion_backend.hpp"        // IDiffusionBackend (⑨)
+#include "server/generator.hpp"                // GenRequest (⑨)
 #include "server/preset.hpp"
+#include "server/preset_json.hpp" // read_preset_prefix (⑧)
 
 namespace
 {
@@ -61,6 +70,15 @@ void touch_empty(const std::string& path)
     std::ofstream ofs(p, std::ios::binary); // 何も書かない
 }
 
+// 任意内容のファイルを作る (preset.json 用)。
+void write_text(const std::string& path, const std::string& content)
+{
+    fs::path p(path);
+    fs::create_directories(p.parent_path());
+    std::ofstream ofs(p, std::ios::binary);
+    ofs << content;
+}
+
 // name の 4 ファイルを root 配下に揃えて作る (dir = root + "presets/" + name + "/")。
 void make_full_preset(const std::string& root, const std::string& name)
 {
@@ -70,6 +88,37 @@ void make_full_preset(const std::string& root, const std::string& name)
     touch(dir + "text-encoder-l/model_ov.xml");
     touch(dir + "text-encoder-g/model_ov.xml");
 }
+
+// ⑨: prompt/negative を記録するだけの fake backend (test_diffusion_backend.cpp の
+//   FakeBackend を写経し、BackendImageGenerator が backend へ渡す最終文字列を捕捉する)。
+struct RecordingFakeBackend : dollama::IDiffusionBackend
+{
+    std::string seen_prompt;
+    std::string seen_negative;
+
+    void generate(const std::string& prompt, const std::string& negative,
+                  int /*steps*/, uint64_t /*seed*/, float /*cfg*/, int w, int h,
+                  std::vector<uint8_t>& rgb_out, int& w_out, int& h_out) override
+    {
+        seen_prompt   = prompt;
+        seen_negative = negative;
+        const int rw = (w > 0) ? w : 1024;
+        const int rh = (h > 0) ? h : 1024;
+        rgb_out.assign(static_cast<size_t>(rw) * rh * 3, 0);
+        w_out = rw;
+        h_out = rh;
+    }
+
+    dollama::BackendInfo info() const override
+    {
+        return {"fake", 4, 1024, false};
+    }
+
+    std::string model_id() const override
+    {
+        return "fake-1.0";
+    }
+};
 
 } // namespace
 
@@ -190,6 +239,156 @@ int main()
         touch(dir + "text-encoder-g/model_ov.xml");
         auto r = resolve_preset_paths("zero-byte", roots);
         check(!r.has_value(), "0 バイトファイルは nullopt であるべき");
+    }
+
+    // ⑧ read_preset_prefix: 正常 / 片方欠落 / 不在 / 壊れ json
+    {
+        using dollama::read_preset_prefix;
+
+        // ⑧-a 正常 (両方非空)
+        {
+            const std::string dir = root1 + "presets/prefix-ok/";
+            write_text(dir + "preset.json",
+                       R"({"prompt_prefix": "masterpiece, best quality", )"
+                       R"("negative_prefix": "worst quality, lowres"})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "正常な preset.json は値を返すべき");
+            if (p)
+            {
+                check(p->prompt == "masterpiece, best quality", "prompt_prefix が期待値と一致すべき");
+                check(p->negative == "worst quality, lowres", "negative_prefix が期待値と一致すべき");
+            }
+        }
+
+        // ⑧-b 片方欠落 (prompt_prefix のみ)
+        {
+            const std::string dir = root1 + "presets/prefix-partial/";
+            write_text(dir + "preset.json", R"({"prompt_prefix": "masterpiece"})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "片方欠落でも非空フィールドがあれば値を返すべき");
+            if (p)
+            {
+                check(p->prompt == "masterpiece", "prompt_prefix が期待値と一致すべき");
+                check(p->negative.empty(), "negative_prefix 欠落は空文字であるべき");
+            }
+        }
+
+        // ⑧-c 不在 (preset.json を作らない) → nullopt
+        {
+            const std::string dir = root1 + "presets/prefix-missing/";
+            fs::create_directories(dir);
+            auto p = read_preset_prefix(dir);
+            check(!p.has_value(), "preset.json 不在は nullopt であるべき");
+        }
+
+        // ⑧-d 壊れ json → nullopt
+        {
+            const std::string dir = root1 + "presets/prefix-broken/";
+            write_text(dir + "preset.json", "{not valid json");
+            auto p = read_preset_prefix(dir);
+            check(!p.has_value(), "壊れた json は nullopt であるべき");
+        }
+
+        // ⑧-e 両方空 (フィールドは存在するが値が空文字) → nullopt
+        {
+            const std::string dir = root1 + "presets/prefix-both-empty/";
+            write_text(dir + "preset.json",
+                       R"({"prompt_prefix": "", "negative_prefix": ""})");
+            auto p = read_preset_prefix(dir);
+            check(!p.has_value(), "両方空文字は nullopt であるべき");
+        }
+
+        // ⑧-f prompt_prefix が数値 (型不一致) → その軸は無視・negative_prefix は生きる
+        {
+            const std::string dir = root1 + "presets/prefix-wrong-type/";
+            write_text(dir + "preset.json",
+                       R"({"prompt_prefix": 123, "negative_prefix": "worst quality"})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "片方が型不一致でももう片方が有効なら値を返すべき");
+            if (p)
+            {
+                check(p->prompt.empty(), "型不一致の prompt_prefix は無視 (空文字) であるべき");
+                check(p->negative == "worst quality", "negative_prefix は期待値と一致すべき");
+            }
+        }
+
+        // ⑧-g 非 object (配列) → nullopt
+        {
+            const std::string dir = root1 + "presets/prefix-not-object/";
+            write_text(dir + "preset.json", R"(["masterpiece", "worst quality"])");
+            auto p = read_preset_prefix(dir);
+            check(!p.has_value(), "非 object (配列) の json は nullopt であるべき");
+        }
+    }
+
+    // ⑨ BackendImageGenerator への自動付与: ON 連結 / OFF 素通し / prefix なし素通し / 片方空 join
+    {
+        using dollama::BackendImageGenerator;
+        using dollama::GenRequest;
+        using dollama::PresetPrefix;
+
+        // ⑨-a ON: prefix + user 両方非空 → "prefix, user" に連結される
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen(std::unique_ptr<RecordingFakeBackend>(backend_raw),
+                                       PresetPrefix{"masterpiece, best quality", "worst quality"});
+            GenRequest req;
+            req.prompt          = "1girl, solo";
+            req.negative_prompt = "bad anatomy";
+            req.preset_prefix   = true;
+            gen.generate(req);
+            check(backend_raw->seen_prompt == "masterpiece, best quality, 1girl, solo",
+                  "ON: prompt は prefix, user に連結されるべき: " + backend_raw->seen_prompt);
+            check(backend_raw->seen_negative == "worst quality, bad anatomy",
+                  "ON: negative は prefix, user に連結されるべき: " + backend_raw->seen_negative);
+        }
+
+        // ⑨-b OFF: req.preset_prefix=false なら prefix があっても user そのまま
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen(std::unique_ptr<RecordingFakeBackend>(backend_raw),
+                                       PresetPrefix{"masterpiece, best quality", "worst quality"});
+            GenRequest req;
+            req.prompt          = "1girl, solo";
+            req.negative_prompt = "bad anatomy";
+            req.preset_prefix   = false;
+            gen.generate(req);
+            check(backend_raw->seen_prompt == "1girl, solo",
+                  "OFF: prompt は user そのままであるべき: " + backend_raw->seen_prompt);
+            check(backend_raw->seen_negative == "bad anatomy",
+                  "OFF: negative は user そのままであるべき: " + backend_raw->seen_negative);
+        }
+
+        // ⑨-c prefix なし (nullopt): ON でも user そのまま
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen{std::unique_ptr<RecordingFakeBackend>(backend_raw)};
+            GenRequest req;
+            req.prompt          = "1girl, solo";
+            req.negative_prompt = "bad anatomy";
+            req.preset_prefix   = true;
+            gen.generate(req);
+            check(backend_raw->seen_prompt == "1girl, solo",
+                  "prefix なし: prompt は user そのままであるべき: " + backend_raw->seen_prompt);
+            check(backend_raw->seen_negative == "bad anatomy",
+                  "prefix なし: negative は user そのままであるべき: " + backend_raw->seen_negative);
+        }
+
+        // ⑨-d 片方空 join: prefix.negative が空 / user.prompt が空
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen(std::unique_ptr<RecordingFakeBackend>(backend_raw),
+                                       PresetPrefix{"masterpiece", ""});
+            GenRequest req;
+            req.prompt          = ""; // user prompt 空 → prefix のみ
+            req.negative_prompt = "bad anatomy"; // prefix.negative 空 → user のみ
+            req.preset_prefix   = true;
+            gen.generate(req);
+            check(backend_raw->seen_prompt == "masterpiece",
+                  "片方空: user 空なら prefix のみであるべき: " + backend_raw->seen_prompt);
+            check(backend_raw->seen_negative == "bad anatomy",
+                  "片方空: prefix 空なら user のみであるべき (先頭カンマ無し): " + backend_raw->seen_negative);
+        }
     }
     }
     catch (const std::exception& e)

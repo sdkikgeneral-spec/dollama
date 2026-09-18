@@ -1,4 +1,8 @@
 // 2-6d: アニメ特化 SDXL checkpoint プリセット解決 (純 cpp・ヘッダオンリー)。
+// 2-6e: プリセット付帯の prompt_prefix / negative_prefix の型 (PresetPrefix) を追加。
+//   実際の JSON 読み込み (read_preset_prefix) は server/preset_json.hpp に分離した
+//   (本ヘッダを nlohmann/json 非依存に保ち、backend_image_generator.hpp のような
+//   広く include されるヘッダから json_dep を要求しないため)。
 //
 // 目的:
 //   models/presets/<name>/ 配下に配置された checkpoint 一式 (unet/vae/text-encoder-l/g)
@@ -8,7 +12,7 @@
 //   4 ファイルが「全部」揃った root のみ採用する (部分的に揃った dir は次の root へ
 //   フォールバック)。名前は path traversal 対策で英数字・'-'・'_' のみ許可する。
 //
-//   本ヘッダは CUDA / OpenVINO を一切 include しない (std::filesystem のみ)。
+//   本ヘッダは CUDA / OpenVINO / nlohmann::json を一切 include しない (std::filesystem のみ)。
 #pragma once
 
 #include <algorithm>
@@ -126,5 +130,15 @@ inline std::optional<PresetPaths> resolve_preset_paths(
 
     return std::nullopt;
 }
+
+// 2-6e: preset 付帯の prompt/negative 接頭辞 (checkpoint 制作者が推奨する呪文語)。
+//   prompt   : プロンプト側に前置する語 (例: "masterpiece, best quality")。
+//   negative : ネガティブプロンプト側に前置する語。
+//   読み込み本体 (JSON パース) は preset_json.hpp::read_preset_prefix。
+struct PresetPrefix
+{
+    std::string prompt;
+    std::string negative;
+};
 
 } // namespace dollama

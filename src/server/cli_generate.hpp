@@ -44,6 +44,7 @@
 #include "server/generator.hpp"
 #include "server/matter_runner.hpp"
 #include "server/preset.hpp"                   // 2-6d: preset 解決 (resolve_preset_paths)
+#include "server/preset_json.hpp"              // 2-6e: preset.json 読込 (read_preset_prefix)
 #include "server/scorer_runner.hpp"
 #include "server/pipeline_generator_factory.hpp"
 #include "server/stub_generator.hpp"
@@ -240,6 +241,7 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
             //   4 本すべて preset のパスが最終採用されていれば [preset=<name>]、
             //   1 本でも個別 env が上書きしていれば [preset=<name>+env] にする。
             std::string preset_tag;
+            std::optional<PresetPrefix> preset_prefix; // 2-6e: 既定 nullopt (preset 無/env override 時)
             if (preset_paths)
             {
                 const bool all_from_preset =
@@ -247,6 +249,35 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
                     enc_l == preset_paths->enc_l && enc_g == preset_paths->enc_g;
                 preset_tag = all_from_preset ? ("[preset=" + preset + "] ")
                                               : ("[preset=" + preset + "+env] ");
+
+                // 2-6e: preset.json の prompt_prefix/negative_prefix。4 本すべてが preset
+                //   由来のときだけ読む (個別 env で 1 本でも上書きされていれば preset.json も
+                //   別ものである可能性が高いため skip・ログで明示する)。
+                if (all_from_preset)
+                {
+                    preset_prefix = read_preset_prefix(preset_paths->dir);
+                    if (!preset_prefix)
+                    {
+                        // 不在 (ファイルそのものが無い) と、存在するが読めない/空
+                        // (壊れた JSON・非 object・両フィールドとも欠落 or 空) を
+                        // ログ上で切り分ける (原因調査を容易にするため)。
+                        std::error_code ec;
+                        const bool exists = fs::is_regular_file(
+                            preset_paths->dir + "preset.json", ec);
+                        if (exists && !ec)
+                        {
+                            log << "[preset] prefix: none (preset.json が読めない/空)\n";
+                        }
+                        else
+                        {
+                            log << "[preset] prefix: none (preset.json 不在)\n";
+                        }
+                    }
+                }
+                else
+                {
+                    log << "[preset] prefix skipped (env override)\n";
+                }
             }
 
             // NPU 第一・失敗時 CPU フォールバックで backend を構築 → BackendImageGenerator。
@@ -254,7 +285,7 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
             std::unique_ptr<IDiffusionBackend> backend = make_backend(make_cfg("NPU"));
             if (backend)
             {
-                gen = std::make_unique<BackendImageGenerator>(std::move(backend));
+                gen = std::make_unique<BackendImageGenerator>(std::move(backend), preset_prefix);
                 log << "dollama HTTP server (" << backend_name << " backend "
                     << preset_tag << "— NPU)\n";
             }
@@ -265,7 +296,7 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
                 backend = make_backend(make_cfg("CPU"));
                 if (backend)
                 {
-                    gen = std::make_unique<BackendImageGenerator>(std::move(backend));
+                    gen = std::make_unique<BackendImageGenerator>(std::move(backend), preset_prefix);
                     log << "dollama HTTP server (" << backend_name << " backend "
                         << preset_tag << "— CPU)\n";
                 }

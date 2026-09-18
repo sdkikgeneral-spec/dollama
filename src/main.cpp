@@ -119,6 +119,8 @@ int run_device_check()
 //                                    重み/golden が揃えば本 txt2img、無ければ
 //                                    Pipeline→Stub フォールバックで必ず PNG が出る。
 //                                    既定でマッティング ON (透過 PNG)。--no-matting で OFF。
+//                                    2-6e: preset の prompt_prefix/negative_prefix を既定で
+//                                    自動付与する。--no-preset-prefix で OFF。
 //   --preset <name>                 : 2-6d: models/presets/<name>/ の checkpoint 一式
 //                                    (unet/vae/text-encoder-l/g) を使う。未指定なら既定
 //                                    "illustrious-xl" (env DOLLAMA_BACKEND_PRESET でも指定可)。
@@ -134,6 +136,7 @@ int main(int argc, char** argv)
     int width = 1024;
     int height = 1024;
     bool no_matting = false;       // M-6: --no-matting でマッティングを切る (既定 ON)
+    bool no_preset_prefix = false; // 2-6e: --no-preset-prefix で preset 接頭辞付与を切る (既定 ON)
     bool fast_flag = false;        // G-0b: --fast で FAST モード (既定 OFF・現行挙動)
     bool fp8_flag = false;         // G-0b: --fp8 は fast を含意 (FP8 単独無効)
     std::string prompt;            // 指定かつ --http 無し → CLI 生成モード
@@ -204,6 +207,10 @@ int main(int argc, char** argv)
         {
             no_matting = true;
         }
+        else if (a == "--no-preset-prefix")
+        {
+            no_preset_prefix = true;
+        }
         else if (a == "--fast")
         {
             fast_flag = true;
@@ -248,6 +255,7 @@ int main(int argc, char** argv)
         dollama::GenRequest req{prompt, negative, 1, steps, width, height};
         // 集成初期化に matting を足すと並びがずれるため代入で設定する。
         req.matting = !no_matting; // M-6: 既定 ON・--no-matting で OFF
+        req.preset_prefix = !no_preset_prefix; // 2-6e: 既定 ON・--no-preset-prefix で OFF
         try
         {
             dollama::GenResult r = gen->generate(req);

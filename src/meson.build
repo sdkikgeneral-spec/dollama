@@ -295,6 +295,9 @@ test('scoring_postprocess', test_scoring_postprocess_exe)
 # OV 有効ビルドでは diffusion_backend.cpp が sdxl_backend.hpp を引くが、SDXLBackend は
 # make_diffusion_runner (未リンク) を要するため本 test では触らない ("sd35"/fake のみ)。
 # → OV 有効時のみ diffusion_runner(_stub) をリンクして未解決シンボルを塞ぐ。
+# 2-6e: backend_image_generator.hpp は server/preset.hpp (PresetPrefix) のみ include し
+#   nlohmann/json には依存しない (json 読込は preset_json.hpp に分離済み) ため、本 test は
+#   json_dep 不要 (従来どおり)。
 diffusion_backend_test_sources = ['tests/test_diffusion_backend.cpp',
                                   'server/diffusion_backend.cpp']
 if openvino_dep.found()
@@ -312,14 +315,19 @@ test_diffusion_backend_exe = executable('test_diffusion_backend',
 test('diffusion_backend', test_diffusion_backend_exe)
 
 # 2-6d: preset 解決 (server/preset.hpp) 単体テスト
-# 純 cpp (std::filesystem のみ) ゆえ OV/CUDA 非依存・開発機でも SKIP なし常時実走する。
-test_preset_exe = executable('test_preset',
-  sources             : files('tests/test_preset.cpp'),
-  include_directories : src_inc,
-  dependencies        : deps,
-  cpp_args            : cpp_args,
-)
-test('preset', test_preset_exe)
+# 2-6e: PresetPrefix (read_preset_prefix・server/preset_json.hpp) + BackendImageGenerator
+#   注入テストを追加。read_preset_prefix が nlohmann/json を要するため、test_png_meta と
+#   同型で json_dep が解決できた場合のみ登録する (wrap 不在環境では自動スキップ)。
+# 純 cpp (std::filesystem + nlohmann/json) ゆえ OV/CUDA 非依存・開発機でも SKIP なし常時実走する。
+if json_dep.found()
+  test_preset_exe = executable('test_preset',
+    sources             : files('tests/test_preset.cpp'),
+    include_directories : src_inc,
+    dependencies        : deps + [json_dep],
+    cpp_args            : cpp_args,
+  )
+  test('preset', test_preset_exe)
+endif
 
 # FastConfig (FAST モードのフラグ枠・G-0b) 単体テスト
 # 純 cpp (OV/CUDA 非依存) ゆえ開発機でも SKIP なし常時実走する。FastConfig 既定値と
@@ -1056,7 +1064,7 @@ if cuda_enabled
                                  cli_matter_src,
                                  cli_scorer_src] + diffusion_cu_sources),
     include_directories : src_inc,
-    dependencies        : deps,
+    dependencies        : deps + [json_dep], # 2-6e: cli_generate.hpp が preset.hpp (json) を要する
     cpp_args            : cpp_args,
     cuda_args           : cuda_args,
   )
@@ -1069,7 +1077,7 @@ else
                                 cli_matter_src,
                                 cli_scorer_src),
     include_directories : src_inc,
-    dependencies        : deps,
+    dependencies        : deps + [json_dep], # 2-6e: cli_generate.hpp が preset.hpp (json) を要する
     cpp_args            : cpp_args,
   )
 endif
