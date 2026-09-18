@@ -1,0 +1,35 @@
+[label] image=docs/logs/2-6d/illustrious-xl/p2.png device=CPU thresh=0.35
+[label] rating: general=0.90, sensitive=0.10, questionable=0.00, explicit=0.00
+[label] 29 tags >= 0.35:
+  0.997  1girl
+  0.976  solo
+  0.962  brown_hair
+  0.954  cup
+  0.951  smile
+  0.923  short_hair
+  0.923  white_background
+  0.921  brown_eyes
+  0.920  holding
+  0.896  holding_cup
+  0.894  looking_at_viewer
+  0.885  simple_background
+  0.857  blush
+  0.845  coffee
+  0.676  head_tilt
+  0.657  jacket
+  0.630  long_sleeves
+  0.627  shirt
+  0.622  black_shirt
+  0.619  upper_body
+  0.619  closed_mouth
+  0.594  denim
+  0.566  brown_jacket
+  0.535  open_clothes
+  0.477  pants
+  0.432  coat
+  0.413  coffee_mug
+  0.386  bob_cut
+  0.379  mug
+
+[label] tag line:
+1girl, solo, brown hair, cup, smile, short hair, white background, brown eyes, holding, holding cup, looking at viewer, simple background, blush, coffee, head tilt, jacket, long sleeves, shirt, black shirt, upper body, closed mouth, denim, brown jacket, open clothes, pants, coat, coffee mug, bob cut, mug

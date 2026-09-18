@@ -1,0 +1,33 @@
+[label] image=docs/logs/2-6d/illustrious-xl/p3.png device=CPU thresh=0.35
+[label] rating: general=0.84, sensitive=0.16, questionable=0.00, explicit=0.00
+[label] 27 tags >= 0.35:
+  0.969  jacket
+  0.960  solo
+  0.949  black_hair
+  0.943  running
+  0.924  shoes
+  0.912  pants
+  0.907  sneakers
+  0.904  ponytail
+  0.899  white_background
+  0.865  full_body
+  0.825  simple_background
+  0.818  shirt
+  0.806  black_pants
+  0.787  black_shirt
+  0.731  1girl
+  0.713  yellow_jacket
+  0.630  open_jacket
+  0.563  open_clothes
+  0.556  long_sleeves
+  0.552  black_socks
+  0.542  watch
+  0.540  wristwatch
+  0.515  socks
+  0.482  black_eyes
+  0.400  closed_mouth
+  0.380  green_jacket
+  0.351  profile
+
+[label] tag line:
+jacket, solo, black hair, running, shoes, pants, sneakers, ponytail, white background, full body, simple background, shirt, black pants, black shirt, 1girl, yellow jacket, open jacket, open clothes, long sleeves, black socks, watch, wristwatch, socks, black eyes, closed mouth, green jacket, profile

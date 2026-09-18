@@ -1,0 +1,36 @@
+[label] image=docs/logs/2-6d/animagine-xl-4/p3.png device=CPU thresh=0.35
+[label] rating: general=0.90, sensitive=0.11, questionable=0.00, explicit=0.00
+[label] 30 tags >= 0.35:
+  0.958  1boy
+  0.953  solo
+  0.947  jacket
+  0.942  male_focus
+  0.890  black_hair
+  0.886  holding
+  0.885  shorts
+  0.865  white_background
+  0.817  simple_background
+  0.806  black_shorts
+  0.804  weapon
+  0.797  long_sleeves
+  0.756  holding_weapon
+  0.726  sword
+  0.702  open_mouth
+  0.685  short_hair
+  0.667  open_jacket
+  0.638  shirt
+  0.636  holding_sword
+  0.551  gloves
+  0.548  profile
+  0.523  open_clothes
+  0.487  white_shirt
+  0.459  dual_wielding
+  0.452  from_side
+  0.449  blue_jacket
+  0.441  shoes
+  0.436  scaramouche_(genshin_impact)
+  0.427  black_gloves
+  0.357  teeth
+
+[label] tag line:
+1boy, solo, jacket, male focus, black hair, holding, shorts, white background, simple background, black shorts, weapon, long sleeves, holding weapon, sword, open mouth, short hair, open jacket, shirt, holding sword, gloves, profile, open clothes, white shirt, dual wielding, from side, blue jacket, shoes, scaramouche (genshin impact), black gloves, teeth

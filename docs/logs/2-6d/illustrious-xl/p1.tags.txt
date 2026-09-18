@@ -1,0 +1,38 @@
+[label] image=docs/logs/2-6d/illustrious-xl/p1.png device=CPU thresh=0.35
+[label] rating: general=0.87, sensitive=0.13, questionable=0.00, explicit=0.00
+[label] 32 tags >= 0.35:
+  0.998  1girl
+  0.985  solo
+  0.971  school_uniform
+  0.967  skirt
+  0.942  white_background
+  0.941  serafuku
+  0.939  pantyhose
+  0.928  full_body
+  0.920  black_footwear
+  0.912  simple_background
+  0.905  neckerchief
+  0.894  pleated_skirt
+  0.888  shoes
+  0.881  sailor_collar
+  0.869  red_neckerchief
+  0.857  blue_skirt
+  0.850  loafers
+  0.813  black_pantyhose
+  0.806  blue_eyes
+  0.782  standing
+  0.764  long_sleeves
+  0.749  looking_at_viewer
+  0.723  short_hair
+  0.719  white_shirt
+  0.711  shirt
+  0.705  blue_sailor_collar
+  0.681  hair_ornament
+  0.647  closed_mouth
+  0.607  grey_hair
+  0.570  own_hands_together
+  0.473  hairclip
+  0.454  blush
+
+[label] tag line:
+1girl, solo, school uniform, skirt, white background, serafuku, pantyhose, full body, black footwear, simple background, neckerchief, pleated skirt, shoes, sailor collar, red neckerchief, blue skirt, loafers, black pantyhose, blue eyes, standing, long sleeves, looking at viewer, short hair, white shirt, shirt, blue sailor collar, hair ornament, closed mouth, grey hair, own hands together, hairclip, blush

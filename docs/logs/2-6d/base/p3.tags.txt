@@ -1,0 +1,31 @@
+[label] image=docs/logs/2-6d/base/p3.png device=CPU thresh=0.35
+[label] rating: general=0.81, sensitive=0.19, questionable=0.00, explicit=0.00
+[label] 25 tags >= 0.35:
+  0.982  1boy
+  0.973  male_focus
+  0.960  black_hair
+  0.930  solo
+  0.898  shirt
+  0.892  pants
+  0.867  jacket
+  0.866  black_pants
+  0.856  shoes
+  0.849  white_background
+  0.832  full_body
+  0.825  white_shirt
+  0.744  simple_background
+  0.738  white_footwear
+  0.736  black_jacket
+  0.723  black_eyes
+  0.624  running
+  0.557  sneakers
+  0.528  long_sleeves
+  0.510  collared_shirt
+  0.471  short_hair
+  0.452  looking_at_viewer
+  0.423  open_clothes
+  0.408  closed_mouth
+  0.376  open_jacket
+
+[label] tag line:
+1boy, male focus, black hair, solo, shirt, pants, jacket, black pants, shoes, white background, full body, white shirt, simple background, white footwear, black jacket, black eyes, running, sneakers, long sleeves, collared shirt, short hair, looking at viewer, open clothes, closed mouth, open jacket

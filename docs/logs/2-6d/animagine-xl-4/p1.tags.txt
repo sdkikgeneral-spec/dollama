@@ -1,0 +1,35 @@
+[label] image=docs/logs/2-6d/animagine-xl-4/p1.png device=CPU thresh=0.35
+[label] rating: general=0.93, sensitive=0.08, questionable=0.00, explicit=0.00
+[label] 29 tags >= 0.35:
+  0.985  1girl
+  0.949  blue_eyes
+  0.931  looking_at_viewer
+  0.908  school_uniform
+  0.900  long_hair
+  0.889  skirt
+  0.836  serafuku
+  0.805  sailor_collar
+  0.786  pleated_skirt
+  0.751  socks
+  0.738  neckerchief
+  0.719  red_neckerchief
+  0.716  white_hair
+  0.712  white_background
+  0.647  long_sleeves
+  0.618  solo
+  0.612  black_socks
+  0.610  standing
+  0.594  shoes
+  0.590  shirt
+  0.521  loafers
+  0.521  closed_mouth
+  0.498  black_skirt
+  0.498  zoom_layer
+  0.484  simple_background
+  0.465  brown_footwear
+  0.421  full_body
+  0.390  floating_hair
+  0.367  grey_hair
+
+[label] tag line:
+1girl, blue eyes, looking at viewer, school uniform, long hair, skirt, serafuku, sailor collar, pleated skirt, socks, neckerchief, red neckerchief, white hair, white background, long sleeves, solo, black socks, standing, shoes, shirt, loafers, closed mouth, black skirt, zoom layer, simple background, brown footwear, full body, floating hair, grey hair

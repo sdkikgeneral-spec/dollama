@@ -1,0 +1,13 @@
+[gen] seed=1234(env)
+[scorer] quality=0.229535 anomaly: none
+dollama — CLI 生成モード
+  prompt='1boy, solo, running, dynamic pose, full body, black hair, jacket, from side, simple background, white background' negative='lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, multiple views, multiple girls'
+dollama HTTP server (sdxl backend — NPU)
+  matting: GPU.0 (model='models/isnet-anime/model_ov_fp32.xml')
+  scorer: NPU (model='models/scorer-net/model_ov_fp32.xml')
+[generate] wrote docs/logs/2-6d/base/p3.png (4195716 bytes, 1024x1024, steps=20)
+
+real	0m21.878s
+user	0m0.015s
+sys	0m0.000s
+EXIT:0

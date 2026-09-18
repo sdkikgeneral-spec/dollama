@@ -1,0 +1,36 @@
+[label] image=docs/logs/2-6d/noobai-xl/p1.png device=CPU thresh=0.35
+[label] rating: general=0.84, sensitive=0.15, questionable=0.00, explicit=0.00
+[label] 30 tags >= 0.35:
+  0.997  1girl
+  0.984  solo
+  0.954  skirt
+  0.950  school_uniform
+  0.933  blue_eyes
+  0.929  long_hair
+  0.915  white_background
+  0.899  full_body
+  0.895  serafuku
+  0.882  simple_background
+  0.857  black_footwear
+  0.852  pantyhose
+  0.843  looking_at_viewer
+  0.824  pleated_skirt
+  0.820  sailor_collar
+  0.794  shoes
+  0.765  short_sleeves
+  0.758  blue_neckerchief
+  0.756  neckerchief
+  0.730  standing
+  0.674  shirt
+  0.667  blue_skirt
+  0.657  loafers
+  0.640  black_pantyhose
+  0.516  white_shirt
+  0.508  blue_sailor_collar
+  0.503  closed_mouth
+  0.474  long_skirt
+  0.428  arms_behind_back
+  0.419  white_hair
+
+[label] tag line:
+1girl, solo, skirt, school uniform, blue eyes, long hair, white background, full body, serafuku, simple background, black footwear, pantyhose, looking at viewer, pleated skirt, sailor collar, shoes, short sleeves, blue neckerchief, neckerchief, standing, shirt, blue skirt, loafers, black pantyhose, white shirt, blue sailor collar, closed mouth, long skirt, arms behind back, white hair

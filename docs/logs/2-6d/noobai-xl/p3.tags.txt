@@ -1,0 +1,31 @@
+[label] image=docs/logs/2-6d/noobai-xl/p3.png device=CPU thresh=0.35
+[label] rating: general=0.92, sensitive=0.07, questionable=0.00, explicit=0.00
+[label] 25 tags >= 0.35:
+  0.971  1boy
+  0.968  male_focus
+  0.942  solo
+  0.936  black_hair
+  0.922  jacket
+  0.922  pants
+  0.908  white_background
+  0.877  full_body
+  0.870  running
+  0.863  simple_background
+  0.852  shirt
+  0.810  shoes
+  0.741  short_hair
+  0.729  black_shirt
+  0.705  sneakers
+  0.647  long_sleeves
+  0.644  black_footwear
+  0.550  closed_mouth
+  0.540  open_clothes
+  0.523  open_jacket
+  0.426  profile
+  0.410  black_eyes
+  0.404  clenched_hands
+  0.401  hood
+  0.370  black_pants
+
+[label] tag line:
+1boy, male focus, solo, black hair, jacket, pants, white background, full body, running, simple background, shirt, shoes, short hair, black shirt, sneakers, long sleeves, black footwear, closed mouth, open clothes, open jacket, profile, black eyes, clenched hands, hood, black pants

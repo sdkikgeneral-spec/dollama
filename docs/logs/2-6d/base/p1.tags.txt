@@ -1,0 +1,34 @@
+[label] image=docs/logs/2-6d/base/p1.png device=CPU thresh=0.35
+[label] rating: general=0.71, sensitive=0.29, questionable=0.00, explicit=0.00
+[label] 28 tags >= 0.35:
+  0.997  1girl
+  0.978  solo
+  0.974  blue_eyes
+  0.964  long_hair
+  0.952  skirt
+  0.875  necktie
+  0.872  white_background
+  0.845  shirt
+  0.834  simple_background
+  0.828  looking_at_viewer
+  0.810  white_shirt
+  0.808  pleated_skirt
+  0.803  grey_hair
+  0.796  blush
+  0.769  very_long_hair
+  0.767  hair_between_eyes
+  0.765  short_sleeves
+  0.762  blue_vest
+  0.729  vest
+  0.671  black_skirt
+  0.621  collared_shirt
+  0.529  closed_mouth
+  0.523  blue_necktie
+  0.509  school_uniform
+  0.406  puffy_sleeves
+  0.391  striped_necktie
+  0.369  diagonal-striped_necktie
+  0.351  grey_skirt
+
+[label] tag line:
+1girl, solo, blue eyes, long hair, skirt, necktie, white background, shirt, simple background, looking at viewer, white shirt, pleated skirt, grey hair, blush, very long hair, hair between eyes, short sleeves, blue vest, vest, black skirt, collared shirt, closed mouth, blue necktie, school uniform, puffy sleeves, striped necktie, diagonal-striped necktie, grey skirt

@@ -1,0 +1,26 @@
+[label] image=docs/logs/2-6d/base/p2.png device=CPU thresh=0.35
+[label] rating: general=0.63, sensitive=0.37, questionable=0.00, explicit=0.00
+[label] 20 tags >= 0.35:
+  0.998  1girl
+  0.973  solo
+  0.967  cup
+  0.950  brown_hair
+  0.950  smile
+  0.942  brown_eyes
+  0.876  holding
+  0.873  holding_cup
+  0.855  white_background
+  0.841  short_hair
+  0.831  looking_at_viewer
+  0.802  simple_background
+  0.793  brown_apron
+  0.775  shirt
+  0.681  apron
+  0.640  mug
+  0.602  upper_body
+  0.595  short_sleeves
+  0.539  grin
+  0.521  collared_shirt
+
+[label] tag line:
+1girl, solo, cup, brown hair, smile, brown eyes, holding, holding cup, white background, short hair, looking at viewer, simple background, brown apron, shirt, apron, mug, upper body, short sleeves, grin, collared shirt

@@ -1,0 +1,29 @@
+[label] image=docs/logs/2-6d/noobai-xl/p2.png device=CPU thresh=0.35
+[label] rating: general=0.88, sensitive=0.12, questionable=0.00, explicit=0.00
+[label] 23 tags >= 0.35:
+  0.998  1girl
+  0.974  solo
+  0.957  brown_hair
+  0.947  brown_eyes
+  0.931  smile
+  0.902  blush
+  0.901  holding
+  0.898  white_background
+  0.892  simple_background
+  0.888  cup
+  0.873  looking_at_viewer
+  0.801  shirt
+  0.788  black_shirt
+  0.776  holding_cup
+  0.766  jacket
+  0.765  disposable_cup
+  0.661  long_sleeves
+  0.638  open_clothes
+  0.504  short_hair
+  0.452  bob_cut
+  0.429  open_jacket
+  0.423  upper_body
+  0.409  pants
+
+[label] tag line:
+1girl, solo, brown hair, brown eyes, smile, blush, holding, white background, simple background, cup, looking at viewer, shirt, black shirt, holding cup, jacket, disposable cup, long sleeves, open clothes, short hair, bob cut, open jacket, upper body, pants
