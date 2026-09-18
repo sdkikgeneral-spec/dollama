@@ -482,6 +482,64 @@ merge 後のベースラインが **53/53 緑**であることを確認したう
 24. **旧ハッシュ (`8707472` / `e16b700` / `0ff28c9` 等・索引と §13 T6/T6r が引く) は現ブランチに無い** (履歴書き換え前)。src ツリー同一で確認した対応表を §13 冒頭に置いた。
 
 
+### 2-6d — アニメ特化 SDXL checkpoint 3 preset (2026-09-17・branch `feat/2-6d-anime-presets` `7ccd6b7`〜`d8a9678`)
+
+実装 = `src/server/preset.hpp` (4 ファイル揃った root のみ採用・名前 `[a-z0-9_-]+`・解決失敗は `[warn]` + base フォールバック)
++ `cli_generate.hpp` (`--preset` / env `DOLLAMA_BACKEND_PRESET`・既定 `illustrious-xl`・`base` は「preset なし」の明示値)
++ `backend_image_generator.hpp` (env `DOLLAMA_SEED`・比較用) + `scripts/dollma_export_sdxl_preset.py` (変換)。
+test = `test_preset` (純 cpp・重み不要)。生ログ = `docs/logs/2-6d/` (README + 4 条件 × p1〜p3 の png/log/tags.txt)。
+書き手 = record-writer (一次証拠は本節末尾「出典」)。
+
+**変換 (研究機 2026-09-17・diffusers 0.38.0 / torch 2.11.0+cu128 / OpenVINO 2026.2.0・3 preset とも diffusers 形式 `from_pretrained`・`hf_file` null)**
+
+| preset | source (HF) / revision | ライセンス | prediction_type | VAE `scaling_factor` (HF config) | TE 変換誤差 L / G penultimate / G pooled | VAE sha256 (先頭 8) |
+|---|---|---|---|---|---|---|
+| animagine-xl-4 | `cagliostrolab/animagine-xl-4.0` / `2b7c1b39` | CreativeML Open RAIL++-M | epsilon | 0.13025 | 3.05e-5 / 2.45e-5 / 1.55e-6 | `08778bbb` |
+| illustrious-xl (**既定**) | `OnomaAIResearch/Illustrious-xl-early-release-v0` / `dca0dac3` | Fair AI Public License 1.0-SD | epsilon | **0.18215** (★残債①) | 3.05e-5 / 4.58e-5 / 4.05e-6 | `08778bbb` (animagine と同一バイト) |
+| noobai-xl | `Laxhar/noobai-XL-1.1` / `814a274a` | Fair AI Public License 1.0-SD | epsilon | 0.13025 | 1.53e-5 / 2.57e-5 / 2.38e-6 | `f26e5be3` |
+
+- サイズは 3 preset 同一: UNet 5,135,149,736 B / VAE 98,995,758 B (= base `src/tests/data/*.safetensors` と同バイト数)・TE-L 222MB / TE-G 1327MB・計 4992MB (`du -sm`)。
+- **照合 (record-writer が safetensors ヘッダ / HF cache を直接読んで再確認)**: UNet キー数 3 preset とも **1680 = base と集合一致・shape/dtype 全一致**。
+  tokenizer `vocab.json`/`merges.txt` sha256 は tokenizer/tokenizer_2 とも base と 3 preset 全一致 (`e089ad92…` / `9fd691f7…`)。
+  revision は HF API の現 `sha` と一致 (3 本とも)。ライセンス名は HF API tag (`license:openrail++`) / model card `license_name` (`fair-ai-public-license-1.0-sd`) と一致。
+- **TE-L/G は checkpoint 固有**: 3 preset の `text-encoder-{l,g}/model_ov.bin` sha256 は base (`models/sdxl-text-encoder-{l,g}`) とも相互とも全て不一致 (6 本)。
+  → roadmap 計画の「unet/vae 変換」では足りず、preset は unet/vae/TE-L/TE-G の 4 ファイル構成。embeds (golden) は base 共用・`SDXLBackend` 無改修 (`7ccd6b7` 本文)。
+- ライセンス決裁: Fair AI Public License 1.0-SD は 2026-09-17 ユーザー決裁「採用可」(推論専用・重み非再配布・`THIRD_PARTY_NOTICES.md` 記載)。openrail 系は既決裁。
+  旧 NOTICES の「Animagine XL 4.0 = Fair AI」は誤りで CreativeML Open RAIL++-M に訂正 (HF tag `license:openrail++`)。
+
+**12 枚比較 (研究機・exe HEAD `23ed047`・`DOLLAMA_SEED=1234`・1024² 20step・preset 条件は preset.json の prefix を CLI 引数で手動連結・判定なし)**
+
+| preset | p1 (単独・立ち) | p2 (手・小物) | p3 (動き・全身) | exit / フォールバック |
+|---|---|---|---|---|
+| base | 8/10 (0.80) | 9/9 (1.00) | 8/9 (0.89) | 3/3 exit 0・`(sdxl backend — NPU)` (当時の既定 = base・preset 行なし) |
+| animagine-xl-4 | 9/10 (0.90) | 7/9 (0.78) | 6/9 (0.67) | 3/3 exit 0・`[preset=animagine-xl-4]` |
+| illustrious-xl | 8/10 (0.80) | 9/9 (1.00) | 7/9 (0.78) | 3/3 exit 0・`[preset=illustrious-xl]` |
+| noobai-xl | 9/10 (0.90) | 9/9 (1.00) | 8/9 (0.89) | 3/3 exit 0・`[preset=noobai-xl]` |
+
+- 再現率 = プロンプトの danbooru 相当語のうち WD14 (`dollma_label_image.py` 既定閾値) が検出した割合 (算出法は logs README)。**N=1 (seed 1 本) で優劣の根拠にはならない**。
+- 全 12 log: `[gen] seed=1234(env)` 12/12・`EXIT:0` 12/12・`[warn]`/stub/フォールバック 0/12・9 preset 走行は `[preset] resolved:` 4 行 + `[preset=<name>]` タグ (`+env` なし)。
+- **秒は preset 比較の指標にしない**: 各枚は**別プロセス起動** (log ごとに `dollama — CLI 生成モード` 起動行と `real` が独立・5GB 重みロード込み) で全 12 枚が cold 相当。
+  logs README 初版の「p1 cold / p2・p3 warm」は誤りで訂正済 (取り消し線で残置)。base 21〜22s vs preset 37〜41s (p2/p3) の差の原因は**未計測** (OS ファイルキャッシュ差の可能性までしか言えない・生成速度の差とは言えない)。
+- **事故と再走**: 初回走行中に `models/presets/` が別エージェントの作業により消失し、animagine-xl-4 の一部が base フォールバックのまま生成された → 該当出力を削除し、
+  `[warn]`/stub/フォールバック grep を有効条件に全 12 枚を**再走**したのが現ログ (logs README 経緯欄)。
+- **ユーザー目視順位 (2026-09-17)**: **illustrious-xl > noobai-xl > animagine-xl-4** (animagine はダイナミックだが四肢の崩れが残る) → 既定 preset = illustrious-xl (`d8a9678`)。
+
+**残債**
+1. ★**illustrious-xl の VAE `scaling_factor` = 0.18215 (HF `vae/config.json` 実測)** だが自作ランタイムは `diffusion.cu` `kScalingFactor = 0.13025f` 固定。
+   commit 済スクリプト (`74229d0`) は 0.13025 以外で `SystemExit(1)` するため、**現行スクリプトでは illustrious-xl を再変換できない** (`preset.json` `converted_at` 22:15 JST は
+   スクリプト mtime 22:25 / commit 23:13 より前 = commit 前の版で変換された成果物)。
+   **検証結果 (main thread 2026-09-17・record-writer 2026-09-18 再確認)**: `models/presets/illustrious-xl/preset.json` は `vae_scaling_factor=0.18215` だが、`vae_weights.safetensors` の sha256 は animagine-xl-4 (config 0.13025) と**完全一致** (`08778bbb4b48640a…`・98,995,758 B) = 同一バイトの VAE に 2 つの scaling_factor が付いている。同一 VAE が animagine 側で 0.13025 として運用されているため、0.18215 は **HF 側 `vae/config.json` の誤記**と判断 (main thread)。注: この VAE は base `src/tests/data/vae_weights.safetensors` (sha256 `13b043eb…`) とはバイト不一致 = 「SDXL 系 VAE」であって base 同一物ではない (record-writer 実測)。
+   dollama は `kScalingFactor 0.13025` で decode しており、目視最良と判定された illustrious-xl の 12 枚比較画像はその結果 = **実害なし**。
+   処置 (**未実施・後続**): `dollma_export_sdxl_preset.py` を「config ≠ 0.13025 でも VAE sha256 が既知 SDXL VAE と一致すれば警告付き続行・preset.json に config 値と使用値を両記録」へ改める。
+2. `--fast` の有無は log / logs README に記録が無く**未検証** (CLI 生成モードは fast フラグをログしない)。SAC 状態も未確認 (logs README)。
+3. base 3 枚は既定変更前 (HEAD `23ed047`) の走行のため「preset 未指定 = base」。`d8a9678` 以降は `--preset base` 明示が要る (同一条件の再走時に注意)。
+4. 後続 (スコープ外): preset.json `prompt_prefix`/`negative_prefix` の C++ 自動付与 / HTTP API preset フィールド / UI preset 選択。
+
+**出典 (本節の一次証拠)**: `git show 7ccd6b7 23ed047 74229d0 d8a9678` / `src/server/{preset.hpp,cli_generate.hpp}` / `scripts/dollma_export_sdxl_preset.py` l.26,49,303-310 /
+`src/infer/diffusion.cu:41` / `models/presets/*/preset.json` / `models/presets/*/{unet,vae}_weights.safetensors` ヘッダ / `models/{sdxl-text-encoder-l,sdxl-text-encoder-g,presets/*/text-encoder-*}/model_ov.bin` sha256 /
+`~/.cache/huggingface/hub/models--*/snapshots/<rev>/{vae/config.json,tokenizer*/}` / HF API `api/models/<repo>` (2026-09-17) / `docs/logs/2-6d/*/p*.log` (12 本)。
+
+
 ## 次のタスク
 
 **C++ 実装フェーズ (Phase 1 — パイプライン骨格)**

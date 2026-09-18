@@ -26,9 +26,9 @@ ScorerNet 等) に寄与する。
 | **ISNet-anime (anime-segmentation)** | SkyTNT (skytnt) | Apache-2.0 | マッティング (α 抽出・透過 PNG) | 確認済 (docs) |
 | **waifu-scorer-v4-beta** | Eugeoter | Apache-2.0 | 美的品質スコアラ教師 (Model B quality head・primary) | 確認済 (重み README) |
 | **anime_aesthetic** | deepghs | OpenRAIL | 美的品質スコアラ教師 (評価/アンサンブル候補・使用制限条項あり) | 確認済 (docs) |
-| **NoobAI-XL** | Laxhar Lab | fair-ai-public-license-1.0-sd | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
-| **Animagine XL 4.0** | Cagliostro Research Lab | Fair AI Public License 1.0-SD | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
-| **Illustrious XL** | OnomaAI Research | **版依存** (0.1=Fair AI Public License 1.0-SD / 1.0+ = Illustrious License) | SDXL UNet+VAE 差し替え候補 (2-6d preset・**未導入**) | 要照合 |
+| **NoobAI-XL 1.1** (`Laxhar/noobai-XL-1.1` rev `814a274a`) | Laxhar Lab | Fair AI Public License 1.0-SD (model card `license_name`) | 2-6d preset `noobai-xl` = SDXL UNet+VAE+TE-L/G 差し替え (**導入済 2026-09-17**・推論専用・重み非再配布) | 確認済 (HF model card 2026-09-17 照合・`models/presets/noobai-xl/preset.json`) |
+| **Animagine XL 4.0** (`cagliostrolab/animagine-xl-4.0` rev `2b7c1b39`) | Cagliostro Research Lab | **CreativeML Open RAIL++-M** (HF tag `license:openrail++`。旧記載「Fair AI」は誤りで訂正) | 2-6d preset `animagine-xl-4` = SDXL UNet+VAE+TE-L/G 差し替え (**導入済 2026-09-17**・推論専用・重み非再配布) | 確認済 (HF API/model card 2026-09-17 照合・`models/presets/animagine-xl-4/preset.json`) |
+| **Illustrious XL v0.1 (early-release-v0)** (`OnomaAIResearch/Illustrious-xl-early-release-v0` rev `dca0dac3`) | OnomaAI Research | Fair AI Public License 1.0-SD (model card `license_name`。1.0+ は独自 Illustrious License で**未導入**) | 2-6d preset `illustrious-xl` = SDXL UNet+VAE+TE-L/G 差し替え (**導入済 2026-09-17・既定 preset**・推論専用・重み非再配布) | 確認済 (HF model card 2026-09-17 照合・`models/presets/illustrious-xl/preset.json`) |
 
 **ScorerNet (自作 11.18M) について**: 上記 waifu-scorer-v4 / deepghs の採点を soft target
 として蒸留した派生物。蒸留教師となった美的モデルのライセンス (Apache-2.0 / OpenRAIL) を
@@ -61,10 +61,12 @@ ScorerNet 等) に寄与する。
   (有害・違法・差別的用途等の禁止) の範囲内で利用すること。dollama の用途
   (2D キャラクターイラスト生成・美的品質採点) はこれらの制限に該当しない。
 - 各 RAIL ライセンス全文は配布時に同梱する (または該当 model card への参照を明示する)。
-- **Fair AI Public License 1.0-SD** (NoobAI-XL / Animagine XL 4.0): 帰属を条件に商用可。
+- **Fair AI Public License 1.0-SD** (NoobAI-XL 1.1 / Illustrious XL v0.1): 帰属を条件に商用可。
   コピーレフト条項 (改変/マージ版を**公開配布**する場合に同ライセンス+重み公開) は、dollama が
   checkpoint を**自ホスト参照するのみで重みを再配布しない**運用では非トリガー → 帰属表示で足りる。
-  **Illustrious XL は版依存** (1.0+ は独自 Illustrious License) ゆえ導入版の条項を個別確認する。
+  **2026-09-17 ユーザー決裁「採用可」** (推論専用・重み非再配布・本ファイルへの記載を条件)。
+  **Illustrious XL は版依存** (1.0+ は独自 Illustrious License) ゆえ導入したのは v0.1 のみ。
+  Animagine XL 4.0 は Fair AI ではなく CreativeML Open RAIL++-M (上表・openrail 系は既決裁)。
 
 ## 更新方針
 
