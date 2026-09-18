@@ -9,6 +9,7 @@
 - cwd: `E:\Develop\Projects\dollama` (models/presets 解決のため)
 - SAC: OFF 済 (発注文の前提。本実走内では未再確認)
 - src/scripts は無改変・ビルドなし (exe は既存ビルド成果物を使用)
+- コマンドライン (`--fast` の有無を含む) は本 README・各 log に記録なし (CLI 生成モードはフラグをログしない)。`--fast` は発注条件だが**未検証** (measurements-log 「2-6e」小節と同じ扱い)
 
 ## 結果
 
@@ -26,4 +27,4 @@
 
 ## 結論
 
-出荷経路 (`--fast`, prefix 自動付与, preset 既定 illustrious-xl) は、2-6d で目視評価に使った条件 (prefix 付き prompt/negative・seed=1234) と**完全一致**する。`--no-preset-prefix` は正しく prefix 付与を無効化する。フォールバック・stub 発火は皆無。
+出荷経路 (prefix 自動付与, preset 既定 illustrious-xl) は、2-6d で目視評価に使った条件 (prefix 付き prompt/negative・seed=1234) と**完全一致**する (`--fast` は発注条件だが log に記録なし = 未検証・measurements-log 「2-6e」小節と同じ扱い。PNG sha256 一致から拡散条件が 2-6d 走行と同一であることまでは言える)。`--no-preset-prefix` は正しく prefix 付与を無効化する。フォールバック・stub 発火は皆無。
