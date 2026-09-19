@@ -46,10 +46,102 @@ C++ カーネルがロードして許容誤差比較する**ゴールデンテ�
 | 2-6 最適化 | direct conv→im2col/wmma・naive attn→flash | `unet.cu`/`vae_decode.cu`/`conv2d.cu`/`attention.cu` | 🟡 一旦クローズ **84s→11.30s** (7.44x)。残律速=UNet attn 4.60s (ライブラリ余地で保留)。本丸は Phase 4 へ |
 | 2-6b | 本 txt2img: dual encoder (CLIP-L+G) + CFG + prompt→embeds 結線 | `infer/{clip_tokenizer,clip_encoder2,text_conditioner}.hpp`, `server/diffusion_runner.*`, `server/txt2img_generator.hpp` | ✅ (c3b1dac)・NPU L/bigG・guidance 7.5・20step・PNG 1024²・test 35/35 緑 |
 | 2-6c | 拡散 backend プラグイン枠 `IDiffusionBackend` registry | `server/diffusion_backend.*`, `sdxl_backend.hpp`, `sd35_backend.hpp` (stub), `backend_image_generator.hpp` | ✅ (2026-07-02)・純 cpp 境界で OV/CUDA 隔離・env `DOLLAMA_BACKEND`・全 46 test 緑 |
-| 2-6d | **実 checkpoint 差し替え = アニメ特化 SDXL 3 preset** (NoobAI-XL 1.1 / Animagine XL 4.0 / Illustrious XL v0.1) | `server/preset.hpp` (preset→4 パス解決), `cli_generate.hpp` (`--preset` / env `DOLLAMA_BACKEND_PRESET`), `scripts/dollma_export_sdxl_preset.py` (変換), `THIRD_PARTY_NOTICES.md` | ✅ (2026-09-17・`f3101a3`〜`660e538`・旧ハッシュ対応表は measurements-log 「2-6d」節)。`models/presets/<name>/` の **unet/vae/text-encoder-l/g 4 ファイル**を差し替え・`SDXLBackend` 無改修。**既定 preset = illustrious-xl** (12 枚比較のユーザー目視 illustrious > noobai > animagine・`660e538`)・素 SDXL は `--preset base` 明示。変換は 3 preset とも epsilon・UNet 1680 キー名+shape 一致・tokenizer sha256 base 一致・TE 変換誤差 1e-5 台。**急所: 計画の「unet/vae 変換」では足りず TE-L/G も preset ごとに差し替える** (3 preset の TE OV bin sha256 は base と全て不一致 = checkpoint 固有)。2-6d 時点では preset.json の `prompt_prefix`/`negative_prefix` を **C++ 側で自動付与しない** (12 枚比較は CLI 引数で手動連結・自動付与は後続 2-6e で実装)。数値・照合・残債 (illustrious の VAE scaling_factor 0.18215 問題) は `docs/measurements-log.md` 「2-6d」節。**後続**: prompt_prefix の C++ 自動付与 = ✅ **2-6e** (2026-09-19・`4d4a405`・`backend_image_generator.hpp` が `prefix + ", " + user` で前置・既定 ON・OFF は CLI `--no-preset-prefix` / HTTP `preset_prefix:false`。研究機実走で自動付与後の prompt/negative 全文が 2-6d illustrious p1〜p3 の FULL_PROMPT/FULL_NEGATIVE と文字列一致 3/3・PNG sha256 一致 3/3 = 出荷経路が 2-6d 目視評価の条件と bit 同一。生ログ `docs/logs/2-6e/`・measurements-log 「2-6e」小節) / 未着手: HTTP API の preset フィールド / UI の preset 選択 / 複数エンドポイント切替 UI |
+| 2-6d | **実 checkpoint 差し替え = アニメ特化 SDXL 3 preset** (NoobAI-XL 1.1 / Animagine XL 4.0 / Illustrious XL v0.1) | `server/preset.hpp` (preset→4 パス解決), `cli_generate.hpp` (`--preset` / env `DOLLAMA_BACKEND_PRESET`), `scripts/dollma_export_sdxl_preset.py` (変換), `THIRD_PARTY_NOTICES.md` | ✅ (2026-09-17・`f3101a3`〜`660e538`・旧ハッシュ対応表は measurements-log 「2-6d」節)。`models/presets/<name>/` の **unet/vae/text-encoder-l/g 4 ファイル**を差し替え・`SDXLBackend` 無改修。**既定 preset = illustrious-xl** (12 枚比較のユーザー目視 illustrious > noobai > animagine・`660e538`)・素 SDXL は `--preset base` 明示。変換は 3 preset とも epsilon・UNet 1680 キー名+shape 一致・tokenizer sha256 base 一致・TE 変換誤差 1e-5 台。**急所: 計画の「unet/vae 変換」では足りず TE-L/G も preset ごとに差し替える** (3 preset の TE OV bin sha256 は base と全て不一致 = checkpoint 固有)。2-6d 時点では preset.json の `prompt_prefix`/`negative_prefix` を **C++ 側で自動付与しない** (12 枚比較は CLI 引数で手動連結・自動付与は後続 2-6e で実装)。数値・照合・残債 (illustrious の VAE scaling_factor 0.18215 問題) は `docs/measurements-log.md` 「2-6d」節。**後続**: prompt_prefix の C++ 自動付与 = ✅ **2-6e** (2026-09-19・`4d4a405`・`backend_image_generator.hpp` が `prefix + ", " + user` で前置・既定 ON・OFF は CLI `--no-preset-prefix` / HTTP `preset_prefix:false`。研究機実走で自動付与後の prompt/negative 全文が 2-6d illustrious p1〜p3 の FULL_PROMPT/FULL_NEGATIVE と文字列一致 3/3・PNG sha256 一致 3/3 = 出荷経路が 2-6d 目視評価の条件と bit 同一。生ログ `docs/logs/2-6e/`・measurements-log 「2-6e」小節) / 未着手: HTTP API の preset フィールド / UI の preset 選択 (**複数エンドポイント切替 UI は ✅ 2-6f** = 下記「2-6f」節) |
+| 2-6f | **UI から複数 dollama サーバーを切替** + `model_id` への preset 載せ | `ui/Services/{EndpointRegistry,EndpointUrl,DollamaClient}.cs`, `ui/Program.cs`, `ui/appsettings.json`, `ui/Components/Pages/Generate.razor`, `server/sdxl_backend.hpp` (`compose_model_id`), `server/diffusion_backend.cpp` | ✅ (2026-09-19)・詳細は下記「2-6f」節 |
 
 **完了の定義**: フル C++ で 1024² 画像生成・probe10 (3.80s/20steps) 同等以上。
 **接続**: 生成画像は §11 品質スコアラ (Phase 4 B) の入口 (生成→採点→A へ FB)。
+
+### 2-6f — UI から複数 dollama サーバーを切替 (2026-09-19)
+
+2-6d/2-6e で preset ごとに別の絵が出るようになった一方、UI (Blazor Server) の生成先は
+appsettings の `Dollama:BaseUrl` で**起動時に 1 個へ固定**されていた。別 preset / 別マシンで
+上げた dollama サーバーを見るにはプロセス再起動が要る。2-6f はこれを**実行時の切替**にする。
+あわせて「今どのサーバーに繋がっていて、そこで何が動いているか」を UI から識別できるよう、
+C++ 側の `model_id` に preset 名を載せる。
+
+**UI 側 (C#)**
+
+- `ui/Services/EndpointRegistry.cs` (singleton): エンドポイント一覧を 2 ソースからマージする。
+  ① appsettings `Dollama:Endpoints` (配列・`FromConfig=true`) — 無ければ `Dollama:BaseUrl`、
+  それも無ければ `http://127.0.0.1:8080` へフォールバック (後方互換)。
+  ② `ui/data/endpoints.json` (UI の `＋` が書く・`FromConfig=false`)。
+  **同名衝突時は URL だけ JSON 側が優先し、`FromConfig` フラグは config 側を維持する**
+  (= 設定由来の項目は UI から URL を上書きできても**削除はできない**)。
+  URL は「絶対 URL かつ scheme が http/https」だけ受理 — ただし**この検証が効くのは
+  `EndpointRegistry.Add()` (= UI の `＋` からの追加) だけ**で、appsettings 由来の URL は
+  name/url の空白チェックのみで無検証に通る (`LoadConfigEndpoints`)。
+  壊れた JSON は空扱いで起動を止めない。
+  書込は一時ファイル → `File.Move(overwrite)` (`FavoriteTagStore` と同じ流儀)。
+- `ui/Services/EndpointUrl.cs`: ベース URL とパスの結合だけを行う純関数 (両端のスラッシュ吸収)。
+- `ui/Services/DollamaClient.cs`: 固定 `BaseAddress` の型付き HttpClient をやめ、
+  `IHttpClientFactory("dollama")` + `EndpointRegistry.Current` の組に変更。リクエストごとに
+  URL を組み立てるため、切替が次のリクエストから効く。`ProbeAsync` を新設し
+  `/health` (200 かつ `status=="ok"`) → `/v1/models` (`data[0].id`) の順で叩いて
+  **到達可否とモデル ID を 1 回の呼び出しで返す**。`/v1/models` 側の失敗は到達性に影響させない
+  (到達性は `/health` で確定済みのため握りつぶす)。
+- `ui/Program.cs` / `ui/appsettings.json`: 名前付き HttpClient `"dollama"` (Timeout 5 分) +
+  `EndpointRegistry` singleton + `DollamaClient` scoped の DI 配線。appsettings に
+  `Dollama:Endpoints` を追加 (`Dollama:BaseUrl` は消さずフォールバックとして残置)。
+- `ui/Components/Pages/Generate.razor`: `<select>` + `＋` 追加 + `×` 削除。option ラベルは
+  「name — modelId」、未到達/未 Probe は「name — 未到達」。Probe の起動経路は
+  **初回描画 (`OnAfterRenderAsync`・全件並列)・切替時 (1 件)・追加/削除直後 (1 件)・
+  未接続時の「再接続」ボタン (`ReconnectAsync`・1 件)** の 4 つだけで、定期ポーリングはしない
+  (接続インジケータと同じ方針)。生成中 (`_busy`) は切替・追加・削除を禁止 (select の `disabled` と
+  各ハンドラ入口の二重ガード)。**ただし再接続ボタンだけはガード方針が異なり**、`_busy` を見ず
+  `_reconnecting` (二度押し防止) だけで守られている。なお `Generate.razor` の接続インジケータ
+  付近のコメントは再判定を「初回描画/生成の成否/このボタン の 3 経路のみ」と書いており
+  上の 4 経路と食い違うが、**コード側コメントの是正は 2-6f のスコープ外 (未修正)**。Probe は `OnInitializedAsync` ではなく `OnAfterRenderAsync` で走らせる
+  (プリレンダリング中に走らせると最初のバイトが返らずブラウザが読み込み失敗になる既知の罠)。
+
+**C++ 側**
+
+- `src/server/sdxl_backend.hpp` に純関数 `compose_model_id(preset)` を追加。preset が空なら
+  従来値 `"sdxl-1.0"`、preset 指定時は `"sdxl-1.0/<preset>"`。**`#ifdef HAVE_OPENVINO` の外**に置き、
+  OV 非依存で test から直接呼べるようにしている (`SDXLBackend` 本体は OV 依存のため)。
+- `src/server/diffusion_backend.cpp` の `make_backend()` が `cfg.preset` を `SDXLBackend` へ渡す。
+
+**既知の制約 (今回は直さないと決めたもの)**
+
+1. `EndpointRegistry` は **singleton** = Blazor Server の全回路で選択エンドポイントが共有される。
+   単一ユーザー運用の前提で許容しているが、**複数タブを開くと片方の切替がもう片方の生成先を
+   黙って変える**。`Changed` イベントは定義されているが**購読者が無く**、他回路の UI は切替に
+   追随しない (レビューで確認済みの既知動作)。
+2. **preset 付き `model_id` は `SDXLBackend` 経路のみ**。フォールバック系の
+   `txt2img_generator.hpp` / `pipeline_generator.hpp` / `stub_generator.hpp` は従来通り無印
+   `"sdxl-1.0"` を返す (今回は追随させていない)。
+3. **選択中のエンドポイントは永続化しない**。`endpoints.json` に書くのは一覧 (name/url) だけで、
+   選択は in-memory。プロセス再起動で一覧の先頭 (= appsettings/JSON 順の先頭) に戻る。
+4. `ui/data/` は `.gitignore` 対象 (`.gitignore` の `ui/data/`) のため `endpoints.json` は
+   コミットされない = ローカル専用。
+5. 旧 `DollamaClient.HealthAsync` は `ProbeAsync` に全置換され**呼び出し元が無い**が、公開 API の
+   ため残置している (デッドコードと承知の上)。
+6. `ProbeAsync` の**エンドポイント 1 件あたり 3 秒は設定したタイムアウト値であり、実測レイテンシ
+   ではない**。2-6f では到達確認・切替の速度を計測していない (速度が目的の機能ではないため
+   CLAUDE.md 計測表には行を追加していない)。
+7. **config 由来の URL を UI から上書きすると、UI からは元に戻せない**。同名で `＋` 保存すると
+   `Add()` が `endpoints.json` に書き、`Merge()` は同名衝突時に URL を JSON 側優先とする。
+   一方 `Remove()` は `FromConfig=true` の項目を削除できない (false を返す) ため、
+   appsettings の値へ戻す手段は **`ui/data/endpoints.json` の当該エントリを手で消すこと**
+   だけになる。
+
+**検証**
+
+- C#: `dotnet test ui.Tests` → **716/716 全緑・失敗 0** (本記録の作成時に再実行して確認)。
+  新規は `ui.Tests/EndpointRegistryTests.cs` / `EndpointUrlTests.cs`。異常系 (不正 URL・重複名・
+  `FromConfig` の削除不可・不明名の `Select`) を含む。実装中に見つかった不具合 (CSS 未定義 2・
+  状態残留 4・生成中に切替できたバグ 1・キャンセル時の入力欄残留 1・README 未更新) は
+  レビュー工程で是正済み。
+- C++: `test_diffusion_backend` (ケース 7 = `compose_model_id` の空/非空を検証) /
+  `test_preset` / `test_http` / `test_cli_generate` を**研究機で実走し ALL PASSED**
+  (実装・テスト工程の報告値。記録係はこのセッションでは C++ 側を再実行していない。
+  重い GPU フル拡散 test はスコープ外でスキップ)。
+- UI の使い方・`Dollama:Endpoints` / `ui/data/endpoints.json` の形式・`GET /v1/models` の契約は
+  `ui/README.md` の「機能」表の「エンドポイント切替 (2-6f)」行・「エンドポイント一覧の形式 (2-6f)」節・
+  「C++ サーバーとの連携 (API 契約)」節に記載済み。
+
+**残件**: 上記の制約 1・2 (他回路への切替波及 / フォールバック経路の `model_id`)、および
+2-6d から継続の「HTTP API の preset フィールド」「UI の preset 選択」。
 
 ---
 

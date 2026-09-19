@@ -296,6 +296,7 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 - **2-6b** prompt→画像 本結線 (dual encoder + CFG・`IDiffusionRunner` で OV/CUDA 隔離) ✅ — prompt 供給元は将来 Phase 4 A の自作 LM に差し替え
 - **2-6c** 拡散 backend プラグイン枠 ✅ — 品質天井は自作カーネルでなく拡散アーキ (重み) にあるため、prompt→RGB 境界を純 cpp interface `IDiffusionBackend` に切り出し registry (`make_backend`) 化。`SDXLBackend` (OV+CUDA 隔離) + `SD35Backend` (拡張点 stub・generate throw) + `BackendImageGenerator` (解像度 reject/seed/採点ログ/matting PNG 化の共通後処理を集約)。段1 DI を `Txt2ImgGenerator` から差し替え (env `DOLLAMA_BACKEND` で選択・既定 "sdxl")。ComfyUI 的 breadth は追わず「2D キャラ生成に要るアーキだけ芯を共有して差し替える」棲み分け ([[project-output-quality-over-features]])
 - **2-6d** アニメ特化 SDXL 3 preset ✅ (2026-09-17・`f3101a3`〜`660e538`) — 計測表「アニメ特化 SDXL 3 preset (2-6d)」行 / roadmap 2-6d / measurements-log 「2-6d」節。✅ 2-6e prefix 自動付与 (measurements-log 「2-6e」小節)。未着手: HTTP preset / UI 選択
+- **2-6f** UI から複数 dollama サーバーを切替 ✅ (2026-09-19) — `EndpointRegistry` (appsettings `Dollama:Endpoints` + `ui/data/endpoints.json`) + `DollamaClient.ProbeAsync` (`/health`→`/v1/models`)・C++ は `compose_model_id` で `model_id` に preset 名を載せる。速度計測なし (計測表に行なし)。**既知の制約** (singleton ゆえ全タブ共有・preset 付き model_id は SDXLBackend 経路のみ・選択は非永続) は roadmap 「2-6f」節
 - 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
 - **G-10k (conv2d 真 batch2)** ✅ 陰性クローズ (2026-09-17・削減率 +3.38%/+1.87% = 秒中立・opt-in 降格 `c3ee3ca`)。resnet ≤0.95s ゲートは未達のまま・次の秒数レバーは未起票 (`docs/g10k-plan.md` §12)
 

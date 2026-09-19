@@ -92,17 +92,31 @@ img2img 生成 (入力画像を latent encode して編集)。
 
 ### GET /v1/models
 
-利用可能モデル一覧 (OpenAI 互換)。
+利用可能モデル一覧 (OpenAI 互換)。`data` は常に 1 要素で、`id` は生成器の `model_id()` をそのまま返す
+(`src/server/api.cpp` の `/v1/models` ハンドラ)。
 
 **レスポンス (200 OK)**:
 
 ```json
 {
   "data": [
-    { "id": "sdxl-1.0", "object": "model" }
+    { "id": "sdxl-1.0/illustrious-xl", "object": "model" }
   ]
 }
 ```
+
+**`id` の形 (2-6f)**: `SDXLBackend` 経路では `compose_model_id(preset)`
+(`src/server/sdxl_backend.hpp`) が `preset` の有無で切り替える。
+
+| 条件 | `id` |
+|---|---|
+| preset が解決できた (既定出荷 = `illustrious-xl`) | `sdxl-1.0/<preset>` → 既定は **`sdxl-1.0/illustrious-xl`** |
+| `--preset base` / `DOLLAMA_BACKEND_PRESET=base` の明示 | `sdxl-1.0` (無印) |
+| preset 名が `models/presets/` に見つからず base へフォールバック | `sdxl-1.0` (無印・`cli_generate.hpp` が `cfg.preset` を空にするため) |
+| フォールバック生成器 (`pipeline_generator.hpp` / `stub_generator.hpp` / `txt2img_generator.hpp`) | `sdxl-1.0` (無印・2-6f では追随させていない) |
+
+UI (2-6f) はこの `id` をエンドポイント選択肢のラベルに出すため、**クライアントは `sdxl-1.0` 固定を
+前提にしないこと**。
 
 ---
 
