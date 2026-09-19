@@ -12,13 +12,17 @@ builder.Services.AddRazorComponents()
 // SignalR (テレメトリ push)
 builder.Services.AddSignalR();
 
-// C++ 生成サーバーを叩く型付き HttpClient。BaseUrl は appsettings の Dollama:BaseUrl。
-var baseUrl = builder.Configuration["Dollama:BaseUrl"] ?? "http://127.0.0.1:8080";
-builder.Services.AddHttpClient<DollamaClient>(c =>
+// C++ 生成サーバーを叩く名前付き HttpClient。
+// 2-6f: BaseAddress を起動時に固定せず、DollamaClient がリクエストごとに
+// EndpointRegistry.Current の URL で絶対 URL を組み立てる (複数エンドポイント切替)。
+builder.Services.AddHttpClient("dollama", c =>
 {
-    c.BaseAddress = new Uri(baseUrl);
     c.Timeout = TimeSpan.FromMinutes(5); // 本生成は 84s 規模になり得るため長め
 });
+
+// 複数 dollama エンドポイントの切替 (appsettings "Dollama:Endpoints" + ui/data/endpoints.json)
+builder.Services.AddSingleton<Dollama.Ui.Services.EndpointRegistry>();
+builder.Services.AddScoped<Dollama.Ui.Services.DollamaClient>();
 
 // 生成中フラグ (Broadcaster と Generate.razor で共有) と テレメトリ常駐サービス
 builder.Services.AddSingleton<GenerationActivity>();
