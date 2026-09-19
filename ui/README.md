@@ -96,6 +96,7 @@ $env:ASPNETCORE_URLS  = "http://0.0.0.0:5074"
 | 下書き(高速プレビュー) | 生成パネルの 2 ボタン目。**本番と同じ重み・同じステップ数**のまま**解像度だけ 768²**に落として下書きを高速生成し、タグの当たり付けを速くする。右ペイン左上に「下書き 768²／本番 1024²」のモードバッジを表示。サイズ選択 (`_size`) 自体は不変で送信 size のみ落とす (512² は崩れるので不採用・幅>768 のみ縮小)。C++ サーバーは無改修 (`size` を変えて投げるだけ) |
 | LoRA 選択チップ | カタログ (`wwwroot/loras.json`) の LoRA をトグルチップで選択し、強度スライダ (0.0–1.5) を添える。**スライダの数値表示はドラッグ中に追従する** (`@oninput`)。未選択なら生成リクエストに `loras` キー自体を出さない |
 | 接続インジケータ | `GET /health` で C++ サーバー接続状態を上部バーに表示 (緑/赤)。**未接続のときだけ「再接続」ボタン**が出て `GET /health` を 1 回だけ叩き直す (定期ポーリングはしない・従来はページリロードしか回復手段がなかった) |
+| エンドポイント切替 (2-6f) | 上部バーの `<select>` で**複数の dollama 生成サーバーを切り替える**。option には各サーバーの到達可否と**モデル ID** (`GET /v1/models` の `data[0].id`) が出る。`＋` で名前 + URL を足して `data/endpoints.json` に永続化、`×` で削除 (**appsettings 由来の項目は削除不可**なので `×` 自体が出ない)。**生成中 (`_busy`) は切替・追加・削除ができない** |
 | HW テレメトリ | CPU / NPU / iGPU / RTX5080 の稼働を SignalR で push。**上部バーに横並びミニメーター**で表示 (**現状スタブ値**)。バーは**デバイス別の色** |
 | 生成中のテレメトリ強調 | 生成中は 4 本のバーが**それぞれのデバイス色で淡く光り**、ブランド横に accent 塗りの「**生成中**」pill が出る (従来は title 属性のホバーのみ)。真実源はテレメトリの `Generating` フラグなので、**C++ サーバーが無くても**生成を試みている間は光る |
 | テレメトリの役割ラベル | 各バーの右に**担当している役割** ("Tag LM" / "CLIP enc" / "VAE enc" / "SDXL UNet") を出し、「**NPU が CLIP を、RTX5080 が UNet を**やっている」が一目で分かるようにする。**ウィンドウ幅 ≥1500px のときだけ**表示 (`.tm-role` の既定は `display: none` = 通常フローに入らないので**バーの位置・幅は動かない**)。狭い幅では従来どおりホバーの `title` が受け皿。出し分けは **CSS だけ**で完結し razor に状態を持たない |
@@ -208,6 +209,38 @@ UI 側 (`TagLabels` サービス) は起動時に 1 回読むだけ (内容に�
 (`{kind}_{name}.png`・日本語名は保持・不正文字は `_` 置換しパストラバーサル防止)。
 このディレクトリも gitignore 済み (`ui/data/` 配下)。`/thumb` で静的公開している。
 
+### エンドポイント一覧の形式 (2-6f)
+
+エンドポイントの源は 2 つあり、`Services/EndpointRegistry.cs` が **名前でマージ**して 1 本の一覧にする。
+
+1. **appsettings** `Dollama:Endpoints` (配列)。無ければ `Dollama:BaseUrl`、それも無ければ
+   `http://127.0.0.1:8080` の 1 件 (名前 `local`) にフォールバックする。ここ由来は `FromConfig=true`
+   で **UI から削除できない** (設定ファイルが正典のため)。
+
+```json
+"Dollama": {
+  "BaseUrl": "http://127.0.0.1:8080",
+  "Endpoints": [ { "Name": "local", "Url": "http://127.0.0.1:8080" } ]
+}
+```
+
+2. **`ui/data/endpoints.json`** (gitignore 済み・UI の `＋` が書く)。
+
+```json
+[
+  { "name": "rig2", "url": "http://192.168.0.20:8080" }
+]
+```
+
+同名が両方にあれば **URL は JSON 優先** (ユーザーが設定を上書きした形) だが、`FromConfig` は
+維持される = その項目は削除不可のまま。追加は `http://` / `https://` の**絶対 URL のみ**受け付け、
+空名前・相対 URL・他 scheme は拒否して理由を画面に出す。壊れた JSON は空扱いで復帰する
+(`PresetStore` / `FavoriteTagStore` と同じ流儀)。
+
+選択は**プロセス内メモリのみ**で永続化しない (再起動すると一覧の先頭に戻る)。
+URL の結合は `Services/EndpointUrl.cs` の `Combine` に集約し、末尾/先頭スラッシュの
+有無 4 通りを吸収する。
+
 ### サムネイルの縮小 (依存)
 
 縮小には [SixLabors.ImageSharp](https://github.com/SixLabors/ImageSharp) (クロスプラットフォーム・
@@ -219,7 +252,7 @@ UI 側 (`TagLabels` サービス) は起動時に 1 回読むだけ (内容に�
 ```
 ui/
 ├─ Program.cs                    DI 配線 (HttpClient / SignalR / PresetStore / TagPaletteCatalog / FavoriteTagStore / TagLabels / テレメトリ常駐)
-├─ appsettings.json              Dollama:BaseUrl = C++ サーバー URL
+├─ appsettings.json              Dollama:Endpoints = C++ サーバー一覧 (Dollama:BaseUrl はその後方互換フォールバック)
 ├─ wwwroot/
 │  ├─ app.css                    ダークテーマ (2 カラム・左ペイン・上部バー・ミニメーター)
 │                                 色・寸法は :root のトークン経由 (直書き禁止・36 トークン)。
@@ -260,12 +293,15 @@ ui/
 
 ## C++ サーバーとの連携 (API 契約)
 
-`src/server/api.cpp` の実装に合わせている。`Dollama:BaseUrl` (既定 `http://127.0.0.1:8080`) を叩く。
+`src/server/api.cpp` の実装に合わせている。宛先は**選択中のエンドポイント**
+(既定 `http://127.0.0.1:8080`・上の「エンドポイント一覧の形式」参照)。
 
 - `POST /v1/images/generations`
   - req: `{ "prompt"(必須), "negative_prompt"?, "steps"?, "size"?:"WxH", "response_format":"b64_json" }`
   - res: `{ "created", "data": [ { "b64_json" } ] }`
 - `GET /health` → `{ "status": "ok" }`
+- `GET /v1/models` → `{ "data": [ { "id" } ] }` — 到達確認とあわせて **option のモデル ID 表示**に使う。
+  無い / 落ちていても到達性は `/health` で確定済みなので、モデル ID を空にするだけで倒れない。
 
 ## テレメトリの現状と差し替え点
 

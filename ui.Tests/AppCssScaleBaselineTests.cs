@@ -52,6 +52,12 @@ public sealed partial class AppCssTokenTests
         new(".conn .dot",                     "border-radius", "50%"),
         new(".conn .btn",                     "font-size",     "11px"),   // ← .conn-retry
 
+        // ── エンドポイント切替 (2-6f) ──
+        new(".endpoint-switch .ep-select",                          "font-size",     "12px"),
+        new(".endpoint-switch .ep-name, .endpoint-switch .ep-url",  "border-radius", "6px"),
+        new(".endpoint-switch .ep-name, .endpoint-switch .ep-url",  "font-size",     "12px"),
+        new(".endpoint-switch .btn",                                "font-size",     "11px"),
+
         // ── 共通ボタン (P3-1) ──
         new(".btn-primary",                   "font-size",     "15px"),   // ← .generate (§4.2 で 16 へ寄せ)
         new(".btn-ghost",                     "border-radius", "6px"),    // ← .preset-btn / .fav-plus / .preview-save / .conn-retry
@@ -75,6 +81,7 @@ public sealed partial class AppCssTokenTests
         new(".gen-actions .btn",              "border-radius", "8px"),    // ← .generate (§4.2 で 10 へ寄せ・2 ボタン共用)
         new(".gen-actions .btn-ghost",        "font-size",     "14px"),   // ← .generate.secondary
         new(".gen-reason",                    "font-size",     "12px"),
+        new(".gen-info",                      "font-size",     "12px"),   // 2-6f: 軽い通知 (.gen-reason と同寸)
         new(".error",                         "border-radius", "6px"),
         new(".error",                         "font-size",     "13px"),   // §4.2 で 12 or 14 への寄せを許容
 
@@ -206,10 +213,10 @@ public sealed partial class AppCssTokenTests
     {
         var actual = ScaleActual.Value;
 
-        Assert.Equal(36, actual.Count(x => x.Property == "font-size"));
-        Assert.Equal(29, actual.Count(x => x.Property == "border-radius"));
-        Assert.Equal(65, actual.Count);
-        Assert.Equal(65, ScaleBaseline.Length);
+        Assert.Equal(40, actual.Count(x => x.Property == "font-size"));
+        Assert.Equal(30, actual.Count(x => x.Property == "border-radius"));
+        Assert.Equal(70, actual.Count);
+        Assert.Equal(70, ScaleBaseline.Length);
 
         var baseline = ScaleBaseline.Select(e => (e.Selector, e.Property)).ToHashSet();
         var extra = actual
@@ -413,6 +420,12 @@ public sealed partial class AppCssTokenTests
         new(".conn .btn",                     "padding",        "2px 8px"),      // ← .conn-retry
         new(".conn .btn",                     "margin-left",    "4px"),          // ★ ← .conn-retry
 
+        // ── エンドポイント切替 (2-6f) ──
+        new(".endpoint-switch",                                     "gap",     "6px"),
+        new(".endpoint-switch .ep-select",                          "padding", "4px 6px"),
+        new(".endpoint-switch .ep-name, .endpoint-switch .ep-url",  "padding", "4px 6px"),
+        new(".endpoint-switch .btn",                                "padding", "2px 8px"),
+
         // ── 共通ボタン (P3-1) ──
         new(".btn-icon",                      "padding",        "0"),            // ← .ps-del
 
@@ -518,10 +531,10 @@ public sealed partial class AppCssTokenTests
     {
         var actual = SpacingActual.Value;
 
-        Assert.Equal(33, actual.Count(x => x.Property == "padding"));
-        Assert.Equal(25, actual.Count(x => x.Property == "gap"));
-        Assert.Equal(65, actual.Count);
-        Assert.Equal(65, SpacingBaseline.Length);
+        Assert.Equal(36, actual.Count(x => x.Property == "padding"));
+        Assert.Equal(26, actual.Count(x => x.Property == "gap"));
+        Assert.Equal(69, actual.Count);
+        Assert.Equal(69, SpacingBaseline.Length);
 
         var baseline = SpacingBaseline.Select(e => (e.Selector, e.Property)).ToHashSet();
         var extra = actual
@@ -1094,11 +1107,12 @@ public sealed partial class AppCssTokenTests
 
         Assert.True(bad.Count == 0, string.Join("\n", bad));
 
-        // 張り替えた 9 箇所ちょうど (生成 2 / 言語トグル 2 / 再接続 / 画像保存 /
-        // プリセット保存 / お気に入り + / プリセット削除)。増減はレビュー対象。
-        Assert.Equal(9, total);
+        // 張り替えた 13 箇所ちょうど (生成 2 / 言語トグル 2 / 再接続 / 画像保存 /
+        // プリセット保存 / お気に入り + / プリセット削除 / エンドポイント切替 4
+        // (2-6f: 追加保存・追加キャンセル・＋・削除))。増減はレビュー対象。
+        Assert.Equal(13, total);
         Assert.Equal(1, variantCount.GetValueOrDefault("btn-primary"));
-        Assert.Equal(7, variantCount.GetValueOrDefault("btn-ghost"));
+        Assert.Equal(11, variantCount.GetValueOrDefault("btn-ghost"));
         Assert.Equal(1, variantCount.GetValueOrDefault("btn-icon"));
     }
 
@@ -1181,10 +1195,13 @@ public sealed partial class AppCssTokenTests
             }
         }
 
-        // disabled を出しうるのは生成 2 + 再接続 + プリセット保存 + お気に入り + の 5 つ。
+        // disabled を出しうるのは生成 2 + 再接続 + プリセット保存 + お気に入り + の 5 つ、
+        // 2-6f (エンドポイント切替) で追加/削除/追加の保存ボタンの 3 つが加わり計 8 つ。
+        // (生成中 _busy に Registry = singleton の状態を動かさせないため、エンドポイントを
+        //  変えうるボタンはすべて disabled を持つ。キャンセルは状態を変えないので対象外)
         // どれも元から :disabled 規則を持っていた群 (0.6 / 0.45) なので、
         // .btn:disabled への集約で見た目は変わらない。
-        Assert.Equal(5, disabled.Count);
+        Assert.Equal(8, disabled.Count);
     }
 
     // 同詳細度 (0,3,0) で衝突する組の**記述順**を固定する。

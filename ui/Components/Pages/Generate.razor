@@ -5,6 +5,7 @@
 @inject DollamaClient Client
 @inject NavigationManager Nav
 @inject GenerationActivity Activity
+@inject EndpointRegistry Registry
 @implements IAsyncDisposable
 
 <PageTitle>dollama</PageTitle>
@@ -53,6 +54,36 @@
                     @onclick="@(() => SetTagLang("ja"))">日本語</button>
             <button type="button" class="btn btn-ghost @(_tagLang == "en" ? "on" : "")"
                     @onclick="@(() => SetTagLang("en"))">EN</button>
+        </div>
+
+        @* エンドポイント切替 (2-6f)。複数の dollama サーバー (C++ 生成エンドポイント) を
+           切り替えられる。各 option は Probe 済みの到達可否+モデル ID を表示する。
+           プローブは「初回描画 (全件並列)」「切替時 (対象 1 件)」「追加/削除直後 (対象 1 件)」
+           の 3 経路のみ (接続インジケータと同じく定期ポーリングはしない)。 *@
+        <div class="endpoint-switch">
+            <select class="ep-select" value="@Registry.Current.Name" @onchange="OnEndpointChangedAsync"
+                    disabled="@_busy"
+                    title="生成先の dollama エンドポイントを切り替えます">
+                @foreach (var ep in Registry.All)
+                {
+                    <option value="@ep.Name" class="@(EndpointIsReachable(ep) ? null : "ep-unreachable")">@EndpointOptionLabel(ep)</option>
+                }
+            </select>
+            @if (_addingEndpoint)
+            {
+                <input class="ep-name" @bind="_newEndpointName" placeholder="名前" />
+                <input class="ep-url" @bind="_newEndpointUrl" placeholder="http://host:port" />
+                <button type="button" class="btn btn-ghost" disabled="@_busy" @onclick="SaveNewEndpointAsync">保存</button>
+                <button type="button" class="btn btn-ghost" @onclick="CancelNewEndpoint" title="キャンセル">×</button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-ghost" disabled="@_busy" title="エンドポイントを追加" @onclick="@(() => _addingEndpoint = true)">＋</button>
+                @if (!Registry.Current.FromConfig)
+                {
+                    <button type="button" class="btn btn-ghost" disabled="@_busy" title="このエンドポイントを削除" @onclick="RemoveCurrentEndpointAsync">×</button>
+                }
+            }
         </div>
 
         @* 接続インジケータ。未接続のときだけ「再接続」ボタンを添える (P2-9)。
@@ -140,7 +171,12 @@
             @* 押せない理由を明示する (無言失敗の根絶・課題 #2)。押せるときは何も出さない。 *@
             @if (gate.Reason is not null)
             {
-                <div class="gen-reason">@gate.Reason</div>
+                <div class="gen-reason">@GateReasonText(gate.Reason)</div>
+            }
+
+            @if (_infoMessage is not null)
+            {
+                <div class="gen-info">@_infoMessage</div>
             }
 
             @if (_error is not null)
@@ -243,12 +279,22 @@
     private bool _busy;
     private bool _runningDraft;    // 現在 busy 中の生成が下書きモードかどうか (文言出し分け用)
     private string? _error;
+    private string? _infoMessage;  // エラーではない軽い通知 (例: エンドポイント上書き)。_error と別枠。
     private string? _imageData;   // base64 PNG (img 表示用)
     private byte[]? _imageBytes;  // 生成画像の生バイト (プリセット保存サムネ用)
     private bool _connected;
 
     // 「再接続」ボタンの二度押し防止 (P2-9)。押している間だけ true。
     private bool _reconnecting;
+
+    // ── エンドポイント切替 (2-6f) ────────────────────────────
+    // 各エンドポイント名 → 直近 Probe 結果。option の表示・_connected 判定に使う。
+    // Registry.All に無い名前が残っても表示に出ないだけなので明示的な掃除はしない。
+    private Dictionary<string, EndpointStatus> _endpointStatus = new();
+
+    private bool _addingEndpoint;
+    private string _newEndpointName = "";
+    private string _newEndpointUrl = "";
 
     // 直近プレビューのモードバッジ文言 (例「下書き 768²」「本番 1024²」)。未生成時は null で非表示。
     private string? _lastMode;
@@ -301,7 +347,7 @@
     }
 
     // 未接続時の「再接続」(P2-9)。GET /health を 1 回だけ叩き直す (定期ポーリングはしない)。
-    // HealthAsync は内部で例外を握りつぶすので、ここは二度押し防止だけを見る。
+    // ProbeAsync は内部で例外を握りつぶすので、ここは二度押し防止だけを見る。
     private async Task ReconnectAsync()
     {
         if (_reconnecting)
@@ -311,12 +357,125 @@
         _reconnecting = true;
         try
         {
-            _connected = await Client.HealthAsync();
+            var status = await Client.ProbeAsync(Registry.Current);
+            _endpointStatus[Registry.Current.Name] = status;
+            _connected = status.Reachable;
         }
         finally
         {
             _reconnecting = false;
         }
+    }
+
+    // option 表示ラベル。到達可否+モデル ID (未 Probe/未到達なら「未到達」)。
+    private string EndpointOptionLabel(EndpointRegistry.Endpoint ep)
+    {
+        if (EndpointIsReachable(ep))
+        {
+            return $"{ep.Name} — {_endpointStatus[ep.Name].ModelId ?? "?"}";
+        }
+        return $"{ep.Name} — 未到達";
+    }
+
+    // 未到達 (or 未 Probe) の option をグレー表示するための判定。
+    private bool EndpointIsReachable(EndpointRegistry.Endpoint ep) =>
+        _endpointStatus.TryGetValue(ep.Name, out var status) && status.Reachable;
+
+    // 押せない理由の文言。未接続の理由には「どのエンドポイントに未接続か」を添える (無言失敗の根絶)。
+    private string GateReasonText(string reason) =>
+        reason == GenerateGate.ReasonDisconnected
+            ? $"{reason} ({Registry.Current.Name})"
+            : reason;
+
+    // <select> でエンドポイントを切り替えたとき。選択を反映し、対象 1 件だけ Probe する。
+    // 生成中 (_busy) は切替を拒む (select 自体も disabled だが、状態は Registry = singleton で
+    // 他の回路にも波及するため入口でも守る)。
+    private async Task OnEndpointChangedAsync(ChangeEventArgs e)
+    {
+        if (_busy)
+        {
+            return;
+        }
+        var name = e.Value?.ToString();
+        if (string.IsNullOrEmpty(name) || !Registry.Select(name))
+        {
+            return;
+        }
+        // 直前のエンドポイントで出た通知は、別サーバーへ移った時点で無効なので必ず消す。
+        _error = null;
+        _infoMessage = null;
+        await ProbeCurrentAsync();
+    }
+
+    // 「＋」の保存。Registry.Add → 選択を新エンドポイントへ → Probe。
+    // 失敗 (名前/URL 未入力・URL が http(s) の絶対 URL でない) は _error へ理由を出す。
+    // 既存の名前を上書きした場合はエラーではなく _infoMessage に 1 行だけ出す。
+    private async Task SaveNewEndpointAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        var name = _newEndpointName.Trim();
+        var url = _newEndpointUrl.Trim();
+        var existed = Registry.All.Any(e => string.Equals(e.Name, name, StringComparison.Ordinal));
+
+        if (!Registry.Add(name, url))
+        {
+            _error = "名前と URL は必須です。URL は http:// または https:// で始まる絶対 URL で入力してください";
+            _infoMessage = null;
+            return;
+        }
+
+        _error = null;
+        _infoMessage = existed ? $"'{name}' を上書きしました" : null;
+        _newEndpointName = "";
+        _newEndpointUrl = "";
+        _addingEndpoint = false;
+        Registry.Select(name);
+        await ProbeCurrentAsync();
+    }
+
+    // 「＋」の入力をキャンセルする。入力欄は次に開いたとき空から始まるよう捨てる。
+    // 保存失敗で出したエラーもここで消す (閉じた後まで赤が残らない)。
+    private void CancelNewEndpoint()
+    {
+        _addingEndpoint = false;
+        _newEndpointName = "";
+        _newEndpointUrl = "";
+        _error = null;
+    }
+
+    // 現在選択中の (JSON 由来の) エンドポイントを削除する。FromConfig は Registry.Remove が
+    // false を返し何もしない (ボタン自体も FromConfig のときは出さない)。
+    private async Task RemoveCurrentEndpointAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        var name = Registry.Current.Name;
+        if (!Registry.Remove(name))
+        {
+            return;
+        }
+        _endpointStatus.Remove(name);
+        // 消したエンドポイントに紐づく通知を残さない (Remove 後の Current は別サーバー)。
+        _error = null;
+        _infoMessage = null;
+        await ProbeCurrentAsync();
+    }
+
+    // 現在選択中の 1 件だけを Probe して _connected / _endpointStatus を更新する。
+    private async Task ProbeCurrentAsync()
+    {
+        var current = Registry.Current;
+        var status = await Client.ProbeAsync(current);
+        _endpointStatus[current.Name] = status;
+        _connected = status.Reachable;
+        await InvokeAsync(StateHasChanged);
     }
 
     // Ctrl+Enter (Mac は Cmd+Enter) で生成する (P2-8)。
@@ -347,7 +506,7 @@
     }
 
     // 接続チェックと SignalR 購読は「インタラクティブ確立後 (= 最初の描画後)」に行う。
-    // OnInitializedAsync でやるとプリレンダリング中に HealthAsync(最大2秒) と
+    // OnInitializedAsync でやるとプリレンダリング中に ProbeAsync(1 件あたり最大3秒) と
     // 自己 SignalR 接続が走り、最初のバイトが返るまで固まってブラウザが
     // 「ページを読み込めませんでした」になる。OnAfterRenderAsync なら描画は即返る。
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -357,8 +516,18 @@
             return;
         }
 
-        // 接続インジケータ (初回チェック)
-        _connected = await Client.HealthAsync();
+        // 接続インジケータ (初回チェック)。全エンドポイントを並列 Probe する
+        // (select の option ラベルに各サーバーの到達可否+モデル ID を出すため)。
+        var probes = await Task.WhenAll(Registry.All.Select(async ep =>
+        {
+            var status = await Client.ProbeAsync(ep);
+            return (ep.Name, status);
+        }));
+        foreach (var (name, status) in probes)
+        {
+            _endpointStatus[name] = status;
+        }
+        _connected = _endpointStatus.TryGetValue(Registry.Current.Name, out var cur) && cur.Reachable;
         await InvokeAsync(StateHasChanged);
 
         // テレメトリ Hub を購読
@@ -460,6 +629,7 @@
         _busy = true;
         _runningDraft = draft;
         _error = null;
+        _infoMessage = null;   // エンドポイント操作の通知は生成を跨いで残さない
         // ★ _imageData / _imageBytes はここで破棄しない (P2-2)。前回画像を減光して残し、
         //   成功したときだけ差し替える (失敗しても直前の絵が消えない)。
         StateHasChanged();

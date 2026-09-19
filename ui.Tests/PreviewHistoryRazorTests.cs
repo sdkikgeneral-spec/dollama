@@ -334,11 +334,11 @@ public sealed partial class AppCssTokenTests
         Assert.DoesNotContain(ScaleActual.Value, e => e.Selector.Contains("thumb", StringComparison.Ordinal));
         Assert.DoesNotContain(SpacingActual.Value, e => e.Selector.Contains("thumb", StringComparison.Ordinal));
 
-        // 表そのものの件数もここで直接固定する (バッチ D が凍結した値)
-        Assert.Equal(36, ScaleActual.Value.Count(x => x.Property == "font-size"));
-        Assert.Equal(29, ScaleActual.Value.Count(x => x.Property == "border-radius"));
-        Assert.Equal(65, ScaleActual.Value.Count);
-        Assert.Equal(65, SpacingActual.Value.Count);
+        // 表そのものの件数もここで直接固定する (バッチ D が凍結した値・2-6f で scale 5 / spacing 4 件追加)
+        Assert.Equal(40, ScaleActual.Value.Count(x => x.Property == "font-size"));
+        Assert.Equal(30, ScaleActual.Value.Count(x => x.Property == "border-radius"));
+        Assert.Equal(70, ScaleActual.Value.Count);
+        Assert.Equal(69, SpacingActual.Value.Count);
 
         // 右ペイン (.canvas) に足したのは flex-direction だけ = 余白も寸法も増えていない
         Assert.Equal(1, SpacingActual.Value.Count(e => e.Selector == ".canvas"));

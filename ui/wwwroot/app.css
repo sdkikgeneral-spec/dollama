@@ -268,6 +268,58 @@ html, body
     font-weight: 600;
 }
 
+/* ── エンドポイント切替 (2-6f・上部バー) ── */
+.endpoint-switch
+{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.endpoint-switch .ep-select
+{
+    padding: 4px 6px;
+    font-size: var(--fs-sm);
+    max-width: 220px;
+}
+
+.endpoint-switch .ep-name,
+.endpoint-switch .ep-url
+{
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    padding: 4px 6px;
+    font: inherit;
+    font-size: var(--fs-sm);
+}
+
+.endpoint-switch .ep-name
+{
+    width: 90px;
+}
+
+.endpoint-switch .ep-url
+{
+    width: 200px;
+}
+
+.endpoint-switch .btn
+{
+    padding: 2px 8px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+}
+
+/* 未到達 (or 未 Probe) の option をグレーに落とす。
+   寸法は持たせないのでスケール表 (font-size / border-radius) には出ない。 */
+.endpoint-switch .ep-unreachable
+{
+    color: var(--muted);
+}
+
 .conn
 {
     display: flex;
@@ -650,6 +702,15 @@ textarea:focus, select:focus, input:focus-visible, button:focus-visible, .btn:fo
     font-size: var(--fs-sm);
     line-height: 1.5;
     margin-top: -4px;
+}
+
+/* エラーではない軽い通知 (2-6f: エンドポイントの上書きなど)。.gen-reason と同じ muted 1 行だが
+   出る条件が別 (_infoMessage) なのでクラスを分ける。赤系 (.error) とも別枠。 */
+.gen-info
+{
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
 }
 
 .error
