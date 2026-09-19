@@ -37,7 +37,8 @@ std::unique_ptr<IDiffusionBackend> make_backend(const BackendConfig& cfg)
                 cfg.unet_weights, cfg.vae_weights, cfg.embeds,
                 cfg.device_l.empty() ? "NPU" : cfg.device_l,
                 cfg.device_g.empty() ? "NPU" : cfg.device_g,
-                cfg.fast_cfg); // G-0b: FAST フラグを DiffusionPipeline まで運ぶだけ
+                cfg.fast_cfg, // G-0b: FAST フラグを DiffusionPipeline まで運ぶだけ
+                cfg.preset); // 2-6f: preset 名を model_id() に載せる
         }
         catch (...)
         {

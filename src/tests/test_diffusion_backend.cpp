@@ -23,6 +23,7 @@
 #include "server/matter_runner.hpp"            // IMatter (no-op 注入用)
 #include "server/scorer_runner.hpp"            // IScorer (no-op 注入用)
 #include "server/sd35_backend.hpp"             // SD35Backend (info 値検証用)
+#include "server/sdxl_backend.hpp"             // compose_model_id (OV 非依存な純関数のみ)
 
 namespace
 {
@@ -255,6 +256,17 @@ int main()
         cfg.backend_name = "does-not-exist";
         std::unique_ptr<IDiffusionBackend> b = make_backend(cfg);
         check(b == nullptr, "未知 backend 名は nullptr であるべき");
+    }
+
+    // ------------------------------------------------------------
+    // 7. compose_model_id: preset 名の有無で model_id 文字列が切り替わること
+    //    (UI が /v1/models で preset を識別できるようにする 2-6f 用の純関数)。
+    // ------------------------------------------------------------
+    {
+        check(compose_model_id("") == "sdxl-1.0",
+              "preset 空なら compose_model_id は従来値 sdxl-1.0");
+        check(compose_model_id("illustrious-xl") == "sdxl-1.0/illustrious-xl",
+              "preset 指定時は compose_model_id が \"sdxl-1.0/<preset>\" を返すべき");
     }
 
     if (g_fail == 0)

@@ -15,6 +15,23 @@
 // ----------------------------------------------------------------
 #pragma once
 
+#include <string>
+
+namespace dollama
+{
+
+// preset 名から model_id 文字列を組み立てる純関数 (テストから直接呼べるよう OV 非依存)。
+//   preset が空なら無印 "sdxl-1.0" (2-6d 導入前の従来値と後方互換)、
+//   preset があれば "sdxl-1.0/<preset>" として UI が識別できるようにする。
+//   SDXLBackend 本体 (下記) は OV 依存だが、この純関数だけは #ifdef の外に置き、
+//   OV 無効ビルドの test からも直接呼べるようにする。
+inline std::string compose_model_id(const std::string& preset)
+{
+    return preset.empty() ? "sdxl-1.0" : "sdxl-1.0/" + preset;
+}
+
+} // namespace dollama
+
 #ifdef HAVE_OPENVINO
 
 #include <cstdint>
@@ -22,7 +39,6 @@
 #include <fstream>
 #include <memory>
 #include <stdexcept>
-#include <string>
 #include <vector>
 
 #include "infer/text_conditioner.hpp"
@@ -56,10 +72,12 @@ public:
                 const std::string& embeds_path,
                 const std::string& device_l = "NPU",
                 const std::string& device_g = "NPU",
-                const FastConfig&  fast_cfg = FastConfig{})
+                const FastConfig&  fast_cfg = FastConfig{},
+                std::string        preset   = "")
         : tc_(tokenizer_l_xml, tokenizer_g_xml, encoder_l_xml, encoder_g_xml,
               tokenizers_dll, device_l, device_g),
-          runner_(make_diffusion_runner(unet_weights, vae_weights, embeds_path, fast_cfg))
+          runner_(make_diffusion_runner(unet_weights, vae_weights, embeds_path, fast_cfg)),
+          preset_(std::move(preset))
     {
         if (!runner_)
         {
@@ -140,7 +158,7 @@ public:
 
     std::string model_id() const override
     {
-        return "sdxl-1.0";
+        return compose_model_id(preset_);
     }
 
 private:
@@ -174,6 +192,7 @@ private:
 
     TextConditioner                   tc_;
     std::unique_ptr<IDiffusionRunner> runner_;
+    std::string                       preset_;
 };
 
 } // namespace dollama
