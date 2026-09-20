@@ -1,0 +1,17 @@
+preset,prompt_id,seed,sec,exit,log_ok,log_reason,png,recall_matched,recall_total,recall,axis_Hands,axis_Limbs,axis_Head,axis_Eyes,axis_Ears,axis_Mouth,axis_Digits,axis_GlobalAnatomy,argmax_axis,worst_anatomy
+illustrious-xl,p1,1000,42.38,0,True,,docs\logs\e1\img\illustrious-xl__p1__seed1000.png,9,10,0.9,0.0001,0.0001,0.0,0.0,0.0,0.0001,0.0,0.0,Limbs,0.0001
+illustrious-xl,p1,1001,44.21,0,True,,docs\logs\e1\img\illustrious-xl__p1__seed1001.png,9,10,0.9,0.0001,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0001
+illustrious-xl,p1,1002,53.07,0,True,,docs\logs\e1\img\illustrious-xl__p1__seed1002.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p1,1003,79.95,0,True,,docs\logs\e1\img\illustrious-xl__p1__seed1003.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p2,1000,43.48,0,True,,docs\logs\e1\img\illustrious-xl__p2__seed1000.png,8,9,0.8889,0.0008,0.0279,0.0029,0.0004,0.0002,0.0006,0.0007,0.0005,Limbs,0.0279
+illustrious-xl,p2,1001,41.49,0,True,,docs\logs\e1\img\illustrious-xl__p2__seed1001.png,9,9,1.0,0.0007,0.0093,0.0011,0.0002,0.0001,0.0005,0.0005,0.0003,Limbs,0.0093
+illustrious-xl,p2,1002,41.16,0,True,,docs\logs\e1\img\illustrious-xl__p2__seed1002.png,8,9,0.8889,0.0003,0.0016,0.0008,0.0002,0.0002,0.0002,0.0002,0.0003,Limbs,0.0016
+illustrious-xl,p2,1003,41.6,0,True,,docs\logs\e1\img\illustrious-xl__p2__seed1003.png,8,9,0.8889,0.0006,0.0046,0.0011,0.0003,0.0002,0.0005,0.0005,0.0004,Limbs,0.0046
+illustrious-xl,p3,1000,43.49,0,True,,docs\logs\e1\img\illustrious-xl__p3__seed1000.png,8,10,0.8,0.0001,0.0002,0.0,0.0,0.0,0.0001,0.0,0.0,Limbs,0.0002
+illustrious-xl,p3,1001,41.77,0,True,,docs\logs\e1\img\illustrious-xl__p3__seed1001.png,9,10,0.9,0.0002,0.0002,0.0,0.0,0.0,0.0001,0.0001,0.0,Limbs,0.0002
+illustrious-xl,p3,1002,97.07,0,True,,docs\logs\e1\img\illustrious-xl__p3__seed1002.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p3,1003,52.66,0,True,,docs\logs\e1\img\illustrious-xl__p3__seed1003.png,9,10,0.9,0.0001,0.0001,0.0001,0.0,0.0,0.0001,0.0001,0.0001,Hands,0.0001
+illustrious-xl,p4,1000,123.1,0,True,,docs\logs\e1\img\illustrious-xl__p4__seed1000.png,7,10,0.7,0.0011,0.1646,0.0038,0.0004,0.0002,0.0009,0.0012,0.0008,Limbs,0.1646
+illustrious-xl,p4,1001,58.6,0,True,,docs\logs\e1\img\illustrious-xl__p4__seed1001.png,9,10,0.9,0.0005,0.004,0.0008,0.0002,0.0001,0.0003,0.0004,0.0002,Limbs,0.004
+illustrious-xl,p4,1002,41.59,0,True,,docs\logs\e1\img\illustrious-xl__p4__seed1002.png,7,10,0.7,0.001,0.0128,0.0046,0.0007,0.0004,0.0007,0.001,0.0008,Limbs,0.0128
+illustrious-xl,p4,1003,44.39,0,True,,docs\logs\e1\img\illustrious-xl__p4__seed1003.png,9,10,0.9,0.0012,0.0239,0.0043,0.0006,0.0004,0.0009,0.0012,0.0008,Limbs,0.0239
