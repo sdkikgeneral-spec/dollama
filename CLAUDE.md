@@ -132,7 +132,8 @@ RTX5080 = **16GB**。常駐物の概算:
 
 ### OpenVINO C++ 入力テンソルの要素型 (タスク5 = CLIP NPU 推論 で確認)
 
-> ★番号注意: この「タスク5」は**旧 CLAUDE.md Phase 1 表**の採番 (5 = CLIP)。roadmap 「Phase 1」表は
+> ★番号注意: この「タスク5」は**旧 CLAUDE.md Phase 1 表**の採番 (5 = CLIP・同採番は
+> `docs/measurements-log.md`「次のタスク」節 Phase 1 表に現存)。roadmap 「Phase 1」表は
 > 別採番 (**4** = CLIP / 5 = キャラ台帳) なので番号だけで辿らないこと。`src/infer/clip_encoder2.hpp`
 > の「タスク5 の既知事例」も旧採番。
 
