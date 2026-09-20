@@ -126,7 +126,11 @@ S5 (commit `25772bd`) の記録に対する監査で見つかった食い違い�
 **② CLAUDE.md に G-8k の行が無い**
 
 CLAUDE.md の計測表には G-2k / G-3kf / G-4k の行はあるが **G-8k の行が無く**、
-さらに G-4k S2 の行 (CLAUDE.md:230 付近) は今も
+さらに G-4k S2 の行 (CLAUDE.md 計測表「conv2d 後段融合 (G-4k S2 完了)」行。★本節の `CLAUDE.md:<行番号>` 参照は
+2026-09-20 の CLAUDE.md 圧縮で腐るため**すべて行名参照へ差し替えた** — 指している対象は変えていない。
+★**2026-09-20 の圧縮で CLAUDE.md 本体の当該文言は退避節へ移動済** = 下記引用は**圧縮前の原文**であり、
+現在の CLAUDE.md 該当行は「★ゲートは今も未達 (G-10k 陰性クローズ後も)」に置き換わっている。
+逐語は本 doc「CLAUDE.md 計測表セルの全文退避」節の「conv2d 後段融合 (G-4k S2 完了)」小節にある) は当時
 「resnet ≤0.95s の合否は **G-10k(conv 真batch2)/G-8k(im2col malloc撲滅) 後**へ再割当」と
 **G-8k を未完了の前提**で書かれている。G-8k は S4b 全緑でクローズ済 (2026-08-19) なので、
 次に CLAUDE.md を触る際に追随させること (再 profile 自体は G-10k 完了後で正しい — ★2026-09-17 T8 注記: ただし計器を `prof_unet_fast_warm` (B=1) にしてはいけない・G-10k は陰性クローズ (下記 G-10k 節 規律 1) —
@@ -157,7 +161,7 @@ VAE と**同じ形の追随漏れ**が UNet 側にもある。2-6 最適化後�
 
 | 箇所 | 種別 |
 |---|---|
-| `CLAUDE.md:224` | ★**正典**。VAE と違い未訂正 (S5b/S5c の決裁が「CLAUDE.md は SSIM の VAE セルのみ」ゆえスコープ外) |
+| CLAUDE.md 計測表「自作 SDXL UNet 全段」行 (起草時 `CLAUDE.md:224`) | ★**正典**。VAE と違い未訂正 (S5b/S5c の決裁が「CLAUDE.md は SSIM の VAE セルのみ」ゆえスコープ外) |
 | `docs/measurements-log.md:40` | 2-5 実装時の計測行 (**当時の実測値としては正しい** — 履歴としてこのままでも可) |
 | **本 doc**「次のタスク」節「Phase 2 以降」箇条書きの 2-5 (SDXL UNet) 項 / `docs/roadmap.md:44` / `docs/roadmap.md:182` / `docs/testing.md:445` | 2 次記述 (要追随) |
 | `docs/fast-mode-plan.md:15` / `:22` / `:378` / `:385` / `:487` | 2 次記述 (要追随)。同一 doc 内で `:336` の実測 0.999996 と食い違っている。★**行番号は 2 度繰り下がった**: 起草時 `:333`/`:340`/`:438`/`:295` → 2026-09-04 の R-1 加筆で `:367`/`:374`/`:476`/`:329` → **2026-09-20 検算で `:378`/`:385`/`:487`/`:336`** (`:15` / `:22` は不変)。**指している中身は同じ** (grep: `golden-SSIM 0.999998` / `現行 golden-SSIM 0.999998 を**無改変で維持**` / `test_unet SSIM 0.999998`) |
@@ -166,18 +170,19 @@ VAE と**同じ形の追随漏れ**が UNet 側にもある。2-6 最適化後�
 
 VAE と同じく **0.999998 は 2-5 当時の正しい実測値であって誤記ではない**。次に CLAUDE.md を
 触る担当は、VAE セルと同じ体裁 (旧値・変化点 commit・「誤記ではない」の明記) で追随させること。
-なお **`CLAUDE.md:224` には S5d で「2-6 後の実測は 0.999996 = 本残債③」への注記のみ入れた** (値は未置換)。
+なお **CLAUDE.md 計測表「自作 SDXL UNet 全段」行には S5d で「2-6 後の実測は 0.999996 = 本残債③」への注記のみ入れた** (値は未置換)。
 
 **④ 秒数側にも同型の陳腐化 (CLAUDE.md の decode 7.96s / 1step ~9.2s・S5d で追加)**
 
 ★**S5/S5b/S5c は「SSIM の追随漏れ」だけを直し、同じセルに載っている秒を見落としていた。**
-`CLAUDE.md:223` は「本表が追随していなかった分の訂正」と自己宣言しながら、**同じセル末尾の
-`decode 7.96s` は 2-6 最適化に未追随**だった (`:224` の `1step ~9.2s` も同型)。
+CLAUDE.md 計測表「自作 VAE decoder 全段」行 (起草時 `CLAUDE.md:223`) は「本表が追随していなかった分の訂正」と
+自己宣言しながら、**同じセル末尾の `decode 7.96s` は 2-6 最適化に未追随**だった
+(「自作 SDXL UNet 全段」行の `1step ~9.2s` も同型)。
 
 | 正典の記載 | 実際に動いた経緯 (一次証拠) | 食い違い |
 |---|---|---|
-| `CLAUDE.md:223` VAE `decode 7.96s` | `b3fe139` 本文「**VAE decode 7.96s→5.73s**」→ `a71898e` 本文「wall-clock: **VAE decode 5.21s→1.16s**」 | `docs/fast-mode-plan.md` の **G-9k は同じ対象を 1.197s** と見積っており **7 倍** |
-| `CLAUDE.md:224` UNet `1step ~9.2s` | `f3f4625` 本文「**UNet 1step ~9.2s → 2.50s**」 | G-3kf の **warm 実測 default 469.5-526ms** と **19 倍** |
+| CLAUDE.md 計測表「自作 VAE decoder 全段」行 VAE `decode 7.96s` | `b3fe139` 本文「**VAE decode 7.96s→5.73s**」→ `a71898e` 本文「wall-clock: **VAE decode 5.21s→1.16s**」 | `docs/fast-mode-plan.md` の **G-9k は同じ対象を 1.197s** と見積っており **7 倍** |
+| CLAUDE.md 計測表「自作 SDXL UNet 全段」行 UNet `1step ~9.2s` | `f3f4625` 本文「**UNet 1step ~9.2s → 2.50s**」 | G-3kf の **warm 実測 default 469.5-526ms** と **19 倍** |
 
 同型の秒は**正典以外にも残っている** (S5e で追加。①③ と同じく横断で押さえる):
 
@@ -560,6 +565,84 @@ test = `test_preset` (純 cpp・重み不要)。生ログ = `docs/logs/2-6d/` (R
 - 検証 (研究機・exe sha256 `4ed1d470…` = worktree `build/src/dollama.exe` 現物と一致・既定 illustrious-xl・`DOLLAMA_SEED=1234`・**素プロンプト**を CLI に渡す): `applied` 行の prompt/negative 全文が 2-6d `docs/logs/2-6d/illustrious-xl/p{1,2,3}.log` の `FULL_PROMPT:`/`FULL_NEGATIVE:` と**文字列一致 3/3**、PNG sha256 が 2-6d と**一致 3/3** (p1 `136d388f…` / p2 `3765065d…` / p3 `48553e0b…`・record-writer が両ディレクトリの sha256sum で再確認) = **出荷経路が 2-6d 目視評価の条件と bit 同一**。`--no-preset-prefix` (p1_noprefix) は `applied` 行なし・sha256 `7f1dc13e…` ≠ p1 = OFF が効く。`[warn]`/stub/フォールバック/`構築に失敗` は 4 log とも 0 件 (大文字小文字を区別する grep。`MISSING` を無視大小で引くと negative 内の「missing fingers」に当たるので注意)。
 - 未検証: `--fast` の有無は CLI 生成モードがフラグをログしないため 4 log から確認できない (2-6d 残債 2 と同型)。ただし PNG が 2-6d と bit 一致なので、拡散条件は 2-6d 走行と同一であることまでは言える。
 - 生ログ: `docs/logs/2-6e/` (README + p1/p2/p3/p1_noprefix の png/log)。
+
+
+## CLAUDE.md 計測表セルの全文退避 (2026-09-20・CLAUDE.md 肥大化是正)
+
+CLAUDE.md 冒頭の規約「各行の詳細経緯・条件・seed sweep・採否理由は `docs/measurements-log.md` に完全版を退避。
+ここは芯となる数値のみ」に反して、「C++ 実装の確定値」表のセルに経緯・教訓が全文書きされたまま肥大化していた
+(39.4KB・ユーザー指摘 2 回目)。**下記は退避時点 (HEAD `89afecb`) の CLAUDE.md 該当セルの「値」列を一字一句そのまま**
+写したもの。CLAUDE.md 側は結論の数値 + 本節へのポインタに圧縮した。
+
+**本節の位置づけ (誤読防止)**: 本節は**圧縮前 (HEAD `89afecb`) の逐語スナップショット**であり、
+**経緯・教訓・急所・禁止事項の正本**である (これらは CLAUDE.md 側から消えたので、ここから削ると両方から消える)。
+一方、**数値は「その時点の実測」を凍結しただけで、現行値の正本ではない**。本節には将来の再測で動く値が含まれる
+(例: device_arena peak **13649MB** / resnet バケット **1.212s** / e2e **x1.33439** / GATE2 SSIM **0.999474**)。
+★**数値を再測したら CLAUDE.md と本節の両方を更新すること**。両者が食い違っているときは**日付の新しい方が現行値**で、
+本節の「正本」宣言は数値には及ばない。
+
+引用の読み方: 各小節の見出し = CLAUDE.md の「指標」列、`test` = 「test」列、本文 = 「値」列の逐語。
+セル内の注記 (★印の陳腐化警告・教訓・禁止事項) も原文のまま含む。
+
+**本圧縮の射程外 (残債)**: 凍結済みの監査ログ `docs/logs/g10k-baseline/r1-audit-findings.md` (日付付き・書き換えない方針)
+の `CLAUDE.md:232` 参照 (G-8k device_arena 行を指す意図) は、**この圧縮以前から既に腐っており** (HEAD~1 時点の実体は
+`:233`)、2026-09-20 の圧縮で `:236` 付近へさらに移動した。今回是正した「腐った行番号」の対象は**本 doc 内の参照のみ**で、
+凍結監査ログは意図的に無改変。次に当該ログを引く担当は、行番号ではなく**行名「device_arena e2e VRAM 収支 (G-8k …)」**で
+CLAUDE.md を引くこと。
+
+### UNet バッチ (G-2k S2)
+
+- test 列: test_unet/conv2d
+
+`launch_unet_batched(B=2)` per-sample パリティ **実走緑** (SAC OFF): sample0/1 とも MAE**6.4e-05**/bad0・wmma M=154 タイル境界も異常なし。ビット一致には非到達=FP16 tol 内 (linear の M=B*tokens 単発 GEMM が cuBLAS タイル選択を変え蓄積順が変わるため・1 ULP)。conv2d S1 は per-n ループで **BIT-EXACT**
+
+### CFG batch2 パリティ+速度 (G-2k S3c 完了)
+
+- test 列: test_diffusion_batch2
+
+**parity gate g=1.0 SSIM 0.9994≥0.999 PASS** (SAC OFF 実走): ノイズ床 (off@g=1.0 x2) 完全 bit-exact → 発散源 100% batch2 tiling 差。guidance sweep g=1/3/7.5 = 0.9995/0.9988/0.9966 (FP16 tiling が CFG で単調増幅・平均差≤0.3/255)。**正典 CFG e2e (20step/warm/VAE 込)**: default **20.93s** / batch2 単独 **17.59s(1.19x)** / **--fast(attn+batch2) 15.88s(1.32x)** ★**この 3 値は 2026-07-09 = pre-G-8k の実測で陳腐化・要再測。見積り・合否の分母に使わないこと** (★**再測の担い手は未定** — 予定していた G-10k T7c は T7b が陰性だったため規定どおり**スキップ**され、G-10k 自体が陰性クローズした = `docs/g10k-plan.md` §13 の T7b 節「T7c はスキップ」。値は差し替えていない。詳細は fast-mode-plan「e2e ベースライン一本化」の陳腐化注記)。batch2 が ~2× 未達なのは conv2d per-n 直列が batch されないため
+
+### GroupNorm multi-block (G-4k S1a 完了)
+
+- test 列: test_groupnorm/test_unet_fast
+
+`launch_group_norm_mb` 2段決定的集約 (atomic 禁止): 帯域 unet_320_128 **444.6 GB/s** (1-block 105 → **4.2x**)・parity MAE~3e-7・bitexact 3runs 一致。epilogue 配線 (resnet norm1/2+conv_norm_out): epilogue vs default **SSIM 0.999999**/bad0・default 無改変 (fast vs default bit-exact 維持)・1step 差はノイズ内 (resnet ゲート合否は S1b/S2 後の再 profile)
+
+### GroupNorm+SiLU 融合 (G-4k S1b 完了)
+
+- test 列: test_groupnorm/test_unet_fast
+
+`launch_group_norm_silu` = mb normalize 末尾に SiLU を融合 (partial/finalize は共用)・resnet epilogue の norm1/2 で mb+silu 2 パス→1 パス。GN 結果を half 丸め→同式 SiLU で **5 形状すべて BIT-EXACT vs mb+silu** (memcmp)・融合 bitexact 3runs 一致。UNet: epilogue vs default **SSIM 0.999999**/MAE6.6e-5/bad0・default 無改変維持 (fast vs default bit-exact)・1step 差ノイズ内 (conv_norm_out は golden 捕捉保護で据え置き)
+
+### conv2d 後段融合 (G-4k S2 完了)
+
+- test 列: test_bias_add/test_unet_fast/prof_unet_fast_warm
+
+resnet epilogue の conv 後段を融合 2 本に: `launch_conv_bias_biasch` (P1=conv1.bias broadcast + per-(n,c) time-bias・per-b ループ B 発+bias パスを 1 発) / `launch_conv_bias_residual` (P2=conv2.bias broadcast + residual add・bias パス+launch_add を 1 発)。**急所=`launch_conv2d` は形状で丸め列が違う** (GEMM 経路=2 段丸め / direct 経路=単一丸め) → conv を bias 抜きで呼び中間を register で half 丸めし bias 後付け再現、GEMM 経路のみ bit 一致。`conv2d_uses_gemm_bias_path` ガード (conv2d.cu 純追加・本体不変) で非保証 shape は従来 2 パスへフォールバック。P1/P2 **全 6 形状 (B1/2×320_128/640_64/1280_32) BIT-EXACT vs GEMM 2 段丸め参照** (memcmp)・in-place bit-exact・3runs 一致。UNet: epilogue vs default **SSIM 0.999999**/MAE6.6e-5/bad0・default 無改変維持 (fast vs default bit-exact)・1step warm default 469.5/fast 402.3/fast+epi 400.7ms。**resnet ≤0.95s 再 profile 完了 (2026-07-14 研究機実走)=不合格**: resnet ×20 バケット default 1.226s→fast+epi **1.212s (−1.1%=ノイズ床内)** で ≤0.95s 未達。バケットは conv2d 質量・GN 4.2x は非寄与 → ゲートは G-4k スコープ外と確定・合否は **G-10k(conv 真batch2)/G-8k(im2col malloc撲滅)** 後へ再割当 (★**G-8k は S1〜S4b でクローズ済 2026-08-19** = 前提の片方は充足。ただし G-8k は秒数レバーではなく再 profile は G-10k 完了後。正本 `docs/fast-mode-plan.md` G-8k 実装記録 / `docs/hw-accel-plan.md`) (`prof_unet_fast_warm.exe` DOLLAMA_PROFILE=1 [RESNET-BUCKET] で恒久化) ★**現況注記 (2026-09-17 G-10k T8)**: 上の再割当は計器誤り — `prof_unet_fast_warm` は **B=1 経路のみ**で batch2 構成の resnet を測れない。G-10k は削減率 (同構成の `DOLLAMA_CONV_BATCH` A/B) で判定し**陰性クローズ**、≤0.95s ゲートは未達のまま。B=1 計器で再 profile しないこと (正本 `docs/measurements-log.md` G-10k 節 規律 1)
+
+### epilogue 出荷結線 (G-4k S3 完了 = G-4k クローズ)
+
+- test 列: test_diffusion_batch2/test_unet_fast/prof_unet_fast_warm
+
+`DOLLAMA_EPILOGUE` env を `FastConfig` に追加 (`--fast` が含意) + `DiffusionPipeline` へ貫通 → **出荷 `--fast` = attn_fast+batch2+epilogue**。**ゲート再設計 (急所)**: 初版は fast+epi vs default を **g=7.5** で SSIM 判定 = ①batch2 単独ですら g=7.5 で 0.9966 ゆえ epilogue 正常でも落ちる ②測っている変数が epilogue でない ③epilogue 自身も GN mb の蓄積順差で bit 一致でない (MAE6.6e-5 = batch2 と同オーダー) → **ハードゲートは g=1.0 の parity 節 (steps=4・meson test 自動枠) に 4 本**へ移設・g=3/7.5 は characterization (合否なし)・DB2_BENCH は速度計測に純化 (`DB2_BENCH_G` 追加)・旧ゲート②(default 二連走) は parity `:300` と重複で削除 (~60-70s 節約)。**教訓: CFG 増幅下 (g>1) で FP16 微差をゲートしない。被験変数は g=1.0 で分離する**。**実走 (SAC OFF・全 PASS)**: GATE1 off@g=1.0 二連走 **bit-exact** / GATE2 batch2 vs off SSIM **0.999474** / GATE3 epilogue determinism **bit-exact** / GATE4 **(fast+epi) vs fast @g=1.0 SSIM 0.999477** (≥0.999)。characterization: (fast+epi) vs fast は g=3 0.998765 / **g=7.5 0.996533** (=初版ゲートなら FAIL の実証)。**e2e DB2_BENCH 20step warm**: default 24662.8ms / attn+batch2 (composite・**not CLI-reachable**) 18557.8ms **x1.32898** / **fast+epilogue (shipping --fast) 18482.4ms x1.33439** = epilogue 上乗せ +0.4% ノイズ床内。★**この e2e 3 値と x1.33439 は 2026-07-28 = pre-G-8k の実測で陳腐化・要再測。見積り・合否の分母に使わないこと** (★**再測の担い手は未定** — G-10k T7c はスキップ・G-10k 陰性クローズ = `docs/g10k-plan.md` §13 T8 節。値は差し替えていない)。**注: 本走行は機体クロック/熱で全体が ~18% 遅くドリフト** (同一走行内で default resnet バケットが 1.28564→1.41299s = +9.9%) → **相対倍率 x1.33 を主指標とし絶対秒は条件付き** (G-2k の x1.32 と整合)。batch2 単独は harness に config 無く未測定。test_unet_fast: default vs golden SSIM 0.999996 / **fast vs default bit-exact (default 無改変維持)** / epilogue vs default SSIM 0.999999・1step warm 485.7/476.3/475.9ms (ドリフトで fast の効きが x1.20→x1.02 に縮んで見える)
+
+### device_arena e2e VRAM 収支 (G-8k S1〜S4b 完了 = G-8k クローズ / S6 レビュー是正済)
+
+- test 列: test_device_arena/test_http (`prof_arena_e2e` は計測専用・meson test 未登録)
+
+UNet forward・VAE decode・conv2d im2col の一時バッファをチャンク連結 bump アリーナ `device_arena` + 事前 reserve 化 (既定 ON・キルスイッチ `DOLLAMA_POOL=0`)。S4b e2e (研究機 1024² 20step CFG `--fast` 相当 3 枚 × A/B 2 ラウンド・SAC OFF) **6 ハードゲート全 PASS** = S4 の G4 FAIL (peak 16302MB 物理張り付き) を S3b/S3c (reserve+固定ヘッドルーム) で解消: G0 出力 18 枚 bit 一致 / G1 step ループ内 実 cudaMalloc/cudaFree **0** / G2' 1 枚目から chunk_alloc 0 / G4 peak **13649MB ≤ 基準 POOL=0 13269+512MB** (delta +380MB) / G5' peak 時 free 2653MB / G6 秒 +5% 以内 (S4 のページング事故 11→25s 再現せず)。トレードオフ = 定常 residency +6.5GB (reserve 常駐)。秒は characterization のみ (G-8k は秒数レバーではない・本命は G-10k ★だがその G-10k も陰性クローズ済 = 次行) ★**「秒数レバーではない」は起票目的の話で「実測で秒が動かなかった」の意ではない** (実体 = `docs/fast-mode-plan.md`「用語の解消」節)。**S6 (レビュー是正 2026-08-22)**: HTTP 生成を api.cpp のファネル mutex で直列化 + `device_arena_release_noexcept` (dtor 経路) + ctor try 拡大 + 破棄ゲート 4 本 → **最終ツリー `meson test` 53/53 緑・出力 sha256 全一致で数値不変**・VRAM **delta +340MB**。★**判定は同一セッションの POOL=0 比 delta** (絶対値は同居量で平行移動)・★**F4/F2 の異常系は未発火 =「実走で確認した」と書かない**。詳細・経緯の正本は `docs/measurements-log.md` G-8k S4/S4b/**S6** 行と「G-8k S6 (T2)」節 + `docs/fast-mode-plan.md` G-8k 実装記録
+
+### conv2d 真 batch2 (G-10k・陰性クローズ 2026-09-17)
+
+- test 列: test_gemm/test_conv2d (+`conv2d_batch_on`)/test_diffusion_batch2
+
+数値ゲート全緑 ([G1] bit-exact / GATE2 MAE 0.0303612・SSIM 0.999474・GATE4 0.999467 = T5/T7 実走・G-4k S3 比で MAE/GATE4 が動いている) だが fast+epilogue resnet バケット削減率 **+3.38% / +1.87% (悪化・分母 = 同セット `DOLLAMA_CONV_BATCH=0`)** = 秒中立 → **opt-in `DOLLAMA_CONV_BATCH=1` に降格・既定は per-n 直列** (`c3ee3ca`)。律速 = GEMM/im2col が N に比例。経緯・規律 (分母退役・計装 ON 秒の扱い) は `docs/measurements-log.md` G-10k 節 / `docs/g10k-plan.md` §13
+
+### ランタイム LoRA (L-2 完了)
+
+- test 列: test_lora_runtime (+回帰ゲート: test_diffusion_batch2)
+
+kohya→diffusers 写像 (`load_lora_modules`) + 常駐重み apply-time マージ (`unet_apply_loras`: `launch_gemm_fp16` で delta=scale*(B@A) → `launch_add` in-place) / `unet_clear_loras` bit-exact 復元。**全ゲート PASS** (SAC OFF 実走): [1]host写像 modules/te_skip/incomplete/scale/throw OK・[2]parity max_abs**4.9e-4**/bad0・[3]revert 4/4 memcmp bit-exact・[4]stack max_abs**9.6e-4**/bad0+revert bit-exact。数値正典=L-1 offline merge (dollma_merge_lora.py) `W+strength*(alpha/rank)*(B@A)`。HTTP `loras:[{name,strength}]` 結線 (name は allowlist 検証で path traversal 封止)。**⚠ 後日判明した ODR 違反 (G-4k S3 期の C0 で修正)**: `src/infer/unet.cu` と `src/kernels/vae_decode.cu` が**同名・異レイアウトの `class DeviceWeights` を外部リンケージで**定義しており (元から ODR 違反)、L-2 で追加した `patched_` メンバが両者のレイアウトを決定的にずらして**顕在化** → VAE+UNet 両ハンドル同居時の `~DiffusionPipeline` で **0xC0000005**。C0 で両 TU の `DeviceWeights` を**匿名 namespace 化**して解消 (`test_diffusion_batch2` 90.80s 完走・exit 0・破棄後 VRAM free 14913MB)。**教訓: 単体ハンドルの test は、複数ハンドル同居時の破棄経路を検査しない** — `test_lora_runtime` は UNet ハンドルしか持たないため L-2 の地雷を素通しし、VAE+UNet 同居の `test_diffusion_batch2` で初めて露見した。同居破棄を通す test が既に回帰ゲートとして機能しているため C0 に専用 test は新設していない
 
 
 ## 次のタスク
