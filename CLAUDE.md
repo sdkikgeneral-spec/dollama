@@ -130,7 +130,13 @@ RTX5080 = **16GB**。常駐物の概算:
 - `ov_model.reshape([batch, seq_len])` をコンパイル前に必ず実行
 - `convert_model` はデフォルトで動的形状を出力するため、reshape が必須
 
-### OpenVINO C++ 入力テンソルの要素型 (タスク5 で確認)
+### OpenVINO C++ 入力テンソルの要素型 (タスク5 = CLIP NPU 推論 で確認)
+
+> ★番号注意: この「タスク5」は**旧 CLAUDE.md Phase 1 表**の採番 (5 = CLIP・同採番は
+> `docs/measurements-log.md`「次のタスク」節 Phase 1 表に現存)。roadmap 「Phase 1」表は
+> 別採番 (**4** = CLIP / 5 = キャラ台帳) なので番号だけで辿らないこと。`src/infer/clip_encoder2.hpp`
+> の「タスク5 の既知事例」も旧採番。
+
 
 - **OV IR の入力 `element_type` を必ず確認してテンソルを生成すること。** CLIP-L の `input_ids` は `i64` shape `[1,77]` (静的)。
 - C++ で `ov::element::i32` テンソルを渡すと、NPU プラグインが i64 として要素あたり 8 バイト読もうとし、領域外読み出しで **0xC0000409 (STATUS_STACK_BUFFER_OVERRUN)** クラッシュする。型は IR と厳密に一致させる (token id は int64 へ明示変換してコピー)。
@@ -281,25 +287,11 @@ std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
 
 > 経緯・採否・詳細は `docs/roadmap.md`。完了済みの計測は上表＋ `docs/measurements-log.md`。
 
-**Phase 1 (パイプライン骨格) ✅ 全完了**
+**Phase 1 (パイプライン骨格) ✅ 全完了** — Meson+`src/` 構造 / Tensor・Allocator・SPSC キュー / CLIP NPU 7.82ms / キャラ台帳 / WD14 CPU 105.3ms / スレッド骨格+アフィニティ 9.13 fps。実装物とファイルの一覧は roadmap 「Phase 1」表
 
-| # | 実装物 | ファイル |
-|---|---|---|
-| 1 | Meson + src/ 構造 | `meson.build`, `src/` |
-| 2-4 | Tensor / Allocator / SPSC キュー | `src/core/{tensor,allocator,queue}.hpp` |
-| 5 | CLIP NPU 推論 (7.82ms) | `src/infer/clip.hpp` |
-| 5.5 | キャラ台帳 | `src/core/character.hpp` |
-| 6 | WD14 CPU 推論 (105.3ms) | `src/infer/wd14.hpp` |
-| 7 | スレッド骨格 + アフィニティ (9.13 fps) | `src/main.cpp`, `src/core/affinity.hpp`, `src/pipeline.hpp` |
-
-**Phase 2-3 ✅ 完了** (詳細 `docs/roadmap.md`)
-- safetensors ローダー / VAE decode / SDXL UNet + Euler scheduler — 全 golden 突合済
-- cpp-httplib OpenAI 互換 HTTP サーバー (生成は `IImageGenerator` 越し)
-- **2-6a** フル C++ 拡散統合 → **2-6 最適化** 84.07s→11.30s で一旦クローズ (律速 UNet attn 4.60s・以降はライブラリ余地で保留・本丸は Phase 4 へ)。★11.30s の採取条件・陳腐化注記は**計測表の 2-6a 行**
-- **2-6b** prompt→画像 本結線 (dual encoder + CFG・`IDiffusionRunner` で OV/CUDA 隔離) ✅ — prompt 供給元は将来 Phase 4 A の自作 LM に差し替え
-- **2-6c** 拡散 backend プラグイン枠 ✅ — 品質天井は自作カーネルでなく拡散アーキ (重み) にあるため、prompt→RGB 境界を純 cpp interface `IDiffusionBackend` に切り出し registry (`make_backend`) 化。`SDXLBackend` (OV+CUDA 隔離) + `SD35Backend` (拡張点 stub・generate throw) + `BackendImageGenerator` (解像度 reject/seed/採点ログ/matting PNG 化の共通後処理を集約)。段1 DI を `Txt2ImgGenerator` から差し替え (env `DOLLAMA_BACKEND` で選択・既定 "sdxl")。ComfyUI 的 breadth は追わず「2D キャラ生成に要るアーキだけ芯を共有して差し替える」棲み分け ([[project-output-quality-over-features]])
-- **2-6d** アニメ特化 SDXL 3 preset ✅ (2026-09-17・`f3101a3`〜`660e538`) — 計測表「アニメ特化 SDXL 3 preset (2-6d)」行 / roadmap 2-6d / measurements-log 「2-6d」節。✅ 2-6e prefix 自動付与 (measurements-log 「2-6e」小節)。未着手: HTTP preset / UI 選択
-- **2-6f** UI から複数 dollama サーバーを切替 ✅ (2026-09-19) — `EndpointRegistry` (appsettings `Dollama:Endpoints` + `ui/data/endpoints.json`) + `DollamaClient.ProbeAsync` (`/health`→`/v1/models`)・C++ は `compose_model_id` で `model_id` に preset 名を載せる。速度計測なし (計測表に行なし)。**既知の制約** (singleton ゆえ全タブ共有・preset 付き model_id は SDXLBackend 経路のみ・選択は非永続) は roadmap 「2-6f」節
+**Phase 2-3 ✅ 完了** (各段の詳細・既知の制約は roadmap 「Phase 2」「Phase 3」節)
+- safetensors / VAE decode / SDXL UNet + Euler (全 golden 突合済) / cpp-httplib OpenAI 互換 HTTP (生成は `IImageGenerator` 越し) / **2-6a** フル C++ 拡散 84.07s→**11.30s** で一旦クローズ (律速 UNet attn 4.60s・★採取条件と陳腐化注記は**計測表の 2-6a 行**) / **2-6b** 本 txt2img (dual encoder+CFG) / **2-6c** backend プラグイン枠 `IDiffusionBackend` / **2-6d**+**2-6e** アニメ特化 SDXL 3 preset (既定 illustrious-xl・prefix 自動付与) / **2-6f** UI から複数サーバー切替 (2026-09-19)
+- **未着手 (2-6 の残件)**: HTTP API の preset フィールド / UI の preset 選択 (roadmap 「2-6f」節 残件)
 - 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
 - **G-10k (conv2d 真 batch2)** ✅ 陰性クローズ (2026-09-17・削減率 +3.38%/+1.87% = 秒中立・opt-in 降格 `c3ee3ca`)。resnet ≤0.95s ゲートは未達のまま・次の秒数レバーは未起票 (`docs/g10k-plan.md` §12)
 
