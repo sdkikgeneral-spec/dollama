@@ -22,6 +22,7 @@
 // 全テスト通過時は "[test_preset] ALL PASSED" を出力して return 0。
 // 失敗時は std::cerr に出力して return 1。
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -127,6 +128,19 @@ int main()
     using dollama::is_valid_preset_name;
     using dollama::PresetPaths;
     using dollama::resolve_preset_paths;
+
+    // ⓪ E-0: BackendConfig の vae_scaling_factor 既定値は preset.hpp の
+    //   kServerDefaultVaeScalingFactor (0.13025f) と一致すべき (既定無改変ゲート)。
+    //   diffusion.cuh 側 (infer/CUDA 層) の kDefaultVaeScalingFactor との一致は
+    //   server/diffusion_runner.cu の static_assert (両ヘッダを唯一同時 include する TU・
+    //   レビュー是正③) がコンパイル時に保証する。
+    {
+        dollama::BackendConfig cfg;
+        check(std::abs(cfg.vae_scaling_factor - dollama::kServerDefaultVaeScalingFactor) < 1e-9f,
+              "BackendConfig::vae_scaling_factor の既定値は kServerDefaultVaeScalingFactor と一致すべき");
+        check(std::abs(dollama::kServerDefaultVaeScalingFactor - 0.13025f) < 1e-9f,
+              "kServerDefaultVaeScalingFactor は 0.13025f であるべき (既定無改変)");
+    }
 
     // 一時ディレクトリ (プロセス固有名で衝突回避)。
     const std::string tmp_root =
@@ -318,6 +332,73 @@ int main()
             write_text(dir + "preset.json", R"(["masterpiece", "worst quality"])");
             auto p = read_preset_prefix(dir);
             check(!p.has_value(), "非 object (配列) の json は nullopt であるべき");
+        }
+
+        // ⑧-h E-0: vae_scaling_factor 正常値
+        {
+            const std::string dir = root1 + "presets/vaesf-ok/";
+            write_text(dir + "preset.json", R"({"vae_scaling_factor": 0.18215})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "vae_scaling_factor のみでも値を返すべき (prompt/negative は空でも可)");
+            if (p)
+            {
+                check(p->vae_scaling_factor.has_value(), "正常値は vae_scaling_factor に格納されるべき");
+                if (p->vae_scaling_factor)
+                {
+                    check(std::abs(*p->vae_scaling_factor - 0.18215f) < 1e-6f,
+                          "vae_scaling_factor が期待値と一致すべき");
+                }
+            }
+        }
+
+        // ⑧-i E-0: vae_scaling_factor キー不在 (他フィールドは正常) → 素通し・nullopt にはならない
+        {
+            const std::string dir = root1 + "presets/vaesf-missing/";
+            write_text(dir + "preset.json", R"({"prompt_prefix": "masterpiece"})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "prompt_prefix があれば値を返すべき");
+            if (p)
+            {
+                check(!p->vae_scaling_factor.has_value(),
+                      "vae_scaling_factor キー不在は nullopt であるべき (フォールバックは呼び出し側)");
+            }
+        }
+
+        // ⑧-j E-0: vae_scaling_factor が非数値 (文字列) → 無視され nullopt・既定へフォールバック
+        {
+            const std::string dir = root1 + "presets/vaesf-nonnumeric/";
+            write_text(dir + "preset.json",
+                       R"({"prompt_prefix": "masterpiece", "vae_scaling_factor": "oops"})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "他フィールドが有効なら値を返すべき");
+            if (p)
+            {
+                check(!p->vae_scaling_factor.has_value(),
+                      "非数値の vae_scaling_factor は無視 (nullopt) であるべき");
+            }
+        }
+
+        // ⑧-k E-0: vae_scaling_factor が 0 以下 → 無視され nullopt・既定へフォールバック
+        {
+            const std::string dir = root1 + "presets/vaesf-nonpositive/";
+            write_text(dir + "preset.json",
+                       R"({"prompt_prefix": "masterpiece", "vae_scaling_factor": 0})");
+            auto p = read_preset_prefix(dir);
+            check(p.has_value(), "他フィールドが有効なら値を返すべき");
+            if (p)
+            {
+                check(!p->vae_scaling_factor.has_value(),
+                      "0 以下の vae_scaling_factor は無視 (nullopt) であるべき");
+            }
+        }
+
+        // ⑧-l E-0: vae_scaling_factor が負値 → 無視され nullopt
+        {
+            const std::string dir = root1 + "presets/vaesf-negative/";
+            write_text(dir + "preset.json", R"({"vae_scaling_factor": -0.5})");
+            auto p = read_preset_prefix(dir);
+            // prompt/negative とも空・vae_scaling_factor も無視されるため付帯情報なし。
+            check(!p.has_value(), "負値のみ・他フィールド無しは全体で nullopt であるべき");
         }
     }
 

@@ -26,6 +26,16 @@ namespace dollama
 
 #ifdef HAVE_CUDA
 
+// レビュー是正③: kDefaultVaeScalingFactor (infer/diffusion.cuh・CUDA 層) と
+// kServerDefaultVaeScalingFactor (server/preset.hpp・cpp 層、diffusion_runner.hpp 経由で
+// 本 TU に既に取り込まれている) は本来同じ値でなければならない独立定義の複製。
+// 両ヘッダは名前が同じだと同一 TU 内で再定義エラーになるため名前を分けて共存させている
+// (preset.hpp 側のコメント参照)。本 .cu は両方を同時に見える唯一の TU なので、ここで
+// 一致をコンパイル時に強制する。
+static_assert(kDefaultVaeScalingFactor == kServerDefaultVaeScalingFactor,
+             "E-0: kDefaultVaeScalingFactor (infer/diffusion.cuh) mismatches "
+             "kServerDefaultVaeScalingFactor (server/vae_scaling_default.hpp)");
+
 // DiffusionPipeline を IDiffusionRunner 実装としてラップする。
 //   pipeline_generator.hpp と同方針で DiffusionPipeline を値で所有 (コピー禁止クラス・
 //   本クラスもコピー禁止 + 移動不可運用。生存期間中 1 個保持)。
@@ -35,11 +45,14 @@ public:
     // unet/vae 重みと golden 埋め込みのパスを受けて DiffusionPipeline を構築・保持する。
     //   重み (5GB) は DiffusionPipeline 内で 1 回だけロードされる (再ロード厳禁)。
     //   fast_cfg (G-0b): FAST フラグを DiffusionPipeline へ運ぶだけ (既定 = 現行挙動)。
+    //   vae_scaling_factor (E-0): VAE decode 前の scaling_factor を DiffusionPipeline へ
+    //     運ぶだけ (既定 = 現行挙動)。
     DiffusionRunner(const std::string& unet_weights_path,
                     const std::string& vae_weights_path,
                     const std::string& embeds_path,
-                    const FastConfig&  fast_cfg)
-        : pipe_(unet_weights_path, vae_weights_path, embeds_path, fast_cfg)
+                    const FastConfig&  fast_cfg,
+                    float              vae_scaling_factor)
+        : pipe_(unet_weights_path, vae_weights_path, embeds_path, fast_cfg, vae_scaling_factor)
     {
     }
 
@@ -127,7 +140,8 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights,
     const std::string& vae_weights,
     const std::string& embeds_path,
-    const FastConfig&  fast_cfg)
+    const FastConfig&  fast_cfg,
+    float              vae_scaling_factor)
 {
 #ifdef HAVE_CUDA
     // 重み/golden の存在チェック。1 つでも欠ければ nullptr (→ 呼び出し側フォールバック)。
@@ -149,7 +163,7 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     try
     {
         return std::make_unique<DiffusionRunner>(
-            unet_weights, vae_weights, embeds_path, fast_cfg);
+            unet_weights, vae_weights, embeds_path, fast_cfg, vae_scaling_factor);
     }
     catch (const std::exception& e)
     {
@@ -165,6 +179,7 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     (void)vae_weights;
     (void)embeds_path;
     (void)fast_cfg;
+    (void)vae_scaling_factor;
     return nullptr;
 #endif
 }

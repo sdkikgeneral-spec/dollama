@@ -917,6 +917,16 @@ if cuda_enabled
     ],
   )
 
+  # E-0: VAE scaling_factor A/B 実走プローブ (計測専用・test 未登録)。
+  # 重みパスは argv 経由 (CLIP/TextConditioner を経由しない golden generate() 直叩き)。
+  prof_e0_vae_scaling_exe = executable('prof_e0_vae_scaling',
+    sources             : files(['tests/prof_e0_vae_scaling.cu'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_test_args,
+  )
+
   # FAST モード G-2k S3c: CFG batch2 on/off パリティゲート (generate_txt2img 縦通し)。
   # batch2=off / batch2=on を逐次実行し (VRAM 二重常駐回避) 最終 RGB の SSIM を突合する。
   # 依存ソース・-D 埋め込みは test_diffusion と同型。CUDA 依存ゆえ with_cuda gate 内。
@@ -1014,6 +1024,19 @@ else
 endif
 # 20step 実走 (UNet 5.1GB 常駐 + OV ロード) を見込み大きめ timeout。test_diffusion と同等。
 test('txt2img', test_txt2img_exe, timeout : 600, is_parallel : false)
+
+# E-0: illustrious-xl preset で実プロンプト txt2img A/B (計測専用・test 未登録)。
+# アセットパスはハードコード (cwd = リポジトリルート前提) のため -D 埋め込みしない。
+if cuda_enabled
+  prof_e0_txt2img_exe = executable('prof_e0_txt2img',
+    sources             : files(['tests/prof_e0_txt2img.cpp', 'server/diffusion_runner.cu',
+                                  'server/scorer_runner.cpp'] + diffusion_cu_sources),
+    include_directories : src_inc,
+    dependencies        : deps,
+    cpp_args            : cpp_args,
+    cuda_args           : cuda_args,
+  )
+endif
 
 # HTTP サーバー (OpenAI Images 互換) テスト — 純 C++・CUDA/OpenVINO 非依存・常時実行
 # StubGenerator を注入し httplib::Server を bind_to_any_port で起動して自己リクエスト。

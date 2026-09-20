@@ -18,13 +18,15 @@ std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights,
     const std::string& vae_weights,
     const std::string& embeds_path,
-    const FastConfig&  fast_cfg)
+    const FastConfig&  fast_cfg,
+    float              vae_scaling_factor)
 {
     // CUDA 無効: DiffusionRunner は存在しない。常に nullptr。
     (void)unet_weights;
     (void)vae_weights;
     (void)embeds_path;
     (void)fast_cfg;
+    (void)vae_scaling_factor;
     return nullptr;
 }
 

@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -93,7 +95,10 @@ static int run_test()
     }
 
     // パイプライン構築 (重み 2 つ + 埋め込みを 1 回だけロード)。
-    DiffusionPipeline pipe(unet_w, vae_w, embeds);
+    // unique_ptr で保持する (レビュー是正②: 後段の vae_scaling_factor 検証で
+    // 複数の DiffusionPipeline を構築するため、UNet 5.1GB の多重常駐を避けるべく
+    // ここで一旦 reset() して手放せるようにする)。
+    auto pipe = std::make_unique<DiffusionPipeline>(unet_w, vae_w, embeds);
 
     {
         size_t freeb = 0, totalb = 0;
@@ -108,7 +113,7 @@ static int run_test()
     std::cout << "[test_diffusion] --- smoke (steps=2) ---\n";
     std::vector<uint8_t> rgb;
     int w = 0, h = 0;
-    pipe.generate(/*steps=*/2, /*seed=*/1234ULL, rgb, w, h);
+    pipe->generate(/*steps=*/2, /*seed=*/1234ULL, rgb, w, h);
 
     if (w != 1024 || h != 1024)
     {
@@ -144,10 +149,83 @@ static int run_test()
         std::cout << "[test_diffusion] smoke PASSED\n";
     }
 
+    // ============ E-0: vae_scaling_factor 検証 (fallback 発火 + 実除算) ============
+    // レビュー指摘②: DiffusionPipeline ctor に追加した vae_scaling_factor の検証
+    // (<=0 / 非有限値でフォールバック + [warn]) と、非既定値での VAE decode 前除算の
+    // 実行経路は、計測専用 exe (prof_e0_vae_scaling, meson test 未登録) でしか通って
+    // いなかった。meson test に登録される本テストへ以下を追加する:
+    //   (1) 不正値 (0 以下 / 非有限) を渡すと既定 kDefaultVaeScalingFactor へフォール
+    //       バックし、既定 3 引数 ctor (= 上の smoke と同一 seed/steps) と bit-exact に
+    //       なることを確認する (= フォールバックが実際に発火した直接証拠)。
+    //   (2) 有効な非既定値 (0.18215f = illustrious-xl preset.json の実値) を渡すと、
+    //       既定値のときと出力が異なることを確認する (= 非既定値が実際に VAE decode 前
+    //       除算に使われている直接証拠。bit-exact なら configuration が無視されている
+    //       ことになるので FAIL とする)。
+    // 各ケースは順にスコープ内で構築・破棄する (UNet 5.1GB を同時多重常駐させない)。
+    // smoke 用の `pipe` はここで reset() して手放す (16GB 板で 2 インスタンス分の
+    // 常駐 (UNet 5.1GB×2 + 共有アリーナ予約 ~6GB) は VRAM を圧迫しうるため)。
+    pipe.reset();
+    std::cout << "[test_diffusion] --- vae_scaling_factor fallback/実除算検証 ---\n";
+    {
+        // (1) 不正値 → フォールバックし、smoke の出力 (既定値) と bit-exact になるべき。
+        const float invalid_values[] = {
+            -1.0f, 0.0f, std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::quiet_NaN(),
+        };
+        for (float bad : invalid_values)
+        {
+            std::vector<uint8_t> rgb_fb;
+            int wf = 0, hf = 0;
+            {
+                DiffusionPipeline pipe_fb(unet_w, vae_w, embeds, FastConfig{}, bad);
+                pipe_fb.generate(/*steps=*/2, /*seed=*/1234ULL, rgb_fb, wf, hf);
+            }
+            if (rgb_fb != rgb)
+            {
+                // 急所 (nvcc/cudafe の既知不具合・diffusion.cu 側と同じ理由で ASCII のみに
+                // している): 末尾が日本語の複数演算子チェーンで "missing closing quote" /
+                // 実行時にリテラル "\n" が混入する再現性のある不具合を実機で確認した。
+                std::cerr << "[test_diffusion] FAIL: vae_scaling_factor=" << bad
+                          << " (invalid) did not fall back to the default (smoke) output"
+                          << std::endl;
+                ok = false;
+            }
+            else
+            {
+                std::cout << "[test_diffusion] vae_scaling_factor=" << bad
+                          << " -> fallback bit-exact OK" << std::endl;
+            }
+        }
+
+        // (2) 有効な非既定値 → 実際に除算へ反映され、既定値の出力と異なるべき。
+        {
+            std::vector<uint8_t> rgb_nd;
+            int wn = 0, hn = 0;
+            {
+                DiffusionPipeline pipe_nd(unet_w, vae_w, embeds, FastConfig{}, 0.18215f);
+                pipe_nd.generate(/*steps=*/2, /*seed=*/1234ULL, rgb_nd, wn, hn);
+            }
+            if (rgb_nd == rgb)
+            {
+                std::cerr << "[test_diffusion] FAIL: vae_scaling_factor=0.18215 (non-default) "
+                             "is bit-exact with the default output -- not actually used in the division"
+                          << std::endl;
+                ok = false;
+            }
+            else
+            {
+                std::cout << "[test_diffusion] vae_scaling_factor=0.18215 -> differs from default OK "
+                             "(reflected in the actual division)" << std::endl;
+            }
+        }
+    }
+
     // ============ フルベンチ (steps=20) — DOLLAMA_BENCH 時のみ ============
     if (std::getenv("DOLLAMA_BENCH") != nullptr)
     {
         std::cout << "[test_diffusion] --- full bench (steps=20) ---\n";
+        // vae_scaling_factor 検証で reset() 済みのため再構築する (既定 3 引数 ctor)。
+        pipe = std::make_unique<DiffusionPipeline>(unet_w, vae_w, embeds);
         cudaEvent_t start, stop;
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
@@ -156,7 +234,7 @@ static int run_test()
         int w20 = 0, h20 = 0;
 
         CUDA_CHECK(cudaEventRecord(start));
-        pipe.generate(/*steps=*/20, /*seed=*/1234ULL, rgb20, w20, h20);
+        pipe->generate(/*steps=*/20, /*seed=*/1234ULL, rgb20, w20, h20);
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
 

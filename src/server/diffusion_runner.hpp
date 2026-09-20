@@ -21,6 +21,8 @@
 #include <vector>
 
 #include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・DiffusionPipeline へ運ぶだけ)
+#include "server/vae_scaling_default.hpp" // E-0: kServerDefaultVaeScalingFactor (std 非依存の極小ヘッダ・
+                                          //   diffusion_runner.cu (.cu) からも安全に include できる)
 
 namespace dollama
 {
@@ -83,8 +85,16 @@ struct IDiffusionRunner
 // fast_cfg について (G-0b):
 //   FAST モードフラグを DiffusionPipeline のメンバとして運ぶだけ。既定 (全 off) は現行挙動。
 //   この Pkg では fast 分岐を一切足さないため、既存呼び出し (3 引数) は既定で無改変。
+//
+// vae_scaling_factor について (E-0):
+//   VAE decode 前に latent を割る scaling_factor を DiffusionPipeline まで運ぶだけ。
+//   既定 kServerDefaultVaeScalingFactor (preset.hpp・= diffusion.cuh の
+//   kDefaultVaeScalingFactor と同値 0.13025f) = 従来の固定値そのまま
+//   (byte-for-byte 無改変)。本ヘッダは CUDA 非依存に保つため diffusion.cuh の定数へは
+//   依存しない (両者の一致は server/diffusion_runner.cu の static_assert が保証する)。
 std::unique_ptr<IDiffusionRunner> make_diffusion_runner(
     const std::string& unet_weights, const std::string& vae_weights,
-    const std::string& embeds_path, const FastConfig& fast_cfg = FastConfig{});
+    const std::string& embeds_path, const FastConfig& fast_cfg = FastConfig{},
+    float vae_scaling_factor = kServerDefaultVaeScalingFactor);
 
 } // namespace dollama

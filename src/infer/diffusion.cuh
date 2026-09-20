@@ -16,6 +16,17 @@
 namespace dollama
 {
 
+// E-0: SDXL VAE の scaling_factor 既定値。golden 生成 (dollma_dump_vae_golden.py) と
+//   同一の値 (素 SDXL 系チェックポイントの config.json 値)。DiffusionPipeline の
+//   コンストラクタ既定引数として使うため public 定数にする (以前は diffusion.cu 内の
+//   無名 namespace 定数 kScalingFactor だった)。
+//   preset 側 (server/preset.hpp の kServerDefaultVaeScalingFactor) にも同値の複製定数が
+//   あるが、そちらは CUDA 非依存に保つためあえて依存を作らず値を複製している
+//   (名前を変えているのは同一 TU 同時 include 時の再定義エラー回避のため)。値の一致は
+//   server/diffusion_runner.cu の static_assert がコンパイル時に保証する
+//   (値を変えるときは両方揃えること)。
+constexpr float kDefaultVaeScalingFactor = 0.13025f;
+
 // ----------------------------------------------------------------
 // DiffusionPipeline — UNet × Nstep + Euler scheduler + VAE decode を結線し、
 //   golden 埋め込み (encoder_hidden_states / text_embeds / time_ids) を入力に
@@ -60,10 +71,15 @@ public:
     //       input_time_ids_f16              [6]
     //   fast_cfg          : FAST モードフラグ (G-0b)。既定 (全 off) は現行挙動。
     //       この Pkg では保持するだけで拡散経路に fast 分岐を一切足さない (byte-for-byte 無改変)。
+    //   vae_scaling_factor : E-0: VAE decode 前に latent を割る scaling_factor。
+    //       既定 kDefaultVaeScalingFactor (0.13025f) = 従来の固定値 (byte-for-byte 無改変)。
+    //       0 以下・非有限値が来た場合は既定へフォールバックし stderr に [warn] を出す
+    //       (呼び出し側で検証済みの値が渡る想定だが、CUDA 層でも防御的に検査する)。
     DiffusionPipeline(const std::string& unet_weights_path,
                       const std::string& vae_weights_path,
                       const std::string& embeds_path,
-                      const FastConfig&  fast_cfg = FastConfig{});
+                      const FastConfig&  fast_cfg          = FastConfig{},
+                      float              vae_scaling_factor = kDefaultVaeScalingFactor);
 
     ~DiffusionPipeline();
 
@@ -142,6 +158,10 @@ private:
     // G-0b: FAST モードフラグ。構築時に受けて保持するだけ (この Pkg では未参照)。
     //   後続 Pkg (G-1k/G-2k/G-3k/G-4k/G-5k) が本メンバを参照して fast 経路を分岐する。
     FastConfig fast_cfg_;
+
+    // E-0: VAE decode 前に latent を割る scaling_factor (preset ごとに差し替え可能)。
+    //   コンストラクタで検証済みの値 (既定 kDefaultVaeScalingFactor) を保持する。
+    float vae_scaling_factor_ = kDefaultVaeScalingFactor;
 
     // S1: UNet 全重みをデバイス常駐させたハンドル。構築時に 1 度だけ upload し、
     //     全 step で使い回す (重み再転送/再 malloc をゼロにする)。

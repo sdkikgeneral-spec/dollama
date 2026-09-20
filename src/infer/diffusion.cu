@@ -37,9 +37,6 @@ namespace dollama
 namespace
 {
 
-// SDXL scaling_factor。decode 前に latent をこの値で割る (golden 生成と同一)。
-constexpr float kScalingFactor = 0.13025f;
-
 // 形状定数。
 constexpr int    kLatentC = 4;
 constexpr int    kLatentH = 128;
@@ -288,11 +285,43 @@ static void reserve_arenas()
 DiffusionPipeline::DiffusionPipeline(const std::string& unet_weights_path,
                                      const std::string& vae_weights_path,
                                      const std::string& embeds_path,
-                                     const FastConfig&  fast_cfg)
+                                     const FastConfig&  fast_cfg,
+                                     float              vae_scaling_factor)
     : unet_weights_(unet_weights_path)
     , vae_weights_(vae_weights_path)
     , fast_cfg_(fast_cfg) // FAST フラグを保持 (G-3k で attention の分岐に使用)
 {
+    // E-0: vae_scaling_factor を防御的に検証する。呼び出し側 (preset_json.hpp) で
+    //   既に 0 以下/非数値は弾いているはずだが、CUDA 層単体でも不正値で割り算しない
+    //   よう二重に守る (0 除算 / NaN 伝播を防ぐ)。
+    if (vae_scaling_factor > 0.0f && std::isfinite(vae_scaling_factor))
+    {
+        vae_scaling_factor_ = vae_scaling_factor;
+    }
+    else
+    {
+        // 急所 (nvcc/cudafe の既知不具合・実機で踏んだ): このメッセージはもともと
+        // 日本語混じりの複数演算子チェーンだったが、末尾の日本語文字列リテラル付近で
+        // cudafe フロントエンドが "missing closing quote" を誤検出したり (ビルド破壊)、
+        // コンパイルは通っても実際の改行ではなくリテラルな "\n" 2 文字をバイナリへ
+        // 出力したりする再現性のある不具合を確認した (diffusion.cu 本行・
+        // test_diffusion.cu の両方で発生・原因はマルチバイト文字列の後段解析の
+        // どこかの誤カウントと推測されるが特定できず)。診断用ログのため、
+        // 安全側に倒して ASCII のみのメッセージへ変更する。
+        std::cerr << "[warn] DiffusionPipeline: invalid vae_scaling_factor ("
+                  << vae_scaling_factor << ") -- falling back to default "
+                  << kDefaultVaeScalingFactor << std::endl;
+        vae_scaling_factor_ = kDefaultVaeScalingFactor;
+    }
+    // レビュー是正: 「渡された値が kDefaultVaeScalingFactor と数値的に一致するか」で
+    // (default)/(non-default) ラベルを付けていたが、preset.json や env が既定と
+    // 同じ値 (0.13025) を明示指定したケースで cli_generate.hpp 側の "(preset)"/"(env)"
+    // ラベルと矛盾する (このレイヤは呼び出し元が明示指定したのか未指定のフォール
+    // スルーなのか区別できない)。ここでは provenance を主張せず、確定値のみを出す
+    // (由来のラベル付けは cli_generate.hpp 側の
+    // "[gen] vae_scaling_factor=... (env|preset|default)" に一本化する)。
+    std::cerr << "[gen] vae_scaling_factor=" << vae_scaling_factor_ << " (resolved)\n";
+
     // G-3k フラグ結線: fast の下で attention 高速化 (attn_fast) を有効化する単一箇所。
     // fp8 は resolve_fast_config で fast を含意済み。fast=false (default) では何も立たない。
     if (fast_cfg_.fast)
@@ -646,7 +675,7 @@ void DiffusionPipeline::generate(int                   steps,
     // --- VAE decode 用に latent を scaling_factor で割り FP16 で H2D ---
     for (size_t k = 0; k < kLatentN; ++k)
     {
-        h_latent_f16[k] = __float2half(latent_host[k] / kScalingFactor);
+        h_latent_f16[k] = __float2half(latent_host[k] / vae_scaling_factor_);
     }
     CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
                           kLatentN * sizeof(__half), cudaMemcpyHostToDevice));
@@ -951,7 +980,7 @@ void DiffusionPipeline::generate_txt2img(int                   steps,
     // --- VAE decode 用に latent を scaling_factor で割り FP16 で H2D ---
     for (size_t k = 0; k < kLatentN; ++k)
     {
-        h_latent_f16[k] = __float2half(latent_host[k] / kScalingFactor);
+        h_latent_f16[k] = __float2half(latent_host[k] / vae_scaling_factor_);
     }
     CUDA_CHECK(cudaMemcpy(d_latent, h_latent_f16.data(),
                           kLatentN * sizeof(__half), cudaMemcpyHostToDevice));

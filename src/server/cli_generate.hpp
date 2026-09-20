@@ -25,6 +25,7 @@
 //   は純 cpp ゆえ本ヘッダはガード不要で include できる (段1 の構築判定のみ OV&&CUDA でガード)。
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -217,26 +218,6 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
 
         if (ov_ready)
         {
-            // BackendConfig を組み立てる共通ラムダ (device のみ差し替えて NPU→CPU する)。
-            auto make_cfg = [&](const std::string& device) -> BackendConfig
-            {
-                BackendConfig cfg;
-                cfg.backend_name = backend_name;
-                cfg.preset       = preset_paths ? preset : ""; // 2-6d: フォールバック時は名前を残さない
-                cfg.unet_weights = unet_w;
-                cfg.vae_weights  = vae_w;
-                cfg.embeds       = embeds;
-                cfg.tok_l        = tok_l;
-                cfg.tok_g        = tok_g;
-                cfg.enc_l        = enc_l;
-                cfg.enc_g        = enc_g;
-                cfg.tok_dll      = tok_dll;
-                cfg.device_l     = device;
-                cfg.device_g     = device;
-                cfg.fast_cfg     = fast_cfg; // G-0b: 拡散経路へ運ぶだけ
-                return cfg;
-            };
-
             // preset が実際に解決できたときだけログにタグを足す (preset 空 or 解決失敗 → 従来通り無タグ)。
             //   4 本すべて preset のパスが最終採用されていれば [preset=<name>]、
             //   1 本でも個別 env が上書きしていれば [preset=<name>+env] にする。
@@ -279,6 +260,60 @@ inline std::unique_ptr<IImageGenerator> build_image_generator(
                     log << "[preset] prefix skipped (env override)\n";
                 }
             }
+
+            // E-0: 優先順位は env DOLLAMA_VAE_SCALING_FACTOR (最優先・A/B 検証/デバッグ用の
+            //   明示上書き) > preset.json の vae_scaling_factor > 既定
+            //   (kServerDefaultVaeScalingFactor = 従来の固定値 0.13025f)。
+            //   preset_prefix が確定した後で 1 度だけ解決しログする
+            //   (2-6e の "[gen] preset_prefix applied:" に倣う形式)。
+            float       vae_scaling_factor = (preset_prefix && preset_prefix->vae_scaling_factor)
+                                                  ? *preset_prefix->vae_scaling_factor
+                                                  : kServerDefaultVaeScalingFactor;
+            std::string vae_sf_source = (preset_prefix && preset_prefix->vae_scaling_factor)
+                                             ? "preset" : "default";
+            {
+                const std::string env_v = resolve_path("DOLLAMA_VAE_SCALING_FACTOR", "");
+                if (!env_v.empty())
+                {
+                    char* endptr = nullptr;
+                    const double parsed = std::strtod(env_v.c_str(), &endptr);
+                    const bool ok = (endptr != env_v.c_str()) && (*endptr == '\0') &&
+                                    (parsed > 0.0) && std::isfinite(parsed);
+                    if (ok)
+                    {
+                        vae_scaling_factor = static_cast<float>(parsed);
+                        vae_sf_source       = "env";
+                    }
+                    else
+                    {
+                        log << "[warn] DOLLAMA_VAE_SCALING_FACTOR='" << env_v
+                            << "' が不正 (非数値または 0 以下) — 無視します\n";
+                    }
+                }
+            }
+            log << "[gen] vae_scaling_factor=" << vae_scaling_factor
+                << " (" << vae_sf_source << ")\n";
+
+            // BackendConfig を組み立てる共通ラムダ (device のみ差し替えて NPU→CPU する)。
+            auto make_cfg = [&](const std::string& device) -> BackendConfig
+            {
+                BackendConfig cfg;
+                cfg.backend_name = backend_name;
+                cfg.preset       = preset_paths ? preset : ""; // 2-6d: フォールバック時は名前を残さない
+                cfg.unet_weights = unet_w;
+                cfg.vae_weights  = vae_w;
+                cfg.embeds       = embeds;
+                cfg.tok_l        = tok_l;
+                cfg.tok_g        = tok_g;
+                cfg.enc_l        = enc_l;
+                cfg.enc_g        = enc_g;
+                cfg.tok_dll      = tok_dll;
+                cfg.device_l     = device;
+                cfg.device_g     = device;
+                cfg.fast_cfg     = fast_cfg; // G-0b: 拡散経路へ運ぶだけ
+                cfg.vae_scaling_factor = vae_scaling_factor; // E-0: 拡散経路へ運ぶだけ
+                return cfg;
+            };
 
             // NPU 第一・失敗時 CPU フォールバックで backend を構築 → BackendImageGenerator。
             //   make_backend は nullptr 契約 (未知名 / OV 無 / 構築失敗 → nullptr)。

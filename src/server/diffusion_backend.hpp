@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "server/fast_config.hpp" // FAST モードのフラグ枠 (G-0b・拡散経路へ運ぶだけ)
+#include "server/vae_scaling_default.hpp" // E-0: kServerDefaultVaeScalingFactor (std 非依存の極小ヘッダ)
 
 namespace dollama
 {
@@ -92,6 +93,9 @@ struct IDiffusionBackend
 //   tok_l/g・enc_l/g・tok_dll : OV text encoder アセット (SDXL が使う)。
 //   device_l/g   : text encoder の実行デバイス ("NPU" / "CPU" 等)。
 //   fast_cfg     : FAST モードフラグ (G-0b)。全 default false = 現行挙動。拡散経路へ運ぶだけ。
+//   vae_scaling_factor : E-0: VAE decode 前の scaling_factor。既定
+//                        kServerDefaultVaeScalingFactor (= 従来の固定値 0.13025f・
+//                        byte-for-byte 無改変)。preset ごとに差し替え可能 (拡散経路へ運ぶだけ)。
 struct BackendConfig
 {
     std::string backend_name;
@@ -107,6 +111,7 @@ struct BackendConfig
     std::string device_l;
     std::string device_g;
     FastConfig  fast_cfg;
+    float       vae_scaling_factor = kServerDefaultVaeScalingFactor;
 };
 
 // backend_name に対応する IDiffusionBackend を構築する (registry factory)。
