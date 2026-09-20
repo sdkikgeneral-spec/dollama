@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 
+#include "server/vae_scaling_default.hpp" // E-0: kServerDefaultVaeScalingFactor (std 非依存の極小ヘッダ)
+
 namespace dollama
 {
 
@@ -131,14 +133,24 @@ inline std::optional<PresetPaths> resolve_preset_paths(
     return std::nullopt;
 }
 
+// E-0: preset 側で vae_scaling_factor が省略/不正なときのフォールバック既定値。
+//   定義本体は server/vae_scaling_default.hpp::kServerDefaultVaeScalingFactor
+//   (std 非依存の極小ヘッダ・diffusion_runner.cu などの .cu からも安全に include できる)。
+//   DiffusionPipeline 側 (infer/diffusion.cuh の kDefaultVaeScalingFactor) と同じ値で
+//   なければならない。一致は server/diffusion_runner.cu の static_assert
+//   (両者を唯一同時 include する TU) がコンパイル時に保証する。
+
 // 2-6e: preset 付帯の prompt/negative 接頭辞 (checkpoint 制作者が推奨する呪文語)。
 //   prompt   : プロンプト側に前置する語 (例: "masterpiece, best quality")。
 //   negative : ネガティブプロンプト側に前置する語。
+//   vae_scaling_factor : E-0: preset 側の VAE scaling_factor (未指定/不正なら nullopt =
+//     呼び出し側が kServerDefaultVaeScalingFactor を使う)。
 //   読み込み本体 (JSON パース) は preset_json.hpp::read_preset_prefix。
 struct PresetPrefix
 {
-    std::string prompt;
-    std::string negative;
+    std::string          prompt;
+    std::string          negative;
+    std::optional<float> vae_scaling_factor;
 };
 
 } // namespace dollama
