@@ -130,7 +130,12 @@ RTX5080 = **16GB**。常駐物の概算:
 - `ov_model.reshape([batch, seq_len])` をコンパイル前に必ず実行
 - `convert_model` はデフォルトで動的形状を出力するため、reshape が必須
 
-### OpenVINO C++ 入力テンソルの要素型 (タスク5 で確認)
+### OpenVINO C++ 入力テンソルの要素型 (タスク5 = CLIP NPU 推論 で確認)
+
+> ★番号注意: この「タスク5」は**旧 CLAUDE.md Phase 1 表**の採番 (5 = CLIP)。roadmap 「Phase 1」表は
+> 別採番 (**4** = CLIP / 5 = キャラ台帳) なので番号だけで辿らないこと。`src/infer/clip_encoder2.hpp`
+> の「タスク5 の既知事例」も旧採番。
+
 
 - **OV IR の入力 `element_type` を必ず確認してテンソルを生成すること。** CLIP-L の `input_ids` は `i64` shape `[1,77]` (静的)。
 - C++ で `ov::element::i32` テンソルを渡すと、NPU プラグインが i64 として要素あたり 8 バイト読もうとし、領域外読み出しで **0xC0000409 (STATUS_STACK_BUFFER_OVERRUN)** クラッシュする。型は IR と厳密に一致させる (token id は int64 へ明示変換してコピー)。
