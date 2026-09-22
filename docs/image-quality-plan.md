@@ -171,7 +171,14 @@ CSV を吐くハーネスを 1 本作る。
 
 **実行経路 = CLI・1 プロセス 1 枚 (前提として明記)**
 HTTP 経路は格子を回せない。一次証拠:
-- **HTTP に seed が無い** (`src/server/generator.hpp` l.34-46 の `GenRequest` に seed フィールド無し /
+- **HTTP に seed が無い** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch
+  `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み**のため、**本 branch 上ではこの
+  一次証拠は成り立たない** (`src/server/generator.hpp` l.51 に `std::optional<uint64_t> seed;` /
+  `src/server/api.cpp` l.176-184 が `body.contains("seed")` → `gr.seed` で受理。ともに 2026-09-22 に
+  現物で確認。同様に `guidance_scale` も l.168-174 で受理される) — 詳細は E-2 節「現況 (2026-09-22)」と
+  §3 の同趣旨バナーを参照。**E-1 の結論 (格子は CLI で回す) は下の「HTTP に preset が無い」だけで
+  今も成立する**ので変更しない。以下は起票時の記述をそのまま残す:
+  (`src/server/generator.hpp` l.34-46 の `GenRequest` に seed フィールド無し /
   `src/server/api.cpp` l.128-217 の受理フィールドは prompt / negative_prompt / n / steps / size /
   preset_prefix / loras / response_format のみ)。seed は env `DOLLAMA_SEED` だけ
   (`src/server/backend_image_generator.hpp` l.53-62, l.131)。
@@ -283,7 +290,8 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
 
 ## E-2 — sampling ノブ (steps / CFG / seed) の露出とスイープ
 
-**目的**
+**目的** (★以下の「現状」は**起票時 = 2026-09-19 の状態**。T1 実装後の状態は本節の
+「現況 (2026-09-22)」を見ること)
 現状、**絵に効く基本ノブが外から触れない**:
 
 - CFG スケールは `src/server/sdxl_backend.hpp:57` で
@@ -299,7 +307,9 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
 そこで ① CLI `--cfg` / `--seed` と HTTP `guidance_scale` / **`seed`** を追加し、② E-1 の格子で
 steps / CFG / seed をスイープして**既定値の妥当性**を多 seed で確かめる。
 
-★**HTTP `seed` を E-2 のスコープに含める理由 (重要)**: これは E-5 の前提条件である。
+★**HTTP `seed` を E-2 のスコープに含める理由 (重要。★この段落も起票時 = 2026-09-19 の状態で書かれている**
+— 「seed は HTTP から指定できない」は T1 実装後は成り立たない。本節「現況 (2026-09-22)」と突き合わせること):
+これは E-5 の前提条件である。
 **LoRA は HTTP 専用で CLI から到達できない** (`grep -rn -i lora src/server/cli_generate.hpp src/main.cpp`
 = **0 件**。`loras` は `api.cpp` l.179 のみ)。一方 seed は HTTP から指定できない。
 したがって **HTTP `seed` が無い限り「LoRA strength 軸 × 多 seed」を 1 プロセス内で清潔に回せない** (E-5)。
@@ -344,6 +354,46 @@ reward 比較のノイズ除去」/ `docs/roadmap.md` l.321「**次レバー** (
    ★**既定値を変える場合はユーザー決裁が要る** (下記 E-4 DoD 5 と同じ規律。既定の変更は出荷物の変更であり、
    エージェントの判断で確定しない)。
 6. 秒が動いても CLAUDE.md 計測表に行を足さない (共通規律 6)。
+
+**現況 (2026-09-22) — T1 (ノブ配線 + 仕様表更新) 実装完了・未レビュー**
+実装場所は worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs` (main 未 merge)。
+DoD ごとの状態:
+
+- **DoD 1 = 実装済み**。`GenRequest` (`src/server/generator.hpp`) に `std::optional<uint64_t> seed` /
+  `std::optional<float> guidance_scale` を**末尾に**追加 (DoD 1 の ⚠ どおり集成初期化の並びを崩さず、
+  `src/main.cpp` では `req.seed = ...` / `req.guidance_scale = ...` の代入で設定)。
+  CLI `--seed <uint64>` / `--cfg <float>` を追加 (パース失敗時は**未指定扱い**でエラーにしない)。
+  ⚠ **この 2 引数は実行未検証** — argv 解析を通す test が 0 件のため、言えるのはビルド成立までである
+  (詳細と一次証拠は下記 DoD 4 の ★★)。また **`--http` 起動時は両引数とも捨てられる**
+  (`src/main.cpp` は `http_mode` なら `GenRequest` を組む前に `start_server` へ return する)。
+  HTTP は `api.cpp` で `guidance_scale` 非数値 → 400 / `seed` 非負整数以外 (負数・小数・文字列) → 400。
+  seed 解決は `backend_image_generator.hpp` で **`req.seed` > env `DOLLAMA_SEED` > 時刻**の 3 段になり、
+  実効値を `[gen] seed=<値>(req|env|time)` としてログに出す。CFG は未指定なら従来どおり `cfg=0.0f` を
+  backend へ渡し既定 (SDXL `kGuidanceScale=7.5f`) へ委譲。
+- **DoD 2 = 未充足 (T2 = 研究機の担当として残る)**。T1 のユニット test で示せたのは
+  ① `BackendImageGenerator` が未指定時に backend へ渡す**実効引数**が従来と同じ (`cfg==0.0f`・seed は
+  env→時刻の非ゼロ値)、② HTTP で未指定なら `GenRequest` が `nullopt` のまま、の 2 点まで。
+  いずれも fake/stub backend 上の検証であり、**2-6e の p1/p2/p3 PNG sha256 3/3 一致は未実施**。
+  ★実重みでの sha256 突合と、その走行条件 (`--fast` 有無の明示記録) は T2 で行う。
+- **DoD 3 = 実装済み**。`docs/http-api-spec.md` の拡張フィールド表に `guidance_scale` / `seed` を追加し、
+  併せて既存乖離 2 件 (`preset_prefix` (2-6e) / `loras` (L-2)) も同時に解消した。
+  同 doc の CLI 引数抜粋にも `--seed` / `--cfg` を追記。
+- **DoD 4 = 部分充足**。test 追加は `src/tests/test_diffusion_backend.cpp` (`RecordingFakeBackend` で
+  未指定/env のみ/req 明示の 3 ケース) と `src/tests/test_http.cpp` (`RecordingGenerator` で伝播・未指定
+  nullopt・非数値 cfg 400・負数 seed 400)。`meson test` は **32/32 緑**
+  (`build/meson-logs/testlog.txt`・2026-09-22T23:20:16)。
+  ★**この build 構成は `with_cuda=false` / `with_openvino=false` / `with_http=true`** であり、
+  CUDA/OV 依存 test は登録されない = **実重み経路はこの走行で 1 件も走っていない**
+  (「全緑」を実重み検証の代わりに読まないこと)。
+  ★★**`src/main.cpp` の引数解析を通す test は 0 件** (`grep -rn '"--seed"\|"--cfg"\|"--prompt"' src/tests/`
+  = **0 件**・2026-09-22 実行)。上記 2 本はどちらも `GenRequest` を test 側で直接組み立てており、
+  argv 解析を 1 行も通らない。したがって **`--seed` / `--cfg` については「コンパイル・リンクが通った」
+  ことまでしか言えず、引数が実際に拾われるかは未検証**。→ T2 で `dollama --prompt ... --seed ...` の
+  smoke を 1 本走らせて実効値 (`[gen] seed=<値>(req)`) を確認する。
+- **DoD 5 (スイープ) = 未着手**。T2 以降 (gpu-benchmarker・研究機)。
+- **DoD 6 = 遵守**。CLAUDE.md 計測表に行は足していない。
+- **既定値は 1 つも変えていない** (`kGuidanceScale=7.5f`・seed の env→時刻フォールバックとも無改変)
+  ため、DoD 5 ★のユーザー決裁は T1 では発生しない。
 
 **担当エージェント**: cpp-implementer (ノブ実装・Sonnet 可 → Opus high レビュー) → gpu-benchmarker (スイープ)。
 **走る機械**: ノブ実装とユニット test は**開発機可**。スイープ実走は**研究機** (新規 exe = SAC OFF 依頼)。
@@ -452,7 +502,7 @@ E-1/E-5 の格子は原則 **CLI 1 プロセス 1 枚** (E-1 節のとおり) �
 | 制約 | 一次証拠 |
 |---|---|
 | **LoRA は HTTP 専用・CLI から到達できない** | `grep -rn -i lora src/server/cli_generate.hpp src/main.cpp` = **0 件**。`loras` の受理は `src/server/api.cpp` l.179 のみ。`GenRequest::loras` (`src/server/generator.hpp` l.43) は HTTP ハンドラからしか埋まらない |
-| **seed は HTTP から指定できない** | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) |
+| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`・`GenRequest::seed` は `std::optional<uint64_t>`。2026-09-22 に現物で確認) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
 
 env `DOLLAMA_SEED` は**サーバープロセスの環境変数**であり、**HTTP クライアント側からリクエスト単位で指定できない**
 (`getenv` 自体は `generate()` ごとに評価される — `src/server/backend_image_generator.hpp` l.132 が
@@ -490,6 +540,9 @@ E-5 の発火条件は「E-2 完了」一般ではなく、**E-2 のうち HTTP 
 **走る機械**: 研究機。
 **発火条件**: **E-2 のうち HTTP `seed` が入った後** (上記「実行経路の制約」。
 CLI `--seed` だけでは不可 = LoRA が CLI に無いため)。
+★**2026-09-22 現在: この条件は E-2 T1 (branch `feat/e2-sampling-knobs`) で満たされている**
+(`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`)。**ただし main 未 merge** のため、
+E-5 を走らせる前に「どのツリーで走らせるか」を確認すること。
 **依存**: **E-2 (特に HTTP `seed`)**、E-1 (指標定義・集計部)。ユーザーのライセンス決裁。
 
 ---
@@ -498,6 +551,19 @@ CLI `--seed` だけでは不可 = LoRA が CLI に無いため)。
 
 本台帳で引いた記述の出典。**行番号は `bc77447` 時点** (起票 2026-09-19 / record-auditor 指摘の是正 2026-09-20。
 是正時に全行の行番号を再検算済)。
+
+★**本表は起票時 (2026-09-19/20) のスナップショットであり、そのまま残す**。ただし E-2 T1
+(2026-09-22・branch `feat/e2-sampling-knobs`・main 未 merge) 以降、下記 6 行は**現在の src の状態を
+表さない** — 読むときは E-2 節「現況 (2026-09-22)」と突き合わせること:
+「CLI に `--cfg` / `--seed` が無い」/「HTTP が受けるフィールドに `guidance_scale` も `seed` も無い」/
+「`GenRequest` に seed フィールドが無い」/「seed は env `DOLLAMA_SEED` 経由のみ」/
+「実装は受理するが仕様表に無い 2 件」(DoD 3 で解消済)/
+「HTTP 拡張フィールド表の現況 (拡張と明記は 2 件)」(T1 で仕様表は **10 行・拡張明記 6 件**になった)。
+「CFG スケールがコンパイル時定数」の行は、**既定値が `constexpr` である点は不変**だが
+`guidance_scale` / `--cfg` による上書き経路が加わった。
+★**この列挙は網羅を保証しない**。T1 は `src/main.cpp` に行を足しているため、**同ファイルを指す
+行番号は全般にずれている** (例: 本表と DoD 1 が引く `src/main.cpp` l.255 の `GenRequest req{...}` は
+T1 後の現物では **l.292** — 2026-09-22 に現物を開いて確認)。行番号を使う前に現物で検算すること。
 
 | 主張 | 出典 |
 |---|---|

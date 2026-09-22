@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,11 @@ struct GenRequest
     std::vector<LoraSpec> loras; // L-2: ランタイム LoRA (未指定 = 空 = 従来経路・無改変)
     bool preset_prefix = true;   // 2-6e: preset の prompt_prefix/negative_prefix 既定 ON
                                   //   (--no-preset-prefix / JSON "preset_prefix":false で OFF)
+
+    // E-2: sampling ノブの露出。未指定 (nullopt) = 従来経路と無改変
+    //   (backend_image_generator.hpp が env/時刻フォールバックする)。
+    std::optional<uint64_t> seed;           // 省略時: env DOLLAMA_SEED → 時刻ベース
+    std::optional<float>    guidance_scale; // 省略時: backend 既定 (SDXL は 7.5)
 };
 
 // 生成結果 DTO (PNG バイト列まで; base64 化はサーバ層)

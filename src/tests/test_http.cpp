@@ -301,6 +301,117 @@ static bool test_generations_bad_json(ServerFixture& fx)
 }
 
 // ================================================================
+// E-2: sampling ノブ (guidance_scale/seed) の HTTP JSON 受理
+// ================================================================
+
+// api.cpp が JSON body から組んだ GenRequest をそのまま記録する計器生成器。
+// StubGenerator 相当の PNG を返しつつ最後に受け取った req を保持する。
+class RecordingGenerator : public IImageGenerator
+{
+public:
+    GenResult generate(const GenRequest& req) override
+    {
+        last_req_ = req;
+        StubGenerator inner;
+        return inner.generate(req);
+    }
+
+    std::string model_id() const override
+    {
+        return "recording-stub";
+    }
+
+    const GenRequest& last_req() const
+    {
+        return last_req_;
+    }
+
+private:
+    GenRequest last_req_;
+};
+
+// guidance_scale/seed を指定すると GenRequest へそのまま通ることの確認。
+static bool test_generations_sampling_knobs_ok(ServerFixture& fx, RecordingGenerator& gen)
+{
+    httplib::Client cli("127.0.0.1", fx.port);
+    json req = {
+        {"prompt", "sampling knobs"},
+        {"guidance_scale", 3.5},
+        {"seed", 424242},
+    };
+    auto res = cli.Post("/v1/images/generations", req.dump(), "application/json");
+    if (!res || res->status != 200)
+    {
+        std::cerr << "[gen-knobs] status != 200 (got " << (res ? res->status : -1) << ")\n";
+        return false;
+    }
+    const GenRequest& last = gen.last_req();
+    if (!last.guidance_scale || *last.guidance_scale != 3.5f)
+    {
+        std::cerr << "[gen-knobs] guidance_scale が GenRequest へ伝播していない\n";
+        return false;
+    }
+    if (!last.seed || *last.seed != 424242ULL)
+    {
+        std::cerr << "[gen-knobs] seed が GenRequest へ伝播していない\n";
+        return false;
+    }
+    std::cout << "  [gen-knobs] guidance_scale/seed 伝播 OK\n";
+    return true;
+}
+
+// 未指定時は nullopt のまま (従来経路と無改変) であることの確認。
+static bool test_generations_sampling_knobs_unset(ServerFixture& fx, RecordingGenerator& gen)
+{
+    httplib::Client cli("127.0.0.1", fx.port);
+    json req = {{"prompt", "no knobs"}};
+    auto res = cli.Post("/v1/images/generations", req.dump(), "application/json");
+    if (!res || res->status != 200)
+    {
+        std::cerr << "[gen-knobs-unset] status != 200 (got " << (res ? res->status : -1) << ")\n";
+        return false;
+    }
+    const GenRequest& last = gen.last_req();
+    if (last.guidance_scale.has_value() || last.seed.has_value())
+    {
+        std::cerr << "[gen-knobs-unset] 未指定なのに GenRequest に値が入っている\n";
+        return false;
+    }
+    std::cout << "  [gen-knobs-unset] 未指定時 nullopt OK\n";
+    return true;
+}
+
+// guidance_scale に文字列を渡すと 400。
+static bool test_generations_bad_guidance_scale(ServerFixture& fx)
+{
+    httplib::Client cli("127.0.0.1", fx.port);
+    json req = {{"prompt", "bad cfg"}, {"guidance_scale", "not-a-number"}};
+    auto res = cli.Post("/v1/images/generations", req.dump(), "application/json");
+    if (!res || res->status != 400)
+    {
+        std::cerr << "[gen-bad-cfg] status != 400 (got " << (res ? res->status : -1) << ")\n";
+        return false;
+    }
+    std::cout << "  [gen-bad-cfg] 400 OK\n";
+    return true;
+}
+
+// seed に負の数を渡すと 400 (非負整数のみ許容)。
+static bool test_generations_bad_seed(ServerFixture& fx)
+{
+    httplib::Client cli("127.0.0.1", fx.port);
+    json req = {{"prompt", "bad seed"}, {"seed", -1}};
+    auto res = cli.Post("/v1/images/generations", req.dump(), "application/json");
+    if (!res || res->status != 400)
+    {
+        std::cerr << "[gen-bad-seed] status != 400 (got " << (res ? res->status : -1) << ")\n";
+        return false;
+    }
+    std::cout << "  [gen-bad-seed] 400 OK\n";
+    return true;
+}
+
+// ================================================================
 // G-8k F1: 生成の直列化ゲート
 // ================================================================
 
@@ -637,6 +748,17 @@ int main()
         ok = test_generations_ok(fx) && ok;
         ok = test_generations_missing_prompt(fx) && ok;
         ok = test_generations_bad_json(fx) && ok;
+    } // ここで svr.stop() → join
+
+    // E-2: sampling ノブ (guidance_scale/seed) の HTTP JSON 受理
+    {
+        RecordingGenerator gen;
+        ServerFixture fx(gen);
+        std::cout << "  [server] bound port " << fx.port << " (sampling ノブ)\n";
+        ok = test_generations_sampling_knobs_ok(fx, gen) && ok;
+        ok = test_generations_sampling_knobs_unset(fx, gen) && ok;
+        ok = test_generations_bad_guidance_scale(fx) && ok;
+        ok = test_generations_bad_seed(fx) && ok;
     } // ここで svr.stop() → join
 
     // G-8k F1: 生成の直列化ゲート (計装スタブを注入した別サーバで実施)

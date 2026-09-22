@@ -161,6 +161,29 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
         gr.height = h;
     }
 
+    // E-2: sampling ノブ (任意項目)。未指定 = nullopt = 従来経路 (無改変)。
+    // 形式不正は 400 で明示的に弾く (preset_prefix/loras と同流儀)。
+    if (body.contains("guidance_scale"))
+    {
+        if (!body["guidance_scale"].is_number())
+        {
+            write_error(res, 400, "'guidance_scale' は数値である必要があります",
+                        "invalid_request_error");
+            return;
+        }
+        gr.guidance_scale = body["guidance_scale"].get<float>();
+    }
+    if (body.contains("seed"))
+    {
+        if (!body["seed"].is_number_unsigned())
+        {
+            write_error(res, 400, "'seed' は非負整数である必要があります",
+                        "invalid_request_error");
+            return;
+        }
+        gr.seed = body["seed"].get<uint64_t>();
+    }
+
     // 2-6e: preset の prompt_prefix/negative_prefix 自動付与 (任意項目・既定 ON)。
     // 形式不正は 400 で明示的に弾く (loras と同流儀・黙って無視しない)。
     if (body.contains("preset_prefix"))
