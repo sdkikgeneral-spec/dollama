@@ -346,12 +346,12 @@ static bool test_generations_sampling_knobs_ok(ServerFixture& fx, RecordingGener
         return false;
     }
     const GenRequest& last = gen.last_req();
-    if (!last.guidance_scale || *last.guidance_scale != 3.5f)
+    if (!last.has_guidance_scale || last.guidance_scale != 3.5f)
     {
         std::cerr << "[gen-knobs] guidance_scale が GenRequest へ伝播していない\n";
         return false;
     }
-    if (!last.seed || *last.seed != 424242ULL)
+    if (!last.has_seed || last.seed != 424242ULL)
     {
         std::cerr << "[gen-knobs] seed が GenRequest へ伝播していない\n";
         return false;
@@ -360,7 +360,7 @@ static bool test_generations_sampling_knobs_ok(ServerFixture& fx, RecordingGener
     return true;
 }
 
-// 未指定時は nullopt のまま (従来経路と無改変) であることの確認。
+// 未指定時は has_*=false のまま (従来経路と無改変) であることの確認。
 static bool test_generations_sampling_knobs_unset(ServerFixture& fx, RecordingGenerator& gen)
 {
     httplib::Client cli("127.0.0.1", fx.port);
@@ -372,7 +372,7 @@ static bool test_generations_sampling_knobs_unset(ServerFixture& fx, RecordingGe
         return false;
     }
     const GenRequest& last = gen.last_req();
-    if (last.guidance_scale.has_value() || last.seed.has_value())
+    if (last.has_guidance_scale || last.has_seed)
     {
         std::cerr << "[gen-knobs-unset] 未指定なのに GenRequest に値が入っている\n";
         return false;

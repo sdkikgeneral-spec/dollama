@@ -149,8 +149,8 @@ int main(int argc, char** argv)
     std::string out_path = "out.png";
     std::string preset;            // 2-6d: --preset <name> (未指定 "" → build_image_generator が
                                     //   既定 "illustrious-xl" を適用。"base" で base 重みを明示)
-    std::optional<uint64_t> cli_seed;  // E-2: --seed <uint64> (未指定 → GenRequest.seed=nullopt)
-    std::optional<float>    cli_cfg;   // E-2: --cfg <float> (未指定 → GenRequest.guidance_scale=nullopt)
+    std::optional<uint64_t> cli_seed;  // E-2: --seed <uint64> (未指定 → GenRequest.has_seed=false)
+    std::optional<float>    cli_cfg;   // E-2: --cfg <float> (未指定 → GenRequest.has_guidance_scale=false)
 
     for (int i = 1; i < argc; ++i)
     {
@@ -232,7 +232,7 @@ int main(int argc, char** argv)
         }
         else if (a == "--seed")
         {
-            // E-2: --seed <uint64>。パース失敗時は未指定のまま (nullopt = 従来経路)。
+            // E-2: --seed <uint64>。パース失敗時は未指定のまま (has_seed=false = 従来経路)。
             if (i + 1 < argc)
             {
                 try
@@ -293,8 +293,17 @@ int main(int argc, char** argv)
         // 集成初期化に matting を足すと並びがずれるため代入で設定する。
         req.matting = !no_matting; // M-6: 既定 ON・--no-matting で OFF
         req.preset_prefix = !no_preset_prefix; // 2-6e: 既定 ON・--no-preset-prefix で OFF
-        req.seed = cli_seed;                   // E-2: --seed 未指定なら nullopt (従来経路)
-        req.guidance_scale = cli_cfg;          // E-2: --cfg 未指定なら nullopt (従来経路)
+        // E-2: --seed/--cfg 未指定なら has_*=false のまま (従来経路)
+        if (cli_seed)
+        {
+            req.has_seed = true;
+            req.seed = *cli_seed;
+        }
+        if (cli_cfg)
+        {
+            req.has_guidance_scale = true;
+            req.guidance_scale = *cli_cfg;
+        }
         try
         {
             dollama::GenResult r = gen->generate(req);

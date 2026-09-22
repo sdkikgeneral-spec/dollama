@@ -307,7 +307,7 @@ int main()
     //    指定時は req の値がそのまま backend へ渡ることを検証する。
     // ------------------------------------------------------------
     {
-        // 8a. 両方未指定 (nullopt) → cfg は従来どおり 0.0f (backend 既定へ委譲)。
+        // 8a. 両方未指定 (has_*=false) → cfg は従来どおり 0.0f (backend 既定へ委譲)。
         //     env DOLLAMA_SEED も未設定なら seed は時刻ベース (非決定だが取得はできる)。
 #if defined(_MSC_VER)
         _putenv_s("DOLLAMA_SEED", "");
@@ -322,7 +322,7 @@ int main()
             req.prompt = "unspecified knobs";
             req.width  = 1024;
             req.height = 1024;
-            // req.seed / req.guidance_scale は nullopt のまま (未指定)
+            // req.has_seed / req.has_guidance_scale は false のまま (未指定)
 
             gen.generate(req);
             check(backend_raw->last_cfg == 0.0f,
@@ -361,8 +361,10 @@ int main()
             req.prompt         = "explicit knobs";
             req.width          = 1024;
             req.height         = 1024;
-            req.seed           = 12345ULL;
-            req.guidance_scale = 3.5f;
+            req.has_seed           = true;
+            req.seed                = 12345ULL;
+            req.has_guidance_scale = true;
+            req.guidance_scale      = 3.5f;
 
             gen.generate(req);
             check(backend_raw->last_seed == 12345ULL,

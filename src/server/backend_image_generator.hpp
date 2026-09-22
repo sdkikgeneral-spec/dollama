@@ -128,12 +128,12 @@ public:
         const int steps = (req.steps > 0) ? req.steps : 20;
 
         // --- seed: E-2 で req.seed を最優先にした 3 段解決 (req > env DOLLAMA_SEED > 時刻)。
-        //     未指定 (req.seed=nullopt) のときは従来どおり env→時刻フォールバック。 ---
+        //     未指定 (req.has_seed=false) のときは従来どおり env→時刻フォールバック。 ---
         uint64_t seed;
         const char* seed_source;
-        if (req.seed)
+        if (req.has_seed)
         {
-            seed = *req.seed;
+            seed = req.seed;
             seed_source = "(req)";
         }
         else if (const std::optional<uint64_t> seed_env = resolve_seed_from_env(); seed_env)
@@ -175,9 +175,9 @@ public:
         }
 
         // --- 拡散 backend 実行 (CFG: E-2 で req.guidance_scale を露出) ---
-        //   未指定 (nullopt) なら従来どおり cfg=0.0f を渡し、backend 側の既定
+        //   未指定 (has_guidance_scale=false) なら従来どおり cfg=0.0f を渡し、backend 側の既定
         //   (SDXL は 7.5) にフォールバックする契約 (cfg<=0 で既定)。
-        const float cfg = req.guidance_scale ? *req.guidance_scale : 0.0f;
+        const float cfg = req.has_guidance_scale ? req.guidance_scale : 0.0f;
         std::vector<uint8_t> rgb;
         int w = 0, h = 0;
         try

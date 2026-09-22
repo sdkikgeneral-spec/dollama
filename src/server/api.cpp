@@ -161,7 +161,7 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
         gr.height = h;
     }
 
-    // E-2: sampling ノブ (任意項目)。未指定 = nullopt = 従来経路 (無改変)。
+    // E-2: sampling ノブ (任意項目)。未指定 = has_*=false = 従来経路 (無改変)。
     // 形式不正は 400 で明示的に弾く (preset_prefix/loras と同流儀)。
     if (body.contains("guidance_scale"))
     {
@@ -171,6 +171,7 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
                         "invalid_request_error");
             return;
         }
+        gr.has_guidance_scale = true;
         gr.guidance_scale = body["guidance_scale"].get<float>();
     }
     if (body.contains("seed"))
@@ -181,6 +182,7 @@ void handle_generations(IImageGenerator& gen, const httplib::Request& req,
                         "invalid_request_error");
             return;
         }
+        gr.has_seed = true;
         gr.seed = body["seed"].get<uint64_t>();
     }
 
