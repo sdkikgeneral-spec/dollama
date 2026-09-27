@@ -41,10 +41,10 @@
 
 | Pkg | 内容 | 担当 | 担当機 | 依存 | status |
 |---|---|---|---|---|---|
-| **G-1** | LM 確率的サンプリング (temperature/top-k) 追加 + best-of-N rollout 収集 (N8×M400→SDXL→reward→top-1 選抜) → SFT データセット | gpu-benchmarker | 研究機 (GPU ~3.4h) | Q-2✅ | 🔲 未 |
-| **G-2a** | rejection-sampling SFT (`train_bitnet.py` に SFT 経路・正典 bitnet_dense から層状低LR) + **diverse set-F1 非退行** 評価 (生成不要) + test | model-trainer | 本機 | G-1 | 🔲 未 |
-| **G-2b** | **平均 reward 前後比** の実測 (SDXL 生成を伴う→GPU 必須) | gpu-benchmarker | 研究機 (GPU) | G-2a | 🔲 未 |
-| **G-3** | 出荷判定 (reward↑ ∧ 正典 set-F1 非退行なら正典化・満たさねば不採用でクローズ) | PL + model-trainer | 本機 | G-2a/b | 🔲 未 |
+| **G-1** | LM 確率的サンプリング (temperature/top-k) 追加 + best-of-N rollout 収集 (N8×M400→SDXL→reward→top-1 選抜) → SFT データセット | gpu-benchmarker | 研究機 (GPU ~3.4h) | Q-2✅ | ✅ 完了 (2026-07-05・400/400) |
+| **G-2a** | rejection-sampling SFT (`train_bitnet.py` に SFT 経路・正典 bitnet_dense から層状低LR) + **diverse set-F1 非退行** 評価 (生成不要) + test | model-trainer | 本機 | G-1 | ✅ 完了 (2026-07-05・非退行ゲート未達) |
+| **G-2b** | **平均 reward 前後比** の実測 (SDXL 生成を伴う→GPU 必須) | gpu-benchmarker | 研究機 (GPU) | G-2a | ✅ 完了 (2026-07-05・200枚) |
+| **G-3** | 出荷判定 (reward↑ ∧ 正典 set-F1 非退行なら正典化・満たさねば不採用でクローズ) | PL + model-trainer | 本機 | G-2a/b | ✅ 完了 (2026-07-05・不採用でクローズ) |
 
 > **PL 条件付き承認 (2026-07-04)** の必須条件:
 > 1. **G-2 は 2 分割**: 訓練+set-F1 は本機 (G-2a)、reward 前後比は SDXL 生成を伴うため研究機 GPU (G-2b)。
