@@ -1,0 +1,21 @@
+[analyze] “Ç‚İ‚İs”=36 cfgs=['0.0', '5.0', '10.0']
+[cfg=5.0] recall: n=12 delta_mean=0.0000 delta_std=0.0000 sem=0.0000 95%CI=[0.0000,0.0000]
+[cfg=5.0]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+[cfg=5.0]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.05700668461264171 vs |delta_mean|=0.0000 ¨ •ªU‘Ñ’´‰ß=False
+[cfg=5.0]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=False
+[cfg=5.0]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[cfg=5.0] worst_anatomy: n=12 delta_mean=-0.0002 delta_std=0.0004 sem=0.0001 95%CI=[-0.0004,-0.0000]
+[cfg=5.0]   ‡@•„†ˆê’v=False (majority_sign=0, signs=[0, 0, 0, 0, -1, -1, -1, -1, 1, 0, 0, -1])
+[cfg=5.0]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.00048661355898073897 vs |delta_mean|=0.0002 ¨ •ªU‘Ñ’´‰ß=False
+[cfg=5.0]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=True
+[cfg=5.0]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[cfg=10.0] recall: n=12 delta_mean=-0.0167 delta_std=0.0389 sem=0.0112 95%CI=[-0.0387,0.0054]
+[cfg=10.0]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[0, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+[cfg=10.0]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.05700668461264171 vs |delta_mean|=0.0167 ¨ •ªU‘Ñ’´‰ß=False
+[cfg=10.0]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=False
+[cfg=10.0]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[cfg=10.0] worst_anatomy: n=12 delta_mean=0.0007 delta_std=0.0016 sem=0.0005 95%CI=[-0.0002,0.0016]
+[cfg=10.0]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0])
+[cfg=10.0]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.00048661355898073897 vs |delta_mean|=0.0007 ¨ •ªU‘Ñ’´‰ß=True
+[cfg=10.0]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=False
+[cfg=10.0]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z

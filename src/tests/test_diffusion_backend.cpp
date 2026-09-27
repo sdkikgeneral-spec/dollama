@@ -11,6 +11,7 @@
 // 全テスト通過時は "[test_diffusion_backend] ALL PASSED" を出力して return 0。
 // 失敗時は std::cerr に出力して return 1。
 
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -74,6 +75,37 @@ struct FakeBackend : IDiffusionBackend
     std::string model_id() const override
     {
         return "fake-1.0";
+    }
+};
+
+// E-2: seed/cfg を記録する fake backend (BackendImageGenerator が下流へ渡す実効値を
+//   検証するための計器)。RGB 自体は FakeBackend と同じ固定色を返す。
+struct RecordingFakeBackend : IDiffusionBackend
+{
+    uint64_t last_seed = 0;
+    float    last_cfg  = -1.0f; // 初期値は generate() が渡し得ない値にしておく
+
+    void generate(const std::string& /*prompt*/, const std::string& /*negative*/,
+                  int /*steps*/, uint64_t seed, float cfg, int w, int h,
+                  std::vector<uint8_t>& rgb_out, int& w_out, int& h_out) override
+    {
+        last_seed = seed;
+        last_cfg  = cfg;
+        const int rw = (w > 0) ? w : 1024;
+        const int rh = (h > 0) ? h : 1024;
+        rgb_out.assign(static_cast<size_t>(rw) * rh * 3, 0);
+        w_out = rw;
+        h_out = rh;
+    }
+
+    BackendInfo info() const override
+    {
+        return {"recording-fake", 4, 1024, false};
+    }
+
+    std::string model_id() const override
+    {
+        return "recording-fake-1.0";
     }
 };
 
@@ -267,6 +299,85 @@ int main()
               "preset 空なら compose_model_id は従来値 sdxl-1.0");
         check(compose_model_id("illustrious-xl") == "sdxl-1.0/illustrious-xl",
               "preset 指定時は compose_model_id が \"sdxl-1.0/<preset>\" を返すべき");
+    }
+
+    // ------------------------------------------------------------
+    // 8. E-2: sampling ノブ (seed/guidance_scale) の下流伝播。
+    //    未指定時は現行経路と同値 (cfg=0.0f=backend既定委譲・seed=env/時刻)、
+    //    指定時は req の値がそのまま backend へ渡ることを検証する。
+    // ------------------------------------------------------------
+    {
+        // 8a. 両方未指定 (has_*=false) → cfg は従来どおり 0.0f (backend 既定へ委譲)。
+        //     env DOLLAMA_SEED も未設定なら seed は時刻ベース (非決定だが取得はできる)。
+#if defined(_MSC_VER)
+        _putenv_s("DOLLAMA_SEED", "");
+#else
+        unsetenv("DOLLAMA_SEED");
+#endif
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen{std::unique_ptr<RecordingFakeBackend>(backend_raw)};
+
+            GenRequest req;
+            req.prompt = "unspecified knobs";
+            req.width  = 1024;
+            req.height = 1024;
+            // req.has_seed / req.has_guidance_scale は false のまま (未指定)
+
+            gen.generate(req);
+            check(backend_raw->last_cfg == 0.0f,
+                  "未指定 guidance_scale は現行どおり cfg=0.0f (backend 既定委譲) で渡るべき");
+            check(backend_raw->last_seed != 0,
+                  "未指定 seed は env/時刻ベースの非ゼロ値が渡るべき (従来経路)");
+        }
+
+        // 8b. env DOLLAMA_SEED のみ設定 (req.seed は未指定) → 従来どおり env 値が渡る。
+#if defined(_MSC_VER)
+        _putenv_s("DOLLAMA_SEED", "424242");
+#else
+        setenv("DOLLAMA_SEED", "424242", 1);
+#endif
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen{std::unique_ptr<RecordingFakeBackend>(backend_raw)};
+
+            GenRequest req;
+            req.prompt = "env seed only";
+            req.width  = 1024;
+            req.height = 1024;
+
+            gen.generate(req);
+            check(backend_raw->last_seed == 424242ULL,
+                  "env DOLLAMA_SEED のみ設定時は従来どおりその値が渡るべき");
+        }
+
+        // 8c. req.seed / req.guidance_scale を明示指定 → env より req が優先され、
+        //     その値がそのまま backend へ渡る。
+        {
+            auto* backend_raw = new RecordingFakeBackend();
+            BackendImageGenerator gen{std::unique_ptr<RecordingFakeBackend>(backend_raw)};
+
+            GenRequest req;
+            req.prompt         = "explicit knobs";
+            req.width          = 1024;
+            req.height         = 1024;
+            req.has_seed           = true;
+            req.seed                = 12345ULL;
+            req.has_guidance_scale = true;
+            req.guidance_scale      = 3.5f;
+
+            gen.generate(req);
+            check(backend_raw->last_seed == 12345ULL,
+                  "req.seed 指定時は env より優先されその値が渡るべき");
+            check(backend_raw->last_cfg == 3.5f,
+                  "req.guidance_scale 指定時はその値がそのまま cfg として渡るべき");
+        }
+
+#if defined(_MSC_VER)
+        _putenv_s("DOLLAMA_SEED", "");
+#else
+        unsetenv("DOLLAMA_SEED");
+#endif
     }
 
     if (g_fail == 0)

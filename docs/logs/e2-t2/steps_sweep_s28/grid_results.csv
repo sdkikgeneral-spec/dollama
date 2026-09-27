@@ -1,0 +1,13 @@
+preset,prompt_id,seed,cfg,sec,exit,log_ok,log_reason,png,recall_matched,recall_total,recall,axis_Hands,axis_Limbs,axis_Head,axis_Eyes,axis_Ears,axis_Mouth,axis_Digits,axis_GlobalAnatomy,argmax_axis,worst_anatomy
+illustrious-xl,p1,1000,0.0,46.03,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p1__seed1000__cfg0.png,9,10,0.9,0.0001,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0001
+illustrious-xl,p1,1001,0.0,45.62,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p1__seed1001__cfg0.png,9,10,0.9,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p1,1002,0.0,44.7,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p1__seed1002__cfg0.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p1,1003,0.0,45.51,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p1__seed1003__cfg0.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p2,1000,0.0,45.38,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p2__seed1000__cfg0.png,8,9,0.8889,0.0003,0.0048,0.0021,0.0002,0.0001,0.0002,0.0002,0.0002,Limbs,0.0048
+illustrious-xl,p2,1001,0.0,46.35,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p2__seed1001__cfg0.png,9,9,1.0,0.0004,0.0021,0.0011,0.0002,0.0002,0.0003,0.0003,0.0002,Limbs,0.0021
+illustrious-xl,p2,1002,0.0,45.84,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p2__seed1002__cfg0.png,8,9,0.8889,0.0003,0.0008,0.0006,0.0002,0.0002,0.0002,0.0002,0.0002,Limbs,0.0008
+illustrious-xl,p2,1003,0.0,46.05,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p2__seed1003__cfg0.png,8,9,0.8889,0.0006,0.0036,0.0023,0.0004,0.0004,0.0004,0.0005,0.0005,Limbs,0.0036
+illustrious-xl,p3,1000,0.0,46.15,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p3__seed1000__cfg0.png,8,10,0.8,0.0001,0.0001,0.0,0.0,0.0,0.0001,0.0,0.0,Limbs,0.0001
+illustrious-xl,p3,1001,0.0,46.12,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p3__seed1001__cfg0.png,9,10,0.9,0.0001,0.0001,0.0,0.0,0.0,0.0001,0.0001,0.0,Limbs,0.0001
+illustrious-xl,p3,1002,0.0,45.56,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p3__seed1002__cfg0.png,8,10,0.8,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0
+illustrious-xl,p3,1003,0.0,45.41,0,True,,docs\logs\e2-t2\steps_sweep_s28\img\illustrious-xl__p3__seed1003__cfg0.png,9,10,0.9,0.0001,0.0001,0.0,0.0,0.0,0.0001,0.0,0.0,Hands,0.0001

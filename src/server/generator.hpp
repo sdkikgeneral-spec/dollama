@@ -43,6 +43,17 @@ struct GenRequest
     std::vector<LoraSpec> loras; // L-2: ランタイム LoRA (未指定 = 空 = 従来経路・無改変)
     bool preset_prefix = true;   // 2-6e: preset の prompt_prefix/negative_prefix 既定 ON
                                   //   (--no-preset-prefix / JSON "preset_prefix":false で OFF)
+
+    // E-2: sampling ノブの露出。has_* = false (既定) = 従来経路と無改変
+    //   (backend_image_generator.hpp が env/時刻フォールバックする)。
+    // 注意: この構造体は pipeline_generator_factory.cu 等 .cu TU からも
+    //   間接 include される (nvcc は -Xcompiler /std:c++14 強制のため
+    //   std::optional 不可)。ODR 事故防止のため POD 表現に固定する
+    //   (フィールドを条件コンパイルで隠さない)。
+    bool     has_seed = false;
+    uint64_t seed = 0;                      // has_seed=true のときのみ有効
+    bool     has_guidance_scale = false;
+    float    guidance_scale = 0.0f;         // has_guidance_scale=true のときのみ有効
 };
 
 // 生成結果 DTO (PNG バイト列まで; base64 化はサーバ層)

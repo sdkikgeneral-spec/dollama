@@ -127,11 +127,26 @@ public:
         // --- ステップ数: req.steps をそのまま (1 未満は 20) ---
         const int steps = (req.steps > 0) ? req.steps : 20;
 
-        // --- seed: GenRequest に seed フィールドが無いため内部で決める。
-        //     env DOLLAMA_SEED が非空かつ全文字パース可能ならその値、それ以外は時刻ベース ---
-        const std::optional<uint64_t> seed_env = resolve_seed_from_env();
-        const uint64_t seed = seed_env ? *seed_env : static_cast<uint64_t>(std::time(nullptr));
-        std::clog << "[gen] seed=" << seed << (seed_env ? "(env)" : "(time)") << '\n';
+        // --- seed: E-2 で req.seed を最優先にした 3 段解決 (req > env DOLLAMA_SEED > 時刻)。
+        //     未指定 (req.has_seed=false) のときは従来どおり env→時刻フォールバック。 ---
+        uint64_t seed;
+        const char* seed_source;
+        if (req.has_seed)
+        {
+            seed = req.seed;
+            seed_source = "(req)";
+        }
+        else if (const std::optional<uint64_t> seed_env = resolve_seed_from_env(); seed_env)
+        {
+            seed = *seed_env;
+            seed_source = "(env)";
+        }
+        else
+        {
+            seed = static_cast<uint64_t>(std::time(nullptr));
+            seed_source = "(time)";
+        }
+        std::clog << "[gen] seed=" << seed << seed_source << '\n';
 
         // --- L-2: ランタイム LoRA (指定時のみ)。apply → generate → 必ず clear ---
         //   未指定 (空) なら apply/clear とも呼ばず従来経路を 1 命令も変えない。
@@ -159,14 +174,16 @@ public:
                       << "' negative='" << negative << "'\n";
         }
 
-        // --- 拡散 backend 実行 (CFG は backend 側の既定に委譲: cfg=0 を渡す) ---
-        //   backend が cfg<=0 のとき自前の既定 (SDXL は 7.5) を使う契約。
+        // --- 拡散 backend 実行 (CFG: E-2 で req.guidance_scale を露出) ---
+        //   未指定 (has_guidance_scale=false) なら従来どおり cfg=0.0f を渡し、backend 側の既定
+        //   (SDXL は 7.5) にフォールバックする契約 (cfg<=0 で既定)。
+        const float cfg = req.has_guidance_scale ? req.guidance_scale : 0.0f;
         std::vector<uint8_t> rgb;
         int w = 0, h = 0;
         try
         {
             backend_->generate(prompt, negative, steps, seed,
-                               /*cfg=*/0.0f, /*w=*/1024, /*h=*/1024, rgb, w, h);
+                               cfg, /*w=*/1024, /*h=*/1024, rgb, w, h);
         }
         catch (...)
         {

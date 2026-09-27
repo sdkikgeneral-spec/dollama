@@ -1,4 +1,5 @@
 #include <iostream>
+#include <optional>
 #include <string>
 
 #ifdef HAVE_OPENVINO
@@ -127,6 +128,10 @@ int run_device_check()
 //                                    未解決なら base checkpoint にフォールバック (warn ログ)。
 //                                    `--preset base` / `DOLLAMA_BACKEND_PRESET=base` は
 //                                    「preset なし = base 重み」を明示する特殊値。
+//   --seed <uint64>                 : E-2: 乱数シード固定。未指定なら env DOLLAMA_SEED →
+//                                    時刻ベースの順でフォールバック (従来どおり)。
+//   --cfg <float>                   : E-2: CFG (guidance scale)。未指定なら backend 既定
+//                                    (SDXL は 7.5)。
 int main(int argc, char** argv)
 {
 #ifdef HAVE_HTTP
@@ -144,6 +149,8 @@ int main(int argc, char** argv)
     std::string out_path = "out.png";
     std::string preset;            // 2-6d: --preset <name> (未指定 "" → build_image_generator が
                                     //   既定 "illustrious-xl" を適用。"base" で base 重みを明示)
+    std::optional<uint64_t> cli_seed;  // E-2: --seed <uint64> (未指定 → GenRequest.has_seed=false)
+    std::optional<float>    cli_cfg;   // E-2: --cfg <float> (未指定 → GenRequest.has_guidance_scale=false)
 
     for (int i = 1; i < argc; ++i)
     {
@@ -223,6 +230,36 @@ int main(int argc, char** argv)
         {
             preset = next_str(preset);
         }
+        else if (a == "--seed")
+        {
+            // E-2: --seed <uint64>。パース失敗時は未指定のまま (has_seed=false = 従来経路)。
+            if (i + 1 < argc)
+            {
+                try
+                {
+                    cli_seed = static_cast<uint64_t>(std::stoull(argv[++i]));
+                }
+                catch (...)
+                {
+                    // 変換失敗は無視 (未指定のまま = 従来経路)
+                }
+            }
+        }
+        else if (a == "--cfg")
+        {
+            // E-2: --cfg <float> (guidance_scale)。パース失敗時は未指定のまま。
+            if (i + 1 < argc)
+            {
+                try
+                {
+                    cli_cfg = std::stof(argv[++i]);
+                }
+                catch (...)
+                {
+                    // 変換失敗は無視 (未指定のまま = 従来経路)
+                }
+            }
+        }
     }
 
     // G-0b: CLI 由来の FAST フラグ集合を組む (env との OR / fp8→fast 含意は
@@ -256,6 +293,17 @@ int main(int argc, char** argv)
         // 集成初期化に matting を足すと並びがずれるため代入で設定する。
         req.matting = !no_matting; // M-6: 既定 ON・--no-matting で OFF
         req.preset_prefix = !no_preset_prefix; // 2-6e: 既定 ON・--no-preset-prefix で OFF
+        // E-2: --seed/--cfg 未指定なら has_*=false のまま (従来経路)
+        if (cli_seed)
+        {
+            req.has_seed = true;
+            req.seed = *cli_seed;
+        }
+        if (cli_cfg)
+        {
+            req.has_guidance_scale = true;
+            req.guidance_scale = *cli_cfg;
+        }
         try
         {
             dollama::GenResult r = gen->generate(req);

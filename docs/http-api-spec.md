@@ -32,6 +32,10 @@ txt2img 生成。
 | `size` | string | `"1024x1024"` | `"1024x1024"` 固定 |
 | `negative_prompt` | string | `""` | (拡張フィールド、OpenAI 非標準) |
 | `steps` | int | 20 | (拡張フィールド) |
+| `guidance_scale` | number | backend 既定 (SDXL は **7.5**) | (拡張フィールド・E-2) CFG スケール。省略時は従来どおり `cfg=0.0f` を backend へ渡し、backend 側の既定にフォールバックする (`sdxl_backend.hpp` は `cfg<=0` のとき `kGuidanceScale=7.5f`)。★**0 以下を明示指定した場合も同契約で既定 7.5 になる** (0 指定で CFG を無効化することはできない)。数値以外は 400。★**効くのは段1 (`BackendImageGenerator`) 経路のみ** — 生成器は 3 段 DI (`src/server/cli_generate.hpp` の 3 段フォールバック) で、段2 `PipelineGenerator` / 段3 `StubGenerator` へ落ちた場合、これらには CFG の概念自体が無く (`req.guidance_scale` の参照が 0 件) **400 にもならず黙って無視される**。段1 かどうかの判定は `[gen] seed=` 行の有無で行う (段2/3 はこの行を出さない) |
+| `seed` | 非負整数 (uint64) | env `DOLLAMA_SEED` → 時刻ベース | (拡張フィールド・E-2) 乱数シード。解決順は **`seed` > env `DOLLAMA_SEED` > 時刻ベース**の 3 段 (`backend_image_generator.hpp`)。実効値は `[gen] seed=<値>(req|env|time)` としてログに出る。★**この行の出力先は stderr** (`backend_image_generator.hpp` の `std::clog`)。一方、段2/3 が名乗る行は stdout (`src/server/cli_generate.hpp` の `log` ストリーム = 呼び出し元 `src/main.cpp` が `std::cout` を渡す) — **stdout だけを grep すると段1 でも `[gen] seed=` が 0 件になり段2/3 と誤判定する。取得時は必ず `2>&1` すること** (本注記は seed 行にのみ置く。`guidance_scale` 行の同判定も同じ)。非負整数以外 (負数・小数・文字列) は 400。★**効くのは段1 (`BackendImageGenerator`) 経路のみ** — 段2 `PipelineGenerator` は `req.seed` を一切読まず内部で seed を決め (`src/server/pipeline_generator.hpp` の seed 決定箇所。「GenRequest に seed フィールドが無いため内部で決める」という **stale コメントのまま**)、段3 `StubGenerator` は **seed の概念自体を持たない** (`src/server/stub_generator.hpp` に seed/RNG が 0 件・出力は `fnv1a(prompt) ^ fnv1a(negative_prompt)*16777619` 由来の決定的な base 色に x/y 方向のグラデーションを載せたダミー画像)。いずれも `req.seed` は**黙って無視**される。判定は `[gen] seed=` 行の有無で行う (段2/3 はこの行を出さない) |
+| `preset_prefix` | bool | `true` | (拡張フィールド・2-6e) preset 付帯の prompt_prefix/negative_prefix を自動付与するか。`false` で OFF (CLI `--no-preset-prefix` 相当)。真偽値以外は 400 |
+| `loras` | array of `{name: string, strength: number}` | `[]` (未指定 = 空 = 従来経路) | (拡張フィールド・L-2) ランタイム LoRA。`strength` 省略時 1.0。`name` は `DOLLAMA_LORA_DIR` (既定 `models/loras`) 配下の `<name>.safetensors` へ解決され、**許可文字 `[A-Za-z0-9_.-]`・空/先頭ドット禁止**で path traversal を封じる (`sdxl_backend.hpp` の `resolve_lora_path`)。配列でない / 要素が `{"name": 非空文字列}` でない / `strength` が数値でない場合は 400。不正名・重み未解決は生成時に `std::invalid_argument` → 400 |
 | `response_format` | string | `"b64_json"` | `"b64_json"` or `"url"` (url は未対応) |
 
 **レスポンス (200 OK)**:
@@ -180,7 +184,33 @@ httplib ハンドラ (Post コールバック)
 
 ```
 dollama [--port 8080] [--steps 20] [--width 1024] [--height 1024]
+        [--seed <uint64>] [--cfg <float>]
 ```
+
+- `--seed` / `--cfg` (E-2) は CLI 生成経路で上表の `seed` / `guidance_scale` と**同じ
+  `GenRequest` フィールド**に入る (`src/main.cpp`)。未指定なら従来経路 (seed は env→時刻・
+  CFG は backend 既定へフォールバック)。
+  値のパースに失敗した場合は**未指定として扱う** (エラーにしない)。
+- ★**「未指定」の C++ 表現は `std::optional` ではなく POD の有無フラグ** (`c00e72b` 以降)。
+  `GenRequest` (`src/server/generator.hpp`) の **E-2 ノブ部**は
+  `bool has_seed` / `uint64_t seed` ・ `bool has_guidance_scale` / `float guidance_scale` の 4 フィールドで
+  (構造体全体は `prompt` / `loras` 等を含む**全 13 フィールド**であり、`std::string` /
+  `std::vector<LoraSpec>` を持つため **POD / trivially-copyable ではない**。POD なのはこのノブ部だけ)、
+  **`has_*=false` (既定) が「未指定」**・値フィールドは `has_*=true` のときのみ有効
+  (HTTP 側も `api.cpp` が `body.contains(...)` のときだけ `has_*=true` を立てる)。
+  初版 (`4afbe2f`) は `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` だったが、
+  この構造体は `src/server/pipeline_generator_factory.cu` 等の **`.cu` TU からも間接 include** され
+  (`pipeline_generator_factory.hpp` / `pipeline_generator.hpp` がどちらも `server/generator.hpp` を include)、
+  本プロジェクトの `.cu` は `src/meson.build` で `-Xcompiler /std:c++14` を強制しているため
+  **`std::optional` が使えず CUDA 有効ビルドが壊れた**。`c00e72b` でノブ部を POD 表現に変更して解消
+  (条件コンパイルでフィールドを隠す案は ODR 違反の恐れがあるため不採用)。
+  **意味論 (未指定→env/時刻・backend 既定へフォールバック) は初版から変わっていない**。
+  経緯と教訓は `docs/image-quality-plan.md` E-2 節「現況」。
+- ★**`--http` 起動時は `--seed` / `--cfg` は使われない (サーバ既定にはならない)**。`src/main.cpp` は
+  `http_mode` なら `GenRequest` を組む前に `start_server` へ return するため、両引数は**パースされるだけで
+  捨てられる** (HTTP 経路の `GenRequest` は `src/server/api.cpp` 側でしか組まれない)。
+  HTTP で seed を固定するには body の `seed` か env `DOLLAMA_SEED` を使う。
+- 上の並びは抜粋。CLI 引数の全量は `src/main.cpp` の引数分岐を参照。
 
 ## 将来拡張 (現フェーズ対象外)
 

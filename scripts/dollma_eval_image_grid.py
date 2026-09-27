@@ -169,13 +169,19 @@ def compute_recall(words, hit_tag_names):
     return matched, total, (matched / total if total else 0.0)
 
 
-def build_grid(presets, prompt_ids, seeds):
-    """(preset, prompt_id, seed) の直積を決定的順序で返す。"""
+def build_grid(presets, prompt_ids, seeds, cfgs=(0.0,)):
+    """(preset, prompt_id, seed, cfg) の直積を決定的順序で返す。
+
+    E-2 T2: cfg 軸を追加 (seed/steps と同じ直積パターン)。cfg=0.0 は「未指定」
+    (CLI --cfg 0.0 は backend 側で cfg<=0 → 既定 7.5 にフォールバックする契約
+    = `--cfg` 無指定と等価。src/server/backend_image_generator.hpp 参照)。
+    """
     grid = []
     for preset in presets:
         for pid in prompt_ids:
             for seed in seeds:
-                grid.append((preset, pid, seed))
+                for cfg in cfgs:
+                    grid.append((preset, pid, seed, cfg))
     return grid
 
 
@@ -249,8 +255,13 @@ def snapshot_integrity(presets, exe):
     return snap
 
 
-def run_one(exe, preset, pid, cond, steps, seed, out_png, log_path, tok_dll, timeout):
-    """1 枚生成する (CLI 生成モード・別プロセス起動)。dict を返す。"""
+def run_one(exe, preset, pid, cond, steps, seed, cfg, out_png, log_path, tok_dll, timeout):
+    """1 枚生成する (CLI 生成モード・別プロセス起動)。dict を返す。
+
+    E-2 T2: seed は env DOLLAMA_SEED (従来どおり) に加えて CLI `--seed` も明示指定し、
+    cfg は CLI `--cfg` で指定する (E-2 T1 で追加された CLI 引数の経路を実際に叩く。
+    req.has_seed/has_guidance_scale が env より優先するため数値上は従来と等価)。
+    """
     env = dict(os.environ)
     env["DOLLAMA_OV_TOKENIZERS_DLL"] = tok_dll
     env["DOLLAMA_SEED"] = str(seed)
@@ -263,6 +274,7 @@ def run_one(exe, preset, pid, cond, steps, seed, out_png, log_path, tok_dll, tim
     cmd = [
         exe, "--prompt", cond["prompt"], "--negative", cond["negative"],
         "--steps", str(steps), "--preset", preset, "--out", out_png,
+        "--seed", str(seed), "--cfg", str(cfg),
     ]
     t0 = time.time()
     try:
@@ -347,23 +359,24 @@ def run_on_research_machine(args):
     print(f"[eval] WD14({args.wd14_device})/ScorerNet({args.scorer_device}) ロード完了")
 
     seeds = list(range(args.seed_base, args.seed_base + args.seeds))
-    grid = build_grid(args.presets, args.prompts, seeds)
+    grid = build_grid(args.presets, args.prompts, seeds, args.cfg_values)
     print(f"[eval] grid: presets={args.presets} prompts={args.prompts} seeds={seeds} "
-          f"→ {len(grid)} 枚")
+          f"cfgs={args.cfg_values} → {len(grid)} 枚")
 
     rows = []
     n_bad = 0
-    for i, (preset, pid, seed) in enumerate(grid):
+    for i, (preset, pid, seed, cfg) in enumerate(grid):
         cond = PROMPTS[pid]
-        tag = f"{preset}__{pid}__seed{seed}"
+        cfg_tag = f"{cfg:g}"
+        tag = f"{preset}__{pid}__seed{seed}__cfg{cfg_tag}"
         out_png = os.path.join(img_dir, tag + ".png")
         log_path = os.path.join(log_dir, tag + ".log")
 
-        res = run_one(args.exe, preset, pid, cond, args.steps, seed, out_png, log_path,
+        res = run_one(args.exe, preset, pid, cond, args.steps, seed, cfg, out_png, log_path,
                       tok_dll, args.gen_timeout)
         ok, reason = check_log(res["log_text"])
         row = {
-            "preset": preset, "prompt_id": pid, "seed": seed,
+            "preset": preset, "prompt_id": pid, "seed": seed, "cfg": cfg,
             "sec": round(res["sec"], 2), "exit": res["exit"],
             "log_ok": ok, "log_reason": reason, "png": os.path.relpath(out_png, ROOT),
         }
@@ -418,7 +431,7 @@ def run_on_research_machine(args):
 
     # --- CSV 出力 (生データ) ---
     csv_path = os.path.join(args.out_dir, "grid_results.csv")
-    fieldnames = (["preset", "prompt_id", "seed", "sec", "exit", "log_ok", "log_reason",
+    fieldnames = (["preset", "prompt_id", "seed", "cfg", "sec", "exit", "log_ok", "log_reason",
                     "png", "recall_matched", "recall_total", "recall"]
                   + [f"axis_{a}" for a in AXIS_NAMES] + ["argmax_axis", "worst_anatomy"])
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -430,7 +443,7 @@ def run_on_research_machine(args):
 
     # --- 集計 CSV (条件ごと 平均±std・秒は characterization のみ明記) ---
     agg_path = os.path.join(args.out_dir, "grid_summary.csv")
-    agg_fields = ["preset", "prompt_id", "n", "n_valid", "recall_mean", "recall_std",
+    agg_fields = ["preset", "prompt_id", "cfg", "n", "n_valid", "recall_mean", "recall_std",
                   "worst_anatomy_mean", "worst_anatomy_std",
                   "sec_mean_characterization_only", "sec_std_characterization_only"]
     with open(agg_path, "w", newline="", encoding="utf-8") as f:
@@ -438,20 +451,23 @@ def run_on_research_machine(args):
         w.writeheader()
         for preset in args.presets:
             for pid in args.prompts:
-                sub = [r for r in rows if r["preset"] == preset and r["prompt_id"] == pid]
-                valid = [r for r in sub if r["recall"] is not None]
-                rmean, rstd = mean_std([r["recall"] for r in valid])
-                wmean, wstd = mean_std([r["worst_anatomy"] for r in valid])
-                smean, sstd = mean_std([r["sec"] for r in sub])
-                w.writerow({
-                    "preset": preset, "prompt_id": pid, "n": len(sub), "n_valid": len(valid),
-                    "recall_mean": round(rmean, 4) if rmean is not None else None,
-                    "recall_std": round(rstd, 4) if rstd is not None else None,
-                    "worst_anatomy_mean": round(wmean, 4) if wmean is not None else None,
-                    "worst_anatomy_std": round(wstd, 4) if wstd is not None else None,
-                    "sec_mean_characterization_only": round(smean, 2) if smean is not None else None,
-                    "sec_std_characterization_only": round(sstd, 2) if sstd is not None else None,
-                })
+                for cfg in args.cfg_values:
+                    sub = [r for r in rows if r["preset"] == preset and r["prompt_id"] == pid
+                           and r["cfg"] == cfg]
+                    valid = [r for r in sub if r["recall"] is not None]
+                    rmean, rstd = mean_std([r["recall"] for r in valid])
+                    wmean, wstd = mean_std([r["worst_anatomy"] for r in valid])
+                    smean, sstd = mean_std([r["sec"] for r in sub])
+                    w.writerow({
+                        "preset": preset, "prompt_id": pid, "cfg": cfg,
+                        "n": len(sub), "n_valid": len(valid),
+                        "recall_mean": round(rmean, 4) if rmean is not None else None,
+                        "recall_std": round(rstd, 4) if rstd is not None else None,
+                        "worst_anatomy_mean": round(wmean, 4) if wmean is not None else None,
+                        "worst_anatomy_std": round(wstd, 4) if wstd is not None else None,
+                        "sec_mean_characterization_only": round(smean, 2) if smean is not None else None,
+                        "sec_std_characterization_only": round(sstd, 2) if sstd is not None else None,
+                    })
     print(f"[eval] CSV (集計 平均±std): {agg_path}")
 
     # --- コンタクトシート (条件ごと・seed 順) ---
@@ -459,22 +475,24 @@ def run_on_research_machine(args):
         from PIL import Image, ImageDraw
         for preset in args.presets:
             for pid in args.prompts:
-                sub = [r for r in rows if r["preset"] == preset and r["prompt_id"] == pid
-                       and r["png"] and os.path.isfile(os.path.join(ROOT, r["png"]))]
-                if not sub:
-                    continue
-                imgs = [(r["seed"], Image.open(os.path.join(ROOT, r["png"])).convert("RGB"))
-                        for r in sub]
-                thumb = 256
-                cols = len(imgs)
-                sheet = Image.new("RGB", (thumb * cols, thumb + 24), (32, 32, 32))
-                draw = ImageDraw.Draw(sheet)
-                for k, (seed, im) in enumerate(imgs):
-                    im2 = im.resize((thumb, thumb))
-                    sheet.paste(im2, (k * thumb, 24))
-                    draw.text((k * thumb + 4, 4), f"seed={seed}", fill=(255, 255, 255))
-                sheet_path = os.path.join(sheet_dir, f"{preset}__{pid}.png")
-                sheet.save(sheet_path)
+                for cfg in args.cfg_values:
+                    sub = [r for r in rows if r["preset"] == preset and r["prompt_id"] == pid
+                           and r["cfg"] == cfg
+                           and r["png"] and os.path.isfile(os.path.join(ROOT, r["png"]))]
+                    if not sub:
+                        continue
+                    imgs = [(r["seed"], Image.open(os.path.join(ROOT, r["png"])).convert("RGB"))
+                            for r in sub]
+                    thumb = 256
+                    cols = len(imgs)
+                    sheet = Image.new("RGB", (thumb * cols, thumb + 24), (32, 32, 32))
+                    draw = ImageDraw.Draw(sheet)
+                    for k, (seed, im) in enumerate(imgs):
+                        im2 = im.resize((thumb, thumb))
+                        sheet.paste(im2, (k * thumb, 24))
+                        draw.text((k * thumb + 4, 4), f"seed={seed}", fill=(255, 255, 255))
+                    sheet_path = os.path.join(sheet_dir, f"{preset}__{pid}__cfg{cfg:g}.png")
+                    sheet.save(sheet_path)
         print(f"[eval] コンタクトシート: {sheet_dir}")
     except Exception as e:
         print(f"[eval] [WARN] コンタクトシート生成に失敗: {e}")
@@ -492,6 +510,10 @@ def main(argv=None):
     ap.add_argument("--seeds", type=int, default=4, help="seed 本数 (>=4 必須・信号ゲート)")
     ap.add_argument("--seed-base", dest="seed_base", type=int, default=1000)
     ap.add_argument("--steps", type=int, default=20)
+    # E-2 T2: CFG(guidance_scale) 軸 (seed/steps と同じ直積パターン)。
+    #   0.0 = 「未指定」(backend 既定 7.5 にフォールバックする契約と等価・cfg<=0)。
+    ap.add_argument("--cfg-values", dest="cfg_values", nargs="+", type=float, default=[0.0],
+                    help="CLI --cfg に渡す guidance_scale のスイープ値 (0.0=backend既定7.5相当)")
     ap.add_argument("--exe", default=DOLLAMA_EXE)
     ap.add_argument("--out-dir", dest="out_dir", default=os.path.join(ROOT, "docs", "logs", "e1"))
     ap.add_argument("--wd14-thresh", dest="wd14_thresh", type=float, default=0.35)
@@ -509,9 +531,9 @@ def main(argv=None):
     ok, reasons = _assets_status(args)
     if not args.run:
         seeds = list(range(args.seed_base, args.seed_base + args.seeds))
-        grid = build_grid(args.presets, args.prompts, seeds)
+        grid = build_grid(args.presets, args.prompts, seeds, args.cfg_values)
         print(f"[PLAN] presets={args.presets} prompts={args.prompts} seeds={seeds} "
-              f"→ {len(grid)} 枚 / steps={args.steps} / out_dir={args.out_dir}")
+              f"cfgs={args.cfg_values} → {len(grid)} 枚 / steps={args.steps} / out_dir={args.out_dir}")
         print(f"[PLAN] 実走資産: {'揃っている' if ok else '不足'}"
               + ("" if ok else f" ({'; '.join(reasons)})"))
         print("[PLAN] 研究機で実走するには --run を付ける。実走前に SAC OFF をユーザーへ依頼すること。")

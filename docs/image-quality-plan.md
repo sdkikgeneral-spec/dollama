@@ -88,14 +88,14 @@
 
 ## 2. 項目一覧 (概観)
 
-| ID | 目的 (要旨) | 担当 | 機械 | 発火条件 | 依存 |
-|---|---|---|---|---|---|
-| E-0 | 既定 preset の VAE `scaling_factor` 残債の解消 | cuda-kernel-dev → gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし |
-| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし |
-| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 |
-| E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 |
-| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) |
-| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 |
+| ID | 目的 (要旨) | 担当 | 機械 | 発火条件 | 依存 | 状態 (★2026-09-27 時点) |
+|---|---|---|---|---|---|---|
+| E-0 | 既定 preset の VAE `scaling_factor` 残債の解消 | cuda-kernel-dev → gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | 完了・main merge 済 (実装 `272e854` / merge `2d442b3`) |
+| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | **main merge 済 (`f72d595` / merge `d8f9c0b`)。ただし本台帳の DoD 充足判定は未実施** — ★**DoD 5 (CSV の paired CI 列) 欠落**と★**5-1 兼用 docstring の決裁**が §E-1 に残置 (下記 E-1 節「現況 (2026-09-20)」)。★T2 で cfg 軸を追加 = **その変更は E-2 branch 上で未 merge** |
+| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 | **T1+T2 完了 = DoD 1-6 充足。ただし branch `feat/e2-sampling-knobs` は main 未 merge・未 push** (詳細は E-2 節「現況 (2026-09-27) — T2」) |
+| E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 | **発火条件は充足** (E-2 T2 で有効レバー 0/4)。**充足 = 着手決裁ではない**・E-3 が効く見込みは未裏付け。競合候補は E-3 節「次のレバー候補」 |
+| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) | 未着手 |
+| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 | 未着手。発火条件は **branch 基準では充足・main 基準では未** (E-2 未 merge) |
 
 ※ **「発注済」の出典**: リポ内に対応する branch / commit / issue は**無い** (2026-09-20 時点で
 `git log` / `git branch` に該当なし)。本欄は **main thread からの口頭発注 (2026-09-19・リポ外の状態)** を
@@ -171,7 +171,18 @@ CSV を吐くハーネスを 1 本作る。
 
 **実行経路 = CLI・1 プロセス 1 枚 (前提として明記)**
 HTTP 経路は格子を回せない。一次証拠:
-- **HTTP に seed が無い** (`src/server/generator.hpp` l.34-46 の `GenRequest` に seed フィールド無し /
+- **HTTP に seed が無い** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch
+  `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み**のため、**本 branch 上ではこの
+  一次証拠は成り立たない** (`src/server/generator.hpp` l.53-56 に `bool has_seed` / `uint64_t seed` /
+  `bool has_guidance_scale` / `float guidance_scale` / `src/server/api.cpp` l.177-187 が
+  `body.contains("seed")` → `gr.has_seed=true; gr.seed=...` で受理。同様に `guidance_scale` も
+  l.166-176 で受理される。行番号・型はいずれも **`c00e72b` の現物**で 2026-09-22 に確認。
+  ★初版 `4afbe2f` では `std::optional<uint64_t> seed;` / `std::optional<float> guidance_scale;`
+  (同 commit の l.50-51) だったが、CUDA ビルド回帰のため
+  `c00e72b` で POD 表現へ変更済み — 経緯は E-2 節「現況」) — 詳細は E-2 節「現況 (2026-09-22)」と
+  §3 の同趣旨バナーを参照。**E-1 の結論 (格子は CLI で回す) は下の「HTTP に preset が無い」だけで
+  今も成立する**ので変更しない。以下は起票時の記述をそのまま残す:
+  (`src/server/generator.hpp` l.34-46 の `GenRequest` に seed フィールド無し /
   `src/server/api.cpp` l.128-217 の受理フィールドは prompt / negative_prompt / n / steps / size /
   preset_prefix / loras / response_format のみ)。seed は env `DOLLAMA_SEED` だけ
   (`src/server/backend_image_generator.hpp` l.53-62, l.131)。
@@ -227,6 +238,21 @@ hit 率で崩壊スコア化 → ヒートマップ。**採点器は新規不要
 **E-1 レビュー時に兼用主張の扱い (docstring を落とすか / 兼用を決裁するか) を決める**。
 **未 commit・未レビュー**のため本台帳では完了扱いにしない (DoD の充足判定は成果物の検査後)。
 
+★**追記 (2026-09-27・記録監査 中 7)**: 上の「未 commit」は **2026-09-20 時点の記述**であり、現在は状況が
+進んでいる。ただし**残置事項は 2 件とも未解消なので、§2 項目一覧の E-1 行は「完了」ではなく
+「merge 済・DoD 充足判定は未実施」に訂正した**。記録執筆時に確認した一次証拠:
+- **commit・merge は済んでいる**: `f72d595` (「scripts: E-1 — 画質評価ハーネス
+  dollma_eval_image_grid.py 新規追加」) は `git branch --contains f72d595` に **`main` を含む**。
+  `git ls-tree main -- scripts/dollma_eval_image_grid.py` も存在を返す。
+- **DoD 5 (CSV の paired CI 列) は依然未充足**: `docs/logs/e2-t2/*/grid_summary.csv` のヘッダは
+  `preset,prompt_id,cfg,n,n_valid,recall_mean,recall_std,worst_anatomy_mean,worst_anatomy_std,
+  sec_mean_characterization_only,sec_std_characterization_only` = **CI 列は無い**。
+  T2 は CI を**別スクリプト `dollma_e2_t2_analyze.py` の標準出力**で出して判定した (算出法は正規近似・
+  E-2 節参照) が、**DoD 5 が要求する「CSV から機械的に評価できる」形にはなっていない**。
+- **5-1 兼用 docstring も未処理**: `git show main:scripts/dollma_eval_image_grid.py` の l.10-11 は
+  今も `**Phase 5-1 (崩壊境界 probe) の先行実装を兼ねる**` と断定している。
+→ **この 2 件の決着 (E-1 レビュー) は残債のまま**。merge されたことは DoD 充足の代わりにならない。
+
 **★採点資産の実態 (過大評価しないこと)**
 E-1 は「既存の採点資産で集計する」が、その資産には**既知の穴が 2 つ**ある。**ハーネスの設計前に把握すること**:
 
@@ -259,6 +285,10 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
    (`src/server/backend_image_generator.hpp` l.53-62, l.131 で `DOLLAMA_SEED` を読む。CLI に `--seed` は無い —
    `src/main.cpp` l.174-222 の引数分岐は `--http/--port/--steps/--width/--height/--prompt/--negative/
    --out/--no-matting/--no-preset-prefix/--fast/--fp8/--preset` のみ)。E-2 で `--seed` が入ったら差し替える。
+   ★**2026-09-27: この条件は満たされた** — E-2 T1 で `--seed`/`--cfg` が入り (branch のみ・main 未 merge)、
+   T2 のスイープは env ではなく **CLI `--seed` 経由**で 60 走行すべてログに `[gen] seed=<値>(req)` を残している
+   (E-2 節「現況 (2026-09-27) — T2」)。★**ただし `--cfg` の実効値はログに出ていない** = 本 DoD 3 の
+   「ログに残ること」は seed については充足・**cfg については未充足** (E-2 の残債②)。
 4. ★**ノイズ床が測れていること**: 参照アーム (既定 = illustrious-xl) の**同条件・異 seed** を
    最低 4 seed 回し、指標ごとの **sd を CSV に出す**。これが共通規律 2 の (b) の分母になる。
    seed 本数は 4 以上 (Phase 4 の seed sweep はすべて 4 seed = measurements-log l.56-58, l.72, l.73)。
@@ -283,7 +313,8 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
 
 ## E-2 — sampling ノブ (steps / CFG / seed) の露出とスイープ
 
-**目的**
+**目的** (★以下の「現状」は**起票時 = 2026-09-19 の状態**。T1 実装後の状態は本節の
+「現況 (2026-09-22)」を見ること)
 現状、**絵に効く基本ノブが外から触れない**:
 
 - CFG スケールは `src/server/sdxl_backend.hpp:57` で
@@ -299,7 +330,9 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
 そこで ① CLI `--cfg` / `--seed` と HTTP `guidance_scale` / **`seed`** を追加し、② E-1 の格子で
 steps / CFG / seed をスイープして**既定値の妥当性**を多 seed で確かめる。
 
-★**HTTP `seed` を E-2 のスコープに含める理由 (重要)**: これは E-5 の前提条件である。
+★**HTTP `seed` を E-2 のスコープに含める理由 (重要。★この段落も起票時 = 2026-09-19 の状態で書かれている**
+— 「seed は HTTP から指定できない」は T1 実装後は成り立たない。本節「現況 (2026-09-22)」と突き合わせること):
+これは E-5 の前提条件である。
 **LoRA は HTTP 専用で CLI から到達できない** (`grep -rn -i lora src/server/cli_generate.hpp src/main.cpp`
 = **0 件**。`loras` は `api.cpp` l.179 のみ)。一方 seed は HTTP から指定できない。
 したがって **HTTP `seed` が無い限り「LoRA strength 軸 × 多 seed」を 1 プロセス内で清潔に回せない** (E-5)。
@@ -345,6 +378,402 @@ reward 比較のノイズ除去」/ `docs/roadmap.md` l.321「**次レバー** (
    エージェントの判断で確定しない)。
 6. 秒が動いても CLAUDE.md 計測表に行を足さない (共通規律 6)。
 
+**現況 (2026-09-22) — T1 (ノブ配線 + 仕様表更新) 実装完了・未レビュー**
+実装場所は worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs` (main 未 merge)。
+★**以下の DoD 欄は commit `4afbe2f` 時点で書かれた**。その後 `c00e72b` で CUDA ビルド回帰を修正して
+`GenRequest` の表現が変わっているため、**型・フィールド名は下記「CUDA ビルド回帰 (`c00e72b`)」を正とする**。
+
+**CUDA ビルド回帰 (`c00e72b`・2026-09-22) — 記録監査をすり抜けた事故**
+
+- **何が壊れていたか**: T1 初版 `4afbe2f` は `GenRequest` (`src/server/generator.hpp`) に
+  `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` を追加した。この構造体は
+  `src/server/pipeline_generator_factory.cu` からも間接 include される
+  (`pipeline_generator_factory.hpp` / `pipeline_generator.hpp` がどちらも `server/generator.hpp` を include)。
+  本プロジェクトの `.cu` は `src/meson.build` l.46 で **`-Xcompiler /std:c++14` を強制**している
+  (同 l.37 の注記: CUDA 13.3 + MSVC で c++17/20 ヘッダ組合せの 0xC0000409 を回避するため) ので、
+  **`std::optional` がコンパイルできず `with_cuda=true` のビルドが通らなかった**。
+  ★**失敗ビルドのエラー出力は保全していない** (`c00e72b` 後の build ディレクトリで上書き済み)。
+  上記の機構は現物から導出したもの = `src/meson.build` l.46 (`-Xcompiler '/std:c++14'`・注記は同 l.37) +
+  include 連鎖 (`pipeline_generator_factory.cu` l.15 → `pipeline_generator_factory.hpp` l.23 /
+  同 .cu l.21 → `pipeline_generator.hpp` l.41 → どちらも `server/generator.hpp`) + 初版 `4afbe2f` の
+  `generator.hpp` が `#include <optional>` していたこと。**「ビルドが失敗した」事象そのものの一次証拠
+  (コンパイラ出力) は無い**。
+- **なぜ見逃したか**: **T1 に対する記録監査 3 ラウンドはすべて `with_cuda=false` 構成で行われた**
+  (★この「3 ラウンドとも」は **PL からの申し送り**であり、本記録執筆時に一次証拠で数えたものではない。
+  下記 DoD 4 走行 A の構成が `with_cuda=false` だったことについても**一次証拠は残っていない**
+  — 根拠は当時の記録 (二次) のみ。走行 A のログは同一 build ディレクトリの走行 B で上書きされている)。
+  この構成では `.cu` が 1 つもコンパイルされないため、回帰が発生しうる TU が
+  **ビルドグラフに存在しない**。「`meson test` 32/32 緑」はこの構成の緑であり、
+  CUDA ビルドの成否については何も言っていなかった。
+- **どこで発覚したか**: **研究機での T2 実走準備で `with_cuda=true` としてビルドした時点**
+  (★発覚の場面も PL からの申し送り。本記録側の一次証拠は、`c00e72b` が実際に
+  `with_cuda=true`/`with_openvino=true` 構成の build ディレクトリを残していること = DoD 4 走行 B)。
+  レビューや test ではなく、実走のためのビルドが最初の検出器になった。
+- **どう直したか**: `c00e72b` で `std::optional<T>` を **POD のフラグ + 値フィールド**
+  (`bool has_seed` / `uint64_t seed` ・ `bool has_guidance_scale` / `float guidance_scale`) に置換
+  (`src/server/generator.hpp` l.53-56)。
+  ★**「POD」なのは E-2 ノブ部の 4 フィールドだけ**で、`GenRequest` 自体は `std::string prompt` /
+  `std::vector<LoraSpec> loras` を含むため POD / trivially-copyable ではない
+  (現物 l.34-57 = 全 13 フィールド)。
+  呼び出し側は `api.cpp` / `backend_image_generator.hpp` / `main.cpp` /
+  `test_diffusion_backend.cpp` / `test_http.cpp` を追従。
+  **意味論 (未指定→env/時刻・backend 既定へフォールバック) は不変**であることは
+  `git diff 4afbe2f c00e72b` の全差分で確認済み (分岐条件が `req.seed` → `req.has_seed`、
+  値取得が `*req.seed` → `req.seed` に替わっただけ)。
+  条件コンパイルでフィールドを隠す案は **ODR 違反の恐れがある**ため採らなかった
+  (一次証拠 = `src/server/generator.hpp` の当該コメント「ODR 事故防止のため POD 表現に固定する
+  (フィールドを条件コンパイルで隠さない)」。同種の実害の前例は CLAUDE.md 計測表
+  「ランタイム LoRA (L-2 完了)」行に記録の `class DeviceWeights` ODR 事故)。
+- ★**教訓 (今後の同種事故を防ぐための本記録の主目的)**:
+  **CUDA / OpenVINO を有効にしたビルドを一度も通していない状態で「`meson test` 全緑」を完了扱いにしない。**
+  構成を落としたビルドの緑は「その構成で壊れていない」しか意味せず、**落とした部分の無傷を保証しない**。
+  記録・レビュー側も、test 結果を引用するときは **どの build option 構成の走行か**を必ず併記する
+  (本節 DoD 4 はその書き方に従う)。
+
+DoD ごとの状態:
+
+- **DoD 1 = 実装済み**。`GenRequest` (`src/server/generator.hpp`) に sampling ノブ 2 件を**末尾に**追加。
+  ★**現物 (`c00e72b`) の E-2 ノブ部は POD のフラグ + 値フィールド** (構造体全体が POD という意味ではない
+  = 上記「どう直したか」の ★) — l.53-56 に `bool has_seed = false` / `uint64_t seed = 0` /
+  `bool has_guidance_scale = false` / `float guidance_scale = 0.0f`
+  (初版 `4afbe2f` は `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` だった。
+  変更理由は上記「CUDA ビルド回帰」)。
+  **DoD 1 の ⚠ (集成初期化の非破壊) は `c00e72b` でも維持されている** — 一次証拠:
+  ① 追加 4 フィールドは構造体の**末尾**にあり、`prompt/negative_prompt/n/steps/width/height` の並びは無改変
+  (`git diff 4afbe2f c00e72b -- src/server/generator.hpp` = **2 hunk**: 末尾ブロックの差し替えと、
+  先頭の `-#include <optional>` 削除。既存フィールドを触る hunk は無い)、
+  ② `src/main.cpp` の `GenRequest req{prompt, negative, 1, steps, width, height};` という位置指定の
+  集成初期化は**一切変更されていない** (同 diff の `src/main.cpp` 側は `--seed`/`--cfg` の代入部のみ)、
+  ③ ノブは集成初期化に足さず `if (cli_seed) { req.has_seed = true; req.seed = *cli_seed; }` /
+  `if (cli_cfg) { req.has_guidance_scale = true; req.guidance_scale = *cli_cfg; }` の**代入**で設定
+  (`matting` / `preset_prefix` と同じ流儀)。
+  なお `src/main.cpp` のローカル変数側は `std::optional<uint64_t> cli_seed` / `std::optional<float> cli_cfg`
+  のままである (`main.cpp` は `.cpp` TU なので c++14 制約を受けない)。POD 化したのは
+  `GenRequest` の E-2 ノブ部だけ。
+  CLI `--seed <uint64>` / `--cfg <float>` を追加 (パース失敗時は**未指定扱い**でエラーにしない)。
+  ⚠ **この 2 引数は実行未検証** — argv 解析を通す test が 0 件のため、言えるのはビルド成立までである
+  (詳細と一次証拠は下記 DoD 4 の ★★)。また **`--http` 起動時は両引数とも捨てられる**
+  (`src/main.cpp` は `http_mode` なら `GenRequest` を組む前に `start_server` へ return する)。
+  HTTP は `api.cpp` で `guidance_scale` 非数値 → 400 / `seed` 非負整数以外 (負数・小数・文字列) → 400。
+  seed 解決は `backend_image_generator.hpp` で **`req.seed` > env `DOLLAMA_SEED` > 時刻**の 3 段になり、
+  実効値を `[gen] seed=<値>(req|env|time)` としてログに出す。CFG は未指定なら従来どおり `cfg=0.0f` を
+  backend へ渡し既定 (SDXL `kGuidanceScale=7.5f`) へ委譲。
+- **DoD 2 = 充足 (T2・2026-09-27。ただし突合相手を 2-6e から main `766082a` へ差し替えた** —
+  理由と一次証拠は下記「現況 (2026-09-27) — T2」の「DoD 2」項)。
+  ★以下の T1 時点の記述は経緯として残す。
+- (T1 時点の状態) **DoD 2 = 未充足 (T2 = 研究機の担当として残る)**。T1 のユニット test で示せたのは
+  ① `BackendImageGenerator` が未指定時に backend へ渡す**実効引数**が従来と同じ (`cfg==0.0f`・seed は
+  env→時刻の非ゼロ値)、② HTTP で未指定なら `GenRequest` が未指定のまま
+  (`c00e72b` 以降は `has_guidance_scale`/`has_seed` がともに false。`src/tests/test_http.cpp` l.375 の判定。
+  ★同 l.380 のログ文字列は `[gen-knobs-unset] 未指定時 nullopt OK` と **stale** のまま = 残債・src 未修正)、
+  の 2 点まで。
+  いずれも fake/stub backend 上の検証であり、**2-6e の p1/p2/p3 PNG sha256 3/3 一致は未実施**。
+  ★実重みでの sha256 突合と、その走行条件 (`--fast` 有無の明示記録) は T2 で行う。
+- **DoD 3 = 実装済み**。`docs/http-api-spec.md` の拡張フィールド表に `guidance_scale` / `seed` を追加し、
+  併せて既存乖離 2 件 (`preset_prefix` (2-6e) / `loras` (L-2)) も同時に解消した。
+  同 doc の CLI 引数抜粋にも `--seed` / `--cfg` を追記。
+- **DoD 4 = 部分充足**。test 追加は `src/tests/test_diffusion_backend.cpp` (`RecordingFakeBackend` で
+  未指定/env のみ/req 明示の 3 ケース) と `src/tests/test_http.cpp` (`RecordingGenerator` で伝播・
+  **未指定 = `has_seed`/`has_guidance_scale` がともに false** (`test_generations_sampling_knobs_unset`)・
+  非数値 cfg 400・負数 seed 400)。
+  **走行 A (初版 `4afbe2f`・記録として残す)**: `meson test` **32/32 緑**
+  (当時の出典は `build/meson-logs/testlog.txt`・2026-09-22T23:20:16)。
+  ★**走行 A のログは同一 build ディレクトリの走行 B で上書きされ現存しない** (現物 `testlog.txt` の
+  1 行目は `2026-09-22T23:56:53` のみ = 走行 B)。したがって **32/32・`with_cuda=false` は当時の記録 (二次)
+  であり、現時点で再検証できない**。
+  当時の記録によればこの build 構成は **`with_cuda=false` / `with_openvino=false` / `with_http=true`** で、
+  CUDA/OV 依存 test は登録されない = **実重み経路はこの走行で 1 件も走っていない**
+  (「全緑」を実重み検証の代わりに読まないこと)。**この構成では CUDA ビルド回帰も検出できなかった**
+  (上記「CUDA ビルド回帰」)。
+  **走行 B (`c00e72b`・2026-09-22T23:56:53 開始)**: `with_cuda=true` / `with_openvino=true` /
+  `with_http=true` (`build/meson-info/intro-buildoptions.json` で確認) で**ビルド成立**し、
+  `meson test` **55/55 Ok / Fail 0** (`build/meson-logs/testlog.txt` の `Ok: 55 / Fail: 0`)。
+  → **解消した限定**: ① CUDA 有効ビルドが通る = `.cu` TU 群も新 `GenRequest` を含めてコンパイル/リンク可、
+  ② 登録 test が 32→55 に増え、**GPU カーネル test が実走** (例: `test_gemm` / `test_conv2d` /
+  `test_attention` / `test_groupnorm` / `test_device_arena` がいずれも ALL PASSED)。
+  ★`test_groupnorm` の `bench_groupnorm_mb` はここでは **`ALL PASSED` = ゲート通過の事実のみ**を採る。
+  同 bench の GB/s 値は**閾値 (300 GB/s) を超えたかの合否判定用であり、性能比較の数値ではない**
+  (同一行の実測が median 0.0624ms に対し min 0.04448 / max 7.37501ms = **測定ばらつきが大きい**)。
+  CLAUDE.md 計測表「GroupNorm multi-block (G-4k S1a 完了)」の値と引き算して**退行/改善を論じないこと**。
+  → ★**残る限定 (「実重み経路が緑」と読まないこと)**: この worktree には gitignore 対象の
+  golden / 重みが無く (拡散系 = `src/tests/data/unet_io.safetensors` / `txt2img_io.safetensors` 等、
+  LM 系 = `data/bitnet/bitnet_dense*_fp32.safetensors` — `data/bitnet/vocab.json` は現存)、
+  **11 test が重み/golden 不在で `[SKIP]` を出している**
+  (text_conditioner / scheduler / bitnet_infer / bitnet_int8 / vae_decode / unet /
+  unet_fast / diffusion / diffusion_batch2 / pipeline_generator / bitnet_gpu)。
+  ★**preset の大型重みは現存する** — `models/presets/illustrious-xl/unet_weights.safetensors` 5,135,149,736 B /
+  `vae_weights.safetensors` 98,995,758 B が実体としてあり、testlog も
+  `unet = ../models/presets/illustrious-xl/unet_weights.safetensors [OK]` / `vae = ... [OK]` を出している。
+  **「worktree に大型テストデータが 1 つも無い」わけではない**。
+  ★**SKIP のうち 2 件は重み/golden 不在とは別原因**なので上の 11 件に数えない:
+  ① `test_allocator` の `test_cuda_alloc_no_cuda_throws` は `SKIP (HAVE_CUDA あり)` =
+  **CUDA が有効だから**スキップする (CUDA 無効時に例外を投げる経路の test なので、この構成では恒久的に SKIP)、
+  ② `test_txt2img` は `[SKIP] アセットが見つかりません (tokenizers.dll)` = env `DOLLAMA_OV_TOKENIZERS_DLL`
+  未設定が原因。
+  さらに `test_cli_generate` は stderr に
+  `[factory] 重み/golden が不足しています — StubGenerator にフォールバック`
+  (`embed = src/tests/data/unet_io.safetensors [MISSING]`) を出しており、**実重み拡散は走っていない**。
+  したがって走行 B で言えるのは「CUDA 有効ビルドが通り、重みを要さない GPU test が緑」までで、
+  **実重みでの PNG 生成 e2e と 2-6e sha256 一致は依然未実施 = DoD 2 は引き続き未充足**。
+  ★★**`src/main.cpp` の引数解析を通す test は 0 件** (`grep -rn '"--seed"\|"--cfg"\|"--prompt"' src/tests/`
+  = **0 件**・2026-09-22 実行。**`c00e72b` の現物で 2026-09-27 に再実行しても 0 件**)。
+  上記 2 本はどちらも `GenRequest` を test 側で直接組み立てており、
+  argv 解析を 1 行も通らない。したがって **`--seed` / `--cfg` については「コンパイル・リンクが通った」
+  ことまでしか言えず、引数が実際に拾われるかは未検証**。→ T2 で `dollama --prompt ... --seed ...` の
+  smoke を 1 本走らせて実効値 (`[gen] seed=<値>(req)`) を確認する。
+- **DoD 5 (スイープ) = 充足 (T2・2026-09-27)。結論 = 既存ノブ (この走行の範囲: cfg 5.0-10.0 / steps 12-28)
+  では頭打ち・既定値は変更しない** (したがって DoD 5 ★のユーザー決裁は発生しない)。
+  実数値・3 軸判定の内訳・限定は下記「現況 (2026-09-27) — T2」の「DoD 5」項。
+- **DoD 6 = 遵守**。CLAUDE.md 計測表に行は足していない。
+- **既定値は 1 つも変えていない** (`kGuidanceScale=7.5f`・seed の env→時刻フォールバックとも無改変)
+  ため、DoD 5 ★のユーザー決裁は T1 では発生しない。
+
+**現況 (2026-09-27) — T2 (実重み DoD 2 突合 + DoD 5 スイープ) 実走完了**
+実走は研究機 (SAC OFF)・worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs`。
+生成物とログは `docs/logs/e2-t2/` 配下。★**本節の数値は記録執筆時に一次証拠 (PNG の sha256 再計算 /
+`grid_results.csv` / `analysis_*.log`) を開いて検算した**。
+
+★**成果物の保全範囲 (要決裁の残件)**: `docs/logs/e2-t2/` の実体は **81 PNG / 約 268MB**。
+このうち **commit したのは DoD 2 の突合 PNG 6 枚・全ログ (60 走行分の `log/*.log`)・CSV 3 組・
+contact sheets・`analysis_*.log`・`dod2_notes.txt`** で、**スイープ本体の `*/img/*.png` 60 枚
+(約 240MB) は commit していない** (研究機ローカルにのみ存在)。
+E-1 は img を全数 commit している (`git ls-files docs/logs/e1/` = PNG 20 件) ため**先例とは異なる扱い**であり、
+240MB をリポジトリに恒久追加するかは**記録係の裁量を超える** = **ユーザー/PL の決裁待ち**。
+影響: 本節が引用する cfg アーム 3 枚の sha256 (`abeede2f…`/`4703af70…`/`7fa14633…`) は、
+commit 済みの範囲からは**再計算できない**。再現が必要なら研究機ローカルか再走行が要る。
+
+**準備段階の前提破損 (先に読むこと)**
+- worktree に gitignore 対象の `src/tests/data/unet_io.safetensors` が無く、`dollama.exe --preset
+  illustrious-xl` の実走が段 1 (`BackendImageGenerator` / sdxl backend) ではなく **段 3 (`StubGenerator`)
+  へフォールバックしていた** (`build_image_generator` の ov_ready 判定が embeds パスの存在も
+  要求する)。既知症状 = `[[feedback_worktree_missing_test_data]]` / T1 の DoD 4 ★も同じ不在を記録している。
+  ★**初版の「静かにフォールバック」は不正確だったので訂正した** (下記「教訓」参照)。
+- 対処: main checkout の同ファイル (498,395,472 B) からハードリンクを張って復旧。以後のログに
+  `dollama HTTP server (sdxl backend [preset=illustrious-xl] — NPU)` が出ることで段 1 到達を確認
+  (一次証拠: `docs/logs/e2-t2/p1_dod2.log`)。
+- ★**教訓 (T1 の「構成を落とした緑」と同型)**: 実走の**段**を確認せずに出力を採らない。
+  ★**訂正 (記録監査 重大 1・2026-09-27)**: 初版はこれを「段 3 フォールバックは **静かに** 起こる」と
+  書いていたが、**一次証拠と食い違うので訂正する**。
+  - 段 3 は**名乗る**: `src/server/cli_generate.hpp` l.365 が
+    `log << "dollama HTTP server (stub generator — 重み未解決のためフォールバック)\n";` を出す
+    (`log` は `src/main.cpp` から渡る `std::cout` = **stdout**)。段 2 も同様に自分の段を名乗る。
+  - **見落としの実体は「静かさ」ではなく「exit=0 で PNG も出るため、手動実走で stdout を読まないと
+    気付かない」**こと。今回の破損もこの型で、ログ自体には段 3 の行が出ていた。
+  - **ハーネス経路 (`scripts/dollma_eval_image_grid.py` の `check_log`) は既に機械判定する**:
+    同 script l.69 `BAD_MARKERS = ["[warn]", "stub", "フォールバック", "構築に失敗"]` (case-sensitive)。
+  - 段判定の運用手順は `docs/http-api-spec.md` の `seed` 行 (「取得時は必ず `2>&1` すること」) に
+    既に文書化済み — 段 1 の `[gen] seed=` は **stderr**、段 2/3 の名乗り行は **stdout** なので、
+    片方だけを grep すると誤判定する。
+  → **規律**: 手動実走でも出力を `2>&1` でまとめて取り、段マーカーを必ず grep してから数値を採る。
+
+**DoD 2 (既定経路の無改変ゲート) = 充足。ただし突合相手を差し替えた**
+- ★**DoD 2 原文の「2-6e の p1/p2/p3 sha256 と 3/3 一致」は、この時点では原理的に成立しない**:
+  2-6e の PNG は **E-0 (VAE `scaling_factor` を 0.18215 へ・commit `272e854`) より前**の exe で生成された
+  もので、E-0 は既に main へ入っており (`git merge-base --is-ancestor 272e854 766082a` = 真)、
+  E-2 branch は E-0 の**後**に分岐している (`git merge-base main feat/e2-sampling-knobs` = **`766082a`**)。
+  つまり 2-6e との差は **E-0 由来の正当な差分**であり、E-2 の回帰とは無関係。
+  実際に E-2 worktree 出力は 2-6e の値と不一致だった。
+  → **突合相手を merge-base `766082a` (E-0 後・E-2 分岐前の main) に差し替えて判定した**。
+  ★この差し替えは DoD 原文の緩和ではなく、**原文が意図した「既定経路に回帰なし」を測れる唯一の基準への
+  訂正**である (2-6e 基準では E-0 の変更が回帰として誤検出される)。
+- **A/B 比較結果 = p1/p2/p3 3/3 sha256 完全一致**。両アームとも
+  env `DOLLAMA_SEED=1234` / `--preset illustrious-xl` / `--steps 20` / **`--seed`・`--cfg` 未指定**:
+
+  | prompt | sha256 (E-2 worktree / main `766082a` 共通) |
+  |---|---|
+  | p1 | `88be13a7c1544f406d6ca6193bc7a08fc63e8c919d4390b0acb164e550de98fd` |
+  | p2 | `f99a511ba049d428cdab0f2f32dd007de5530540bf501d4987546e18311122e1` |
+  | p3 | `d8d3e2b137cc9827b04be73caa25ee2a67c975163e7543cd15fe49f675a1bb1b` |
+
+  一次証拠 = `docs/logs/e2-t2/p{1,2,3}_dod2.png` (E-2 側) と
+  `docs/logs/e2-t2/baseline-main-766082a/p{1,2,3}_base.png` (main 側) の sha256 を記録執筆時に再計算し
+  6 値すべてを確認した。
+- ★**二アームが別バイナリであることの記録 (記録監査 中 4 で追加・2026-09-27)**。
+  初版は exe の同一性/相違を記録していなかったため、A/B が本当に 2 本の exe で回ったのか読者が検算できなかった:
+
+  | アーム | exe | sha256 | mtime |
+  |---|---|---|---|
+  | main `766082a` 側 | `E:\Develop\Projects\dollama\build\src\dollama.exe` | `088f28bb5e3da63cb49d8733f438c5c52edd8bc9bb86e7801847a5303456d3a0` | 2026-09-20 15:21 |
+  | E-2 worktree 側 | `E:\Develop\Projects\dollama-wt-e2t1\build\src\dollama.exe` | `c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8` | 2026-09-22 23:55 |
+
+  一次証拠 = 記録執筆時に両ファイルの sha256 を再計算。worktree 側の値は**スイープ 3 本の run log の
+  `exe_sha256` と同一** (`docs/logs/e2-t2/{cfg_sweep_run,steps_s12_run,steps_s28_run}.log` の
+  `[eval] exe_sha256=c748f98f… integrity_ok=True`) = **DoD 2 の手動実走とスイープが同じ exe**。
+  ★**前提の明示 (これまで `dod2_notes.txt` にしか無かった)**: **main 側は `766082a` の再ビルドではなく
+  2026-09-20 の既存ビルドを流用**しており、「**`2d442b3` (exe のビルド時点) 以降 `766082a` までの
+  main commit が docs-only である**」ことを根拠に `766082a` 相当とみなしている
+  (`git log --oneline 2d442b3..766082a` = **17 commit** あるが
+  `git log --oneline 2d442b3..766082a -- src/ meson.build` = **0 件**)。
+  **exe を `766082a` から作り直して確認したわけではない**。
+  ★**区間表現の訂正 (記録監査 中 1・2026-09-27)**: 初版は区間を「`766082a` 以降」と書いていたが、
+  `766082a` は main の tip (`git log --oneline 766082a..main` = **0 件**) なので
+  この区間には根拠となる commit が存在せず**空虚に真**だった。結論 (exe は src 的に `766082a` 相当) は
+  変わらないが、根拠の区間は上記の `2d442b3..766082a` が正しい。`2d442b3` = E-0 merge で、
+  exe の mtime 2026-09-20 15:21 と整合する。
+- ★**`dod2_notes.txt` 中の「`docs/logs/e2-t2-baseline/`」というパス表記について (記録監査 中 6 で訂正・
+  2026-09-27)**: 初版はこれを「**誤り**」と断定していたが、**一次証拠と食い違うので訂正する**。
+  `docs/logs/e2-t2/baseline-main-766082a/p1_base.log` 末尾は
+  `[generate] wrote docs/logs/e2-t2-baseline/p1_base.png` で、baseline は実際にその相対パス
+  (main checkout 側の作業ツリー) へ書かれている。つまり **`dod2_notes.txt` の表記は「生成時のパス」であり
+  誤記ではない**。現物はその後 worktree の `docs/logs/e2-t2/baseline-main-766082a/` へ**移設**された
+  (ファイル自体は同一)。
+- **走行条件の明示 (DoD 2 の ⚠ が要求している項目)**: **`--fast` / `--fp8` はいずれも未指定 = 既定 OFF**。
+  ★ただし**この点をログから確認することはできない** — `src/main.cpp` は `--fast`/`--fp8` の
+  実効値を出力しない (l.221-223 でフラグを立てるだけ)。根拠は起動コマンド側 (スイープは
+  `scripts/dollma_eval_image_grid.py` の `cmd` に `--fast` が 0 件)。**DoD 2 の PNG は手動実走のため
+  argv が保全されておらず、`--fast` 未指定は二次証拠 (実走者の記録) のみ**。
+  → 残債: 実効 fast 構成をログに出す (T1 が seed に対して `[gen] seed=<値>(req|env|time)` を足したのと同じ流儀)。
+- **`--seed` CLI 経路の実地検証 = 充足 (T1 DoD 4 ★★ の宿題)**。T1 では argv 解析を通す test が 0 件で
+  「ビルドが通る」までしか言えていなかった。T2 のスイープ **60 走行すべてのログに `[gen] seed=<値>(req)`**
+  が出ている (`grep -l "seed=.*(req)" docs/logs/e2-t2/*/log/*.log` = **60/60**) =
+  **CLI `--seed` が env `DOLLAMA_SEED` より優先される 3 段解決が実走で確認された**。
+  ★**`--cfg` の実効値はログに出ない** (`[gen]` 行に cfg の出力が無い)。`--cfg` が効いていることの
+  一次証拠は**出力 PNG が cfg アームごとに異なること**で取った。
+  ★**どの prompt/seed の 3 枚かを明示する (記録監査 軽微 10 で追加・2026-09-27)** — 対象は
+  **`docs/logs/e2-t2/cfg_sweep/img/illustrious-xl__p1__seed1000__cfg{0,5,10}.png`**
+  (= prompt **p1** / seed **1000** の cfg 3 アーム。★ファイル名の cfg は `cfg0`/`cfg5`/`cfg10` =
+  **小数点なし**。`cfg0.0` 等の表記では現物に当たらない)。記録執筆時に再計算した sha256:
+
+  | ファイル | sha256 |
+  |---|---|
+  | `…__p1__seed1000__cfg0.png` | `abeede2faefaed39a3502cbd0c0d1e6129ff8cd86721d79ea1ac140ab2034466` |
+  | `…__p1__seed1000__cfg5.png` | `4703af7075950973df436d3bb17182f7454fa626f51e48f8005e454086b78720` |
+  | `…__p1__seed1000__cfg10.png` | `7fa146330d7b3a7cde1449ed6df466c5da5292dda592a6b11be3fa613144277b` |
+
+  = **3 値すべて相違** → `--cfg` は実際に拡散へ届いている。
+  ★ただしこの 3 枚は `*/img/*.png` = **commit 対象外**なので、commit 済みの範囲からは再計算できない
+  (上記「成果物の保全範囲」参照)。
+  → 残債: cfg の実効値もログに出す。
+- ★**`--seed 9999 --cfg 7.5` の単発 smoke については、ログが保全されていない**
+  (`docs/logs/e2-t2/` 配下で "9999" に一致するのは `dod2_notes.txt` = **二次証拠のみ**)。
+  この smoke 自体を一次証拠として引かないこと。上記 60/60 の方が強い証拠なので判定には影響しない。
+
+**ハーネス拡張 (T2 で加えた変更・`src/` は無改変)**
+- `scripts/dollma_eval_image_grid.py`: **cfg 軸を追加** (`build_grid` が `(preset, pid, seed, cfg)` の直積・
+  出力名に `__cfg<値>`・CSV に `cfg` 列)。`run_one` を env 依存から **CLI `--seed` / `--cfg` の明示指定**に変更
+  (= T1 で足した引数経路を実際に叩く形にした。これが上記 60/60 の `(req)` を生んでいる)。
+  ★`cfg=0.0` は「未指定と等価」の意味で参照アームに使っている — 一次証拠 =
+  `src/server/backend_image_generator.hpp` l.180 `const float cfg = req.has_guidance_scale ?
+  req.guidance_scale : 0.0f;` で未指定時も `0.0f` が渡り、backend 側が既定 (`kGuidanceScale=7.5f`) へ委譲する。
+- `scripts/dollma_e2_t2_analyze.py` (**新規**): 共通規律 2 の 3 軸判定ツール。
+  ① 符号一致 ② 参照アーム分散帯超え ③ paired 95%CI が 0 を跨がない を計算し、
+  **3 軸すべて真のときだけ `有効レバー`**、それ以外は `頭打ち/ノイズ支配` と出す (同 script の `verdict` 行)。
+- ★**CI の算出法 (記録監査 中 3 で追加・2026-09-27)**: 本走行の 95%CI は
+  **`delta_mean ± 1.96 · SEM` の正規近似** (`SEM = delta_std / √n`・**n=12**) である。一次証拠 =
+  同 script の `mean_std_sem` (`sem = std / (n ** 0.5)`) と
+  `ci_lo = dmean - 1.96 * dsem` / `ci_hi = dmean + 1.96 * dsem`。
+  ★**Phase 4 の paired bootstrap ではない** — E-1 DoD 5 の (c) は「CI の算出法は Phase 4 の
+  paired bootstrap に揃えるか、揃えない場合は算出法を明記する」と規定しており、本走行は**後者
+  (揃えずに明記) を選んだ** = **共通規律 2 (c) からの逸脱を明示する**。
+  n=12 と主指標の量子化 (下記 DoD 5 項) を踏まえると、正規近似の妥当性自体も**未検証**。
+
+**DoD 5 (スイープ) = 充足。結論 = 既存ノブでは頭打ち・既定変更なし**
+- **走行スコープ**: preset `illustrious-xl` 単独 / prompts p1,p2,p3 / seed 1000-1003 (4 本) /
+  cfg = [**0.0 (=未指定 → 既定 7.5 相当)**, 5.0, 10.0] / steps = [12, 20, 28]。
+  **総走行数 = 60 枚** (cfg 軸 36 = 3 prompt × 4 seed × 3 cfg、steps=12 が 12、steps=28 が 12。
+  **steps=20 アームは cfg=0.0 の 12 枚を参照として再利用**しているため 3×4×3+12+12 = 60)。
+  ★**gpu-benchmarker 報告の「全 72 枚」は誤り** — `grid_results.csv` の行数は 36/12/12 = **60**、
+  PNG 実数も 36/12/12 = **60** (記録執筆時に `wc -l` と `ls | wc -l` で計数)。
+- ★**steps 比較の参照アームが別走行からの再利用である点と、その妥当性 (記録監査 中 5 で追加・2026-09-27)**:
+  steps=12 / steps=28 は**それぞれ別プロセスの走行** (`docs/logs/e2-t2/steps_s12_run.log` /
+  `steps_s28_run.log`) で、**参照 (steps=20) は cfg_sweep の cfg=0.0 アームの 12 走行を再利用**している。
+  **再利用が妥当と判断した根拠 (記録執筆時に確認した一次証拠)**: ① 3 本の run log すべてが
+  `[eval] exe_sha256=c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8 integrity_ok=True`
+  = **同一 exe** ② preset (`illustrious-xl`) / prompt 集合 (p1,p2,p3) / seed 集合 (1000-1003) が
+  3 本で同一 (`grid_results.csv` の列を突合) ③ seed 固定の**決定論的**生成なので、同条件の再走行は
+  同一出力になる。→ 別プロセスであることは delta の妥当性を損なわない。
+  ★ただし `sec` 列 (走行秒) は**プロセス/熱条件が違うため比較しない** (CSV の列名自体が
+  `sec_mean_characterization_only` = characterization 限定)。
+- ★**steps が実際に効いていることの一次証拠 (記録監査 軽微 11 で追加)**: per-run ログが steps を名乗る —
+  例 `docs/logs/e2-t2/steps_sweep_s28/log/illustrious-xl__p1__seed1000__cfg0.log` の
+  `[generate] wrote docs/logs/e2-t2/steps_sweep_s28\img\illustrious-xl__p1__seed1000__cfg0.png
+  (4195716 bytes, 1024x1024, steps=28)`、s12 側は同形式で `steps=12`。
+  秒数も steps に単調に追随する (`grid_summary.csv` の `sec_mean_characterization_only`:
+  **s12 = 35.20-35.71s / steps20 (cfg_sweep cfg=0.0) = 40.65-41.00s / s28 = 45.47-45.91s**・
+  各 prompt 3 条件の値域。★**これは characterization 値であり速度比較の数値ではない**)。
+- **健全性 = 全 60 行で `exit=0` / `log_ok=True` / `log_reason` 空 / PNG 実在** (CSV 3 本を
+  記録執筆時にパースして計数)。**段 3 フォールバック検出 0 件**。
+- **3 軸判定 (主指標 = recall。参照アームは cfg=0.0 / steps=20)**。
+  ★**下表の 95%CI は `delta_mean ± 1.96·SEM` の正規近似 (SEM = delta_std/√n・n=12) で、
+  Phase 4 の paired bootstrap ではない** = 共通規律 2 (c) からの逸脱 (算出法の明記で代替した。
+  一次証拠と根拠は上記「ハーネス拡張」の CI 算出法の項):
+
+  | 条件 | delta_mean | 95%CI | ①符号一致 | ②分散帯超え | ③CI が 0 を除外 | 判定 |
+  |---|---|---|---|---|---|---|
+  | cfg=5.0 vs 既定 | **0.0000** | [0.0000, 0.0000] | True (縮退) | False | False | 頭打ち/ノイズ支配 |
+  | cfg=10.0 vs 既定 | **-0.0167** | [-0.0387, 0.0054] | True (**非ゼロ 2/12・ともに負**・縮退ではない) | False | False | 頭打ち/ノイズ支配 |
+  | steps=12 vs 20 | **-0.0093** | [-0.0479, 0.0294] | False | False | False | 頭打ち/ノイズ支配 |
+  | steps=28 vs 20 | **0.0000** | [0.0000, 0.0000] | True (縮退) | False | False | 頭打ち/ノイズ支配 |
+
+  各 n=12。**参照アームの分散帯 (②の分母) = recall で 0.0570** (prompt ごとの seed 間 std を平均した値・
+  `analysis_cfg.log` / `analysis_steps.log` に同一値)。
+  → **4 条件すべてで「有効レバー」に到達したものは無い (0/4)**。
+  ★**「3 軸とも不成立」と書かないこと** — 上表のとおり**軸①は 3 条件で True** になっている。
+  ★**訂正 (記録監査 重大 2・2026-09-27)**: 初版はこの 3 条件すべてを「delta が全ペアで 0 の**縮退**」と
+  書いていたが、**一次証拠と食い違うので訂正する。3 条件の内訳は 2 種類ある**:
+  - **真の縮退 = cfg=5.0 と steps=28 の 2 条件のみ**。`analysis_cfg.log` / `analysis_steps.log` の
+    `signs=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]` = 12 ペア全部 0 で、delta_mean も 0.0000。
+  - **cfg=10.0 は縮退ではない**。`analysis_cfg.log` は
+    `[cfg=10.0] recall: … delta_mean=-0.0167` / `①符号一致=True (majority_sign=0,
+    signs=[0, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0])` = **12 ペア中 2 本が非ゼロで、どちらも負**。
+    `cfg_sweep/grid_results.csv` を突合すると該当は **p1/seed1001 と p1/seed1002 の 2 ペア (各 −0.1)**。
+    → 軸①が True になったのは「非ゼロの符号が 1 種類しかなかった」からで (`sign_consistent` の実装は
+    `len(set(nonzero_signs)) <= 1`)、**2 本だけが揃ったにすぎない**。
+    高 CFG で recall が**下がる方向のわずかなヒント**と読める程度で、効果の証拠ではない。
+  - いずれの場合も、`majority_sign=0` が示すとおり**軸①の True は効果の証拠ではない**。
+    **総合判定を分ける決定打は②と③で、4 条件すべて両方 False**。
+- ★**主指標 recall は量子化指標である (記録監査 中 8 で追加・2026-09-27)**。初版はこれを書いておらず、
+  分散帯 0.0570 や delta −0.0167 が連続量のように読めてしまっていた。
+  - **recall = 語リストの一致語数 / 語数**で、`grid_results.csv` の `recall_total` は
+    **p1=10 / p2=9 / p3=10** = 刻みは **0.1 (p1/p3) または 0.1111 (p2)**。
+  - 60 走行の**観測値は実際に 5 種しかない**: `{0.7, 0.8, 0.8889, 0.9, 1.0}`
+    (3 本の `grid_results.csv` の `recall` 列を記録執筆時に集合化)。
+  - したがって **参照アームの分散帯 0.0570 は実質「1 語の当たり外れ」そのもの**であり、
+    **この物差しの検出限界は ~1 語 = 0.10-0.11**。0.0167 のような値は
+    「小さい効果」ではなく **1 語未満 = 原理的に表現できない領域**である。
+  - → **この量子化は下記「次のレバー候補」①の読み方を変える** (seed 本数を増やしても刻みは縮まらない)。
+- **副指標 `worst_anatomy` は参考値扱い**。理由 = F-0a 実測で ScorerNet の分解能が Limbs 軸のみ生存と
+  判明しており (CLAUDE.md 計測表「品質 FB ループ F-0a 信号ゲート」行)、絶対値が極小。
+  ★**数値の層を明示する (記録監査 軽微 9 で追加)** — 以下は混ぜないこと:
+  - **条件別平均 (`grid_summary.csv` の `worst_anatomy_mean`) = 0.0000-0.0041**
+    (最大は cfg_sweep の p2/cfg=10.0 = 0.0041)。**初版の「0.0000-0.0041」はこの層の値**。
+  - **per-run 生値 (`grid_results.csv` の `worst_anatomy`) の最大 = 0.0093**
+    (`cfg_sweep/grid_results.csv` の **p2 / seed1000 / cfg=10.0**)。
+    steps 側の per-run 最大は s12 = 0.0025 / s28 = 0.0048 (いずれも p2/seed1000)。
+  - 同様に **recall の「最大 delta −0.0167」も条件集約層 (n=12 の delta_mean)** の値であり、
+    **per-pair 生 delta の最大絶対値は 0.1111** (`steps_sweep_s12` の p2/seed1001 = ちょうど 1 語分)。
+  ★**この軸では軸②③が個別に True になる条件がある** (例: cfg=10.0 の worst_anatomy は
+  ②分散帯超え=True、steps=28 は ③CI が 0 を除外=True) が、**分散帯自体が 0.000487 と極小なため
+  「超えた」ことに実質的な意味が無い**。総合判定はいずれも `頭打ち/ノイズ支配`。**この軸を根拠に
+  既定変更を論じないこと。**
+- **結論 = 既定値は 1 つも変更しない** (`kGuidanceScale=7.5f` / steps=20 / seed フォールバックとも無改変)。
+  → DoD 5 ★のユーザー決裁は**発生しない**。
+- ★**この結論の限定 (超えて読まないこと)**: 言えるのは
+  「**この走行の範囲 (illustrious-xl / cfg 5.0-10.0 / steps 12-28 / 3 prompt × 4 seed / recall 主指標)**
+  で 3 軸判定を通るレバーが無かった」まで。
+  **「CFG と steps は画質に効かない」という一般命題は示していない** — cfg アームは PNG レベルでは
+  明確に別画像 (上記 sha256 3 値相違) を出しており、**動いていないのはノブではなく指標**である。
+  他 preset・より広い cfg 範囲・他プロンプト群は未測。
+
+**E-2 全体の状態 = 完了 (DoD 1-6 すべて充足)。ただし main 未 merge・未 push。**
+- DoD 1 実装済 / **DoD 2 充足 (T2・突合相手 `766082a`)** / DoD 3 実装済 / DoD 4 走行 B で 55/55 緑
+  (★限定は DoD 4 の記述どおり — 実重み経路の一部は worktree の重み不在で SKIP) /
+  **DoD 5 充足 (結論 = 頭打ち・既定変更なし)** / DoD 6 遵守。
+- ★**branch `feat/e2-sampling-knobs` は main へ merge されておらず push もされていない** (2026-09-27 時点)。
+  したがって**出荷物 (main) には `--seed`/`--cfg`/HTTP `guidance_scale`/`seed` はまだ入っていない**。
+  E-5 の発火条件「HTTP `seed` が入った後」を main 基準で読む場合は未成立 (branch 基準では成立)。
+- **残債 (T2 で新たに立った分。①②④ は `src/` 変更を伴うため本記録では直さない。③ は下記のとおり
+  src 作業ではなかったので運用規律へ書き換えた)**:
+  ① 実効 fast 構成 (`--fast`/`--fp8`) をログに出す ② `--cfg` の実効値をログに出す
+  ④ T1 から継続: `src/tests/test_http.cpp` l.380 のログ文字列 `nullopt` が stale。
+- **残債③ は `src/` 変更ではなく運用規律へ書き換えた (記録監査 重大 1・2026-09-27)**。
+  初版は「③ 段 3 フォールバックを**静かに**起こさない (実走の段を機械判定可能にする)」= src 作業として
+  立てていたが、**段 3 は既に stdout に名乗り (`cli_generate.hpp` l.365)、ハーネスは既に機械判定する
+  (`dollma_eval_image_grid.py` l.69 `BAD_MARKERS`)** ので、起票の前提が誤っていた。
+  → ③ **(運用規律・src 変更なし)**: **手動実走でも `2>&1` で出力を取り、段マーカー
+  (`stub generator` / `フォールバック` / `[warn]` / `構築に失敗`) を grep してから数値を採る**。
+  ハーネス経由の走行は既に充足済み。
+
 **担当エージェント**: cpp-implementer (ノブ実装・Sonnet 可 → Opus high レビュー) → gpu-benchmarker (スイープ)。
 **走る機械**: ノブ実装とユニット test は**開発機可**。スイープ実走は**研究機** (新規 exe = SAC OFF 依頼)。
 **発火条件**: **E-1 完了後**。
@@ -384,6 +813,35 @@ Sonnet 実装後は Opus high レビュー。
 **走る機械**: 実装・golden 突合は**開発機可**。画評価は**研究機**。
 **発火条件**: **条件発火** — E-2 が「既存ノブ (steps/CFG/seed) だけでは頭打ち」を示したときのみ。
 E-2 で既定調整だけで改善が取れるなら E-3 は起票しない。
+★**2026-09-27: この発火条件は E-2 T2 の DoD 5 スイープで満たされた** — 4 条件 (cfg 5.0 / cfg 10.0 /
+steps 12 / steps 28) すべてが 3 軸判定で `頭打ち/ノイズ支配`・有効レバー **0/4**・既定変更なし
+(実数値と限定は E-2 節「現況 (2026-09-27) — T2」の「DoD 5」項)。
+⚠ **ただし発火条件の充足 = 着手の決裁ではない**。起票・着手はユーザー/PL の決裁を要する。
+また★**上の目的節にある「アニメ系は Karras/DPM++ 前提」「v-pred は出力が壊れる見込み」は
+T2 を経ても依然として未検証の一般論**である (T2 は scheduler を 1 つも試していない)。
+発火したのは「既存ノブが頭打ち」までで、**E-3 が効くという見込みは何も裏付けられていない**。
+
+★**T2 が示した、E-3 着手前に検討すべき材料 (次のレバー候補)** — E-3 と**競合**する候補を含む:
+1. **評価軸 (recall) の分散帯が広く、かつ量子化されている**: 参照アームの seed 間 std = **0.0570** に対し、
+   条件集約層で観測された最大の delta が **-0.0167** = 分散帯の 3 分の 1 以下。**この物差しでは、
+   仮に E-3 が効いても検出できない可能性がある**。
+   ★**原因の切り分け (記録監査 中 8 で追記・2026-09-27)**: recall は **語数 9-10 を分母とする
+   0.10-0.11 刻みの量子化指標**で、60 走行の観測値は `{0.7, 0.8, 0.8889, 0.9, 1.0}` の **5 種のみ**
+   (詳細は E-2 節「DoD 5」の主指標注記)。つまり分散帯 0.0570 は**実質「1 語の当たり外れ」**であり、
+   **検出限界は ~1 語 = 0.1**。
+   → ★**したがって「seed 本数を増やす」だけでは効かない可能性が高い** (seed を増やしても
+   刻みは 0.1 のままで、平均の SEM が縮むだけ・1 語未満の効果は原理的に観測できない)。
+   **効きうるのは ① 語リストを増やして分母を大きくする (刻みを細かくする) ② 連続値の指標に替える**
+   (例: タグ確信度の連続値・embedding 距離など) の方向。seed 増は①②と併用してはじめて意味を持つ。
+   ★どれも**未検証の見込み**であり、指標の設計自体が別タスク。
+2. **採点器の分解能不足**: 副指標 `worst_anatomy` は F-0a 実測どおり Limbs 軸のみ生存で、
+   条件別平均 0.0000-0.0041 (per-run 生値の最大でも 0.0093)・分散帯 0.000487 と極小 = 実質的に死んでいる。
+   **採点器 (ScorerNet / quality head) の分解能を上げる方が、sampler を増やすより上流のレバーになりうる**
+   (Phase 4 の Q-2 / 「7 死軸の分解能診断」と同じ対象)。
+3. **より広い CFG 範囲**: T2 は cfg 5.0-10.0 の 3 点しか見ていない。**cfg 2-3 の低域や 12 以上の高域は未測**で、
+   「既存ノブの頭打ち」は**測った範囲の話**にすぎない。E-3 より安い再測として先に潰せる。
+4. (T2 のスコープ外) preset は `illustrious-xl` 単独・prompt は p1/p2/p3 のみ = **他 preset / 他題材は未測**。
+
 **依存**: E-2 (発火判断)、E-1 (評価物差し)。E-4 の v-pred 系候補は E-3 に依存する (逆向きの依存に注意)。
 
 ---
@@ -452,7 +910,7 @@ E-1/E-5 の格子は原則 **CLI 1 プロセス 1 枚** (E-1 節のとおり) �
 | 制約 | 一次証拠 |
 |---|---|
 | **LoRA は HTTP 専用・CLI から到達できない** | `grep -rn -i lora src/server/cli_generate.hpp src/main.cpp` = **0 件**。`loras` の受理は `src/server/api.cpp` l.179 のみ。`GenRequest::loras` (`src/server/generator.hpp` l.43) は HTTP ハンドラからしか埋まらない |
-| **seed は HTTP から指定できない** | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) |
+| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.has_seed=true; gr.seed=...`・`GenRequest` の当該ノブ部は `bool has_seed` + `uint64_t seed` の POD 表現 (構造体全体は POD ではない)。`c00e72b` の現物で 2026-09-22 に確認。★T1 初版 `4afbe2f` では `std::optional<uint64_t> seed` だったが CUDA ビルド回帰のため `c00e72b` で POD 化・意味論は不変) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
 
 env `DOLLAMA_SEED` は**サーバープロセスの環境変数**であり、**HTTP クライアント側からリクエスト単位で指定できない**
 (`getenv` 自体は `generate()` ごとに評価される — `src/server/backend_image_generator.hpp` l.132 が
@@ -490,6 +948,9 @@ E-5 の発火条件は「E-2 完了」一般ではなく、**E-2 のうち HTTP 
 **走る機械**: 研究機。
 **発火条件**: **E-2 のうち HTTP `seed` が入った後** (上記「実行経路の制約」。
 CLI `--seed` だけでは不可 = LoRA が CLI に無いため)。
+★**2026-09-22 現在: この条件は E-2 T1 (branch `feat/e2-sampling-knobs`) で満たされている**
+(`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`)。**ただし main 未 merge** のため、
+E-5 を走らせる前に「どのツリーで走らせるか」を確認すること。
 **依存**: **E-2 (特に HTTP `seed`)**、E-1 (指標定義・集計部)。ユーザーのライセンス決裁。
 
 ---
@@ -498,6 +959,19 @@ CLI `--seed` だけでは不可 = LoRA が CLI に無いため)。
 
 本台帳で引いた記述の出典。**行番号は `bc77447` 時点** (起票 2026-09-19 / record-auditor 指摘の是正 2026-09-20。
 是正時に全行の行番号を再検算済)。
+
+★**本表は起票時 (2026-09-19/20) のスナップショットであり、そのまま残す**。ただし E-2 T1
+(2026-09-22・branch `feat/e2-sampling-knobs`・main 未 merge) 以降、下記 6 行は**現在の src の状態を
+表さない** — 読むときは E-2 節「現況 (2026-09-22)」と突き合わせること:
+「CLI に `--cfg` / `--seed` が無い」/「HTTP が受けるフィールドに `guidance_scale` も `seed` も無い」/
+「`GenRequest` に seed フィールドが無い」/「seed は env `DOLLAMA_SEED` 経由のみ」/
+「実装は受理するが仕様表に無い 2 件」(DoD 3 で解消済)/
+「HTTP 拡張フィールド表の現況 (拡張と明記は 2 件)」(T1 で仕様表は **10 行・拡張明記 6 件**になった)。
+「CFG スケールがコンパイル時定数」の行は、**既定値が `constexpr` である点は不変**だが
+`guidance_scale` / `--cfg` による上書き経路が加わった。
+★**この列挙は網羅を保証しない**。T1 は `src/main.cpp` に行を足しているため、**同ファイルを指す
+行番号は全般にずれている** (例: 本表と DoD 1 が引く `src/main.cpp` l.255 の `GenRequest req{...}` は
+T1 後の現物では **l.292** — 2026-09-22 に現物を開いて確認)。行番号を使う前に現物で検算すること。
 
 | 主張 | 出典 |
 |---|---|
