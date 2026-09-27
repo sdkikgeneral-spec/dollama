@@ -8,8 +8,15 @@ branch `feat/e2-sampling-knobs` (main 未 merge)。判定・経緯の**正本は
 - `p{1,2,3}_dod2.png` / `.log` — E-2 worktree 側の出力 (env `DOLLAMA_SEED=1234` /
   `--preset illustrious-xl` / `--steps 20` / **`--seed`・`--cfg` 未指定**)
 - `baseline-main-766082a/p{1,2,3}_base.png` / `.log` — main `766082a` (= `git merge-base`) 側の同条件出力
-- `dod2_notes.txt` — 実走メモ。★**同ファイル中の `docs/logs/e2-t2-baseline/` というパス表記は誤り**で、
-  現物は本ディレクトリ配下 `baseline-main-766082a/`。
+- `dod2_notes.txt` — 実走メモ。★**同ファイル中の `docs/logs/e2-t2-baseline/` というパス表記は
+  「生成時のパス」(main checkout 側の作業ツリー) であり誤記ではない** — 一次証拠 =
+  `baseline-main-766082a/p1_base.log` 末尾の `[generate] wrote docs/logs/e2-t2-baseline/p1_base.png`。
+  現物はその後、本ディレクトリ配下 `baseline-main-766082a/` へ**移設**した (ファイル自体は同一)。
+  (初版は「パス表記は誤り」と断定していた。記録監査 中 6 で訂正・2026-09-27)
+- 二アームの exe sha256: main `766082a` 側 `088f28bb5e3da63cb49d8733f438c5c52edd8bc9bb86e7801847a5303456d3a0`
+  (2026-09-20 15:21 ビルド・★**`766082a` の再ビルドではなく既存ビルドの流用**) /
+  E-2 worktree 側 `c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8`
+  (2026-09-22 23:55・スイープ 3 本の run log の `exe_sha256` と同一)。詳細は正本。
 - 結果: **3/3 sha256 完全一致**。★突合相手は 2-6e ではなく `766082a`
   (2-6e は E-0 = `272e854` より前の exe 産で、原理的に一致しない)。理由は正本を参照。
 

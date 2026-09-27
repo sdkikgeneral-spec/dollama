@@ -42,3 +42,28 @@ E-2 T2 DoD2 (実重み sha256 ゲート) — 実走メモ (研究機・SAC OFF)
 ## ファイル
 - docs/logs/e2-t2/p{1,2,3}_dod2.png / .log — 修正後 (段1到達) の E-2 worktree 出力 (env seed=1234 のみ)
 - docs/logs/e2-t2-baseline/p{1,2,3}_base.png / .log — main (766082a, E-0後) の同条件出力 (A/B比較のベースライン)
+
+============================================================
+## 追記 (record-writer 2026-09-27・記録監査の是正。上の本文は実走時のまま残置)
+============================================================
+1) 上の「段3(StubGenerator)に静かにフォールバック」は不正確。段3は stdout に名乗る
+   (src/server/cli_generate.hpp l.365:
+    log << "dollama HTTP server (stub generator — 重み未解決のためフォールバック)\n";)。
+   見落としの実体は「静かさ」ではなく「exit=0 で PNG も出るため、手動実走で stdout を読まないと
+   気付かない」こと。ハーネス経路は scripts/dollma_eval_image_grid.py l.69 の BAD_MARKERS
+   (["[warn]", "stub", "フォールバック", "構築に失敗"]・case-sensitive) で既に機械判定する。
+   正本 = docs/image-quality-plan.md §E-2「現況 (2026-09-27) — T2」の「教訓」項。
+
+2) 上の「## ファイル」節の docs/logs/e2-t2-baseline/ は *生成時のパス* (main checkout 側の作業ツリー)
+   であり誤記ではない (一次証拠: baseline-main-766082a/p1_base.log 末尾の
+   `[generate] wrote docs/logs/e2-t2-baseline/p1_base.png`)。現物はその後
+   docs/logs/e2-t2/baseline-main-766082a/ へ移設した (ファイル自体は同一)。
+   ※ 本追記の前は image-quality-plan.md / この dir の README.md がこの表記を「誤り」と
+     断定していたが、それが誤りだったので両方訂正済み。
+
+3) 二アームの exe sha256 (記録執筆時に再計算):
+   main 766082a 側  = 088f28bb5e3da63cb49d8733f438c5c52edd8bc9bb86e7801847a5303456d3a0
+                      (E:\Develop\Projects\dollama\build\src\dollama.exe・2026-09-20 15:21)
+   E-2 worktree 側 = c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8
+                      (2026-09-22 23:55・スイープ3本の run log の exe_sha256 と同一)
+   ★main 側は 766082a の再ビルドではなく既存ビルドの流用 (上の本文どおり)。
