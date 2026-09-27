@@ -1,0 +1,21 @@
+ref(n)= 12 s12(n)= 12 s28(n)= 12
+[steps=12 (ref=steps20)] recall: n=12 delta_mean=-0.0093 delta_std=0.0683 sem=0.0197 95%CI=[-0.0479,0.0294]
+[steps=12 (ref=steps20)]   ‡@•„†ˆê’v=False (majority_sign=0, signs=[0, 0, 1, 0, 0, -1, 0, 0, 0, -1, 1, -1])
+[steps=12 (ref=steps20)]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.05700668461264171 vs |delta_mean|=0.0093 ¨ •ªU‘Ñ’´‰ß=False
+[steps=12 (ref=steps20)]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=False
+[steps=12 (ref=steps20)]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[steps=28 (ref=steps20)] recall: n=12 delta_mean=0.0000 delta_std=0.0000 sem=0.0000 95%CI=[0.0000,0.0000]
+[steps=28 (ref=steps20)]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+[steps=28 (ref=steps20)]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.05700668461264171 vs |delta_mean|=0.0000 ¨ •ªU‘Ñ’´‰ß=False
+[steps=28 (ref=steps20)]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=False
+[steps=28 (ref=steps20)]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[steps=12 (ref=steps20)] worst_anatomy: n=12 delta_mean=-0.0002 delta_std=0.0004 sem=0.0001 95%CI=[-0.0005,-0.0000]
+[steps=12 (ref=steps20)]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[-1, 0, 0, 0, -1, -1, -1, -1, 0, 0, 0, -1])
+[steps=12 (ref=steps20)]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.00048661355898073897 vs |delta_mean|=0.0002 ¨ •ªU‘Ñ’´‰ß=False
+[steps=12 (ref=steps20)]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=True
+[steps=12 (ref=steps20)]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z
+[steps=28 (ref=steps20)] worst_anatomy: n=12 delta_mean=0.0002 delta_std=0.0004 sem=0.0001 95%CI=[0.0000,0.0005]
+[steps=28 (ref=steps20)]   ‡@•„†ˆê’v=True (majority_sign=0, signs=[0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0])
+[steps=28 (ref=steps20)]   ‡AQÆƒA[ƒ€•ªU‘Ñ(std)=0.00048661355898073897 vs |delta_mean|=0.0002 ¨ •ªU‘Ñ’´‰ß=False
+[steps=28 (ref=steps20)]   ‡Bpaired 95%CI ‚ª0‚ğŒ×‚ª‚È‚¢=True
+[steps=28 (ref=steps20)]   ¨ ”»’è: “ª‘Å‚¿/ƒmƒCƒYx”z

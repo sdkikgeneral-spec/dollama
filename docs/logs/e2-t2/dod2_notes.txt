@@ -1,0 +1,44 @@
+E-2 T2 DoD2 (実重み sha256 ゲート) — 実走メモ (研究機・SAC OFF)
+
+## 前提の破損
+- worktree src/tests/data/unet_io.safetensors が存在せず (gitignore 対象・feedback_worktree_missing_test_data.md の既知症状)、
+  dollama.exe --preset illustrious-xl の実走が段1(BackendImageGenerator/sdxl backend)ではなく
+  段3(StubGenerator)に静かにフォールバックしていた (build_image_generator の ov_ready 判定が
+  embeds パスの存在も要求するため — 本来は段2 PipelineGenerator 用の golden だが段1条件にも
+  含まれる実装)。
+- 対処: E:\Develop\Projects\dollama\src\tests\data\unet_io.safetensors (498,395,472 B) から
+  PowerShell New-Item -ItemType HardLink でハードリンクを worktree 側に作成 (gitignore 対象 = git状態に影響なし)。
+- 修正後、ログに `dollama HTTP server (sdxl backend [preset=illustrious-xl] — NPU)` が出力され、
+  段1到達を確認した。
+
+## 参照 sha256 の陳腐化
+- 発注文で渡された docs/logs/2-6e/p{1,2,3}.png の sha256 は自己検証で3/3一致 (伝聞値は正しい)。
+- ただしこれらの PNG は E-0 (VAE scaling_factor 0.18215 のプロモート・commit 272e854) より
+  「前」の exe (E:\Develop\Projects\dollama-g10k-wt, HEAD 4d4a405) で生成されたもの。
+  E-0 は main に既にマージ済み (766082a に含まれる) であり、E-2 branch は E-0 の後に分岐している。
+- そのため、2-6e の sha256 をそのまま E-2 の出力と比較しても **一致しない (E-0 由来の正当な差分)**。
+  実際、E-2 worktree の p1/p2/p3 (env DOLLAMA_SEED=1234, --preset illustrious-xl, --steps 20,
+  --seed/--cfg 未指定) は以下:
+    p1: 88be13a7c1544f406d6ca6193bc7a08fc63e8c919d4390b0acb164e550de98fd
+    p2: f99a511ba049d428cdab0f2f32dd007de5530540bf501d4987546e18311122e1
+    p3: d8d3e2b137cc9827b04be73caa25ee2a67c975163e7543cd15fe49f675a1bb1b
+  → 2-6e 伝聞値と不一致 (想定通り。E-0 差分)。
+
+## 正しい DoD2 判定: main (merge-base 766082a, E-0 後・E-2 前) との A/B 比較
+- E:\Develop\Projects\dollama (main worktree, HEAD 766082a = git merge-base main E-2branch) の
+  既存ビルド exe (build/src/dollama.exe, 2026-09-20 build, src 側は 766082a と同一 = 以降の commit は
+  docs-only) で同一条件 (env DOLLAMA_SEED=1234, --preset illustrious-xl, --steps 20, --seed/--cfg 未指定)
+  を実走した結果:
+    p1: 88be13a7c1544f406d6ca6193bc7a08fc63e8c919d4390b0acb164e550de98fd  (E-2 と一致)
+    p2: f99a511ba049d428cdab0f2f32dd007de5530540bf501d4987546e18311122e1  (E-2 と一致)
+    p3: d8d3e2b137cc9827b04be73caa25ee2a67c975163e7543cd15fe49f675a1bb1b  (E-2 と一致)
+  → **3/3 完全一致**。E-2 T1/T2 (--seed/--cfg 未指定時) は main (E-0 後) と bit-exact = 既定の
+    生成挙動に対する回帰なし。DoD2 は「main(E-0後)比較」でPASSと判定する。
+
+## `--seed`/`--cfg` CLI 引数の初検証
+- `--seed 9999 --cfg 7.5` を指定した実走で `[gen] seed=9999(req)` ログを確認 (env 経由でなく
+  CLI --seed が優先されることを実走で初めて確認・main.cpp l.233/l.248 のパース経路が動作)。
+
+## ファイル
+- docs/logs/e2-t2/p{1,2,3}_dod2.png / .log — 修正後 (段1到達) の E-2 worktree 出力 (env seed=1234 のみ)
+- docs/logs/e2-t2-baseline/p{1,2,3}_base.png / .log — main (766082a, E-0後) の同条件出力 (A/B比較のベースライン)

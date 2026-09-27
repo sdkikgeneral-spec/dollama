@@ -1,0 +1,14 @@
+[eval] 走行前 sha256 スナップショット: exe=c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8
+[eval] WD14(CPU)/ScorerNet(CPU) ロード完了
+[eval] grid: presets=['illustrious-xl'] prompts=['p1', 'p2', 'p3'] seeds=[1000, 1001, 1002, 1003] cfgs=[0.0] → 12 枚
+[eval] #0000 illustrious-xl__p1__seed1000__cfg0 recall=0.90 worst=0.000(Hands) sec=46.0
+[eval] #0001 illustrious-xl__p1__seed1001__cfg0 recall=0.90 worst=0.000(Hands) sec=45.6
+[eval] #0002 illustrious-xl__p1__seed1002__cfg0 recall=0.80 worst=0.000(Hands) sec=44.7
+[eval] #0004 illustrious-xl__p2__seed1000__cfg0 recall=0.89 worst=0.005(Limbs) sec=45.4
+[eval] #0009 illustrious-xl__p3__seed1001__cfg0 recall=0.90 worst=0.000(Limbs) sec=46.1
+[eval] 走行前後 sha256 一致 (exe/preset 入力データは不動)
+[eval] CSV (生データ): docs/logs/e2-t2/steps_sweep_s28\grid_results.csv
+[eval] CSV (集計 平均±std): docs/logs/e2-t2/steps_sweep_s28\grid_summary.csv
+[eval] コンタクトシート: docs/logs/e2-t2/steps_sweep_s28\contact_sheets
+[eval] 完了: 12 枚 (無効 0 枚) → docs/logs/e2-t2/steps_sweep_s28
+[eval] exe_sha256=c748f98f7142d76d6b676b0c9240cd5de334874399dfc826af97dcc6ed7ff9a8 integrity_ok=True

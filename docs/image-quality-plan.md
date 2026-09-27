@@ -88,14 +88,14 @@
 
 ## 2. 項目一覧 (概観)
 
-| ID | 目的 (要旨) | 担当 | 機械 | 発火条件 | 依存 |
-|---|---|---|---|---|---|
-| E-0 | 既定 preset の VAE `scaling_factor` 残債の解消 | cuda-kernel-dev → gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし |
-| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし |
-| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 |
-| E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 |
-| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) |
-| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 |
+| ID | 目的 (要旨) | 担当 | 機械 | 発火条件 | 依存 | 状態 (★2026-09-27 時点) |
+|---|---|---|---|---|---|---|
+| E-0 | 既定 preset の VAE `scaling_factor` 残債の解消 | cuda-kernel-dev → gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | 完了・main merge 済 (実装 `272e854` / merge `2d442b3`) |
+| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | 完了・main merge 済 (`f72d595` / merge `d8f9c0b`)。★T2 で cfg 軸を追加 = **その変更は E-2 branch 上で未 merge** |
+| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 | **T1+T2 完了 = DoD 1-6 充足。ただし branch `feat/e2-sampling-knobs` は main 未 merge・未 push** (詳細は E-2 節「現況 (2026-09-27) — T2」) |
+| E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 | **発火条件は充足** (E-2 T2 で有効レバー 0/4)。**充足 = 着手決裁ではない**・E-3 が効く見込みは未裏付け。競合候補は E-3 節「次のレバー候補」 |
+| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) | 未着手 |
+| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 | 未着手。発火条件は **branch 基準では充足・main 基準では未** (E-2 未 merge) |
 
 ※ **「発注済」の出典**: リポ内に対応する branch / commit / issue は**無い** (2026-09-20 時点で
 `git log` / `git branch` に該当なし)。本欄は **main thread からの口頭発注 (2026-09-19・リポ外の状態)** を
@@ -270,6 +270,10 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
    (`src/server/backend_image_generator.hpp` l.53-62, l.131 で `DOLLAMA_SEED` を読む。CLI に `--seed` は無い —
    `src/main.cpp` l.174-222 の引数分岐は `--http/--port/--steps/--width/--height/--prompt/--negative/
    --out/--no-matting/--no-preset-prefix/--fast/--fp8/--preset` のみ)。E-2 で `--seed` が入ったら差し替える。
+   ★**2026-09-27: この条件は満たされた** — E-2 T1 で `--seed`/`--cfg` が入り (branch のみ・main 未 merge)、
+   T2 のスイープは env ではなく **CLI `--seed` 経由**で 60 走行すべてログに `[gen] seed=<値>(req)` を残している
+   (E-2 節「現況 (2026-09-27) — T2」)。★**ただし `--cfg` の実効値はログに出ていない** = 本 DoD 3 の
+   「ログに残ること」は seed については充足・**cfg については未充足** (E-2 の残債②)。
 4. ★**ノイズ床が測れていること**: 参照アーム (既定 = illustrious-xl) の**同条件・異 seed** を
    最低 4 seed 回し、指標ごとの **sd を CSV に出す**。これが共通規律 2 の (b) の分母になる。
    seed 本数は 4 以上 (Phase 4 の seed sweep はすべて 4 seed = measurements-log l.56-58, l.72, l.73)。
@@ -439,7 +443,10 @@ DoD ごとの状態:
   seed 解決は `backend_image_generator.hpp` で **`req.seed` > env `DOLLAMA_SEED` > 時刻**の 3 段になり、
   実効値を `[gen] seed=<値>(req|env|time)` としてログに出す。CFG は未指定なら従来どおり `cfg=0.0f` を
   backend へ渡し既定 (SDXL `kGuidanceScale=7.5f`) へ委譲。
-- **DoD 2 = 未充足 (T2 = 研究機の担当として残る)**。T1 のユニット test で示せたのは
+- **DoD 2 = 充足 (T2・2026-09-27。ただし突合相手を 2-6e から main `766082a` へ差し替えた** —
+  理由と一次証拠は下記「現況 (2026-09-27) — T2」の「DoD 2」項)。
+  ★以下の T1 時点の記述は経緯として残す。
+- (T1 時点の状態) **DoD 2 = 未充足 (T2 = 研究機の担当として残る)**。T1 のユニット test で示せたのは
   ① `BackendImageGenerator` が未指定時に backend へ渡す**実効引数**が従来と同じ (`cfg==0.0f`・seed は
   env→時刻の非ゼロ値)、② HTTP で未指定なら `GenRequest` が未指定のまま
   (`c00e72b` 以降は `has_guidance_scale`/`has_seed` がともに false。`src/tests/test_http.cpp` l.375 の判定。
@@ -499,10 +506,140 @@ DoD ごとの状態:
   argv 解析を 1 行も通らない。したがって **`--seed` / `--cfg` については「コンパイル・リンクが通った」
   ことまでしか言えず、引数が実際に拾われるかは未検証**。→ T2 で `dollama --prompt ... --seed ...` の
   smoke を 1 本走らせて実効値 (`[gen] seed=<値>(req)`) を確認する。
-- **DoD 5 (スイープ) = 未着手**。T2 以降 (gpu-benchmarker・研究機)。
+- **DoD 5 (スイープ) = 充足 (T2・2026-09-27)。結論 = 既存ノブ (この走行の範囲: cfg 5.0-10.0 / steps 12-28)
+  では頭打ち・既定値は変更しない** (したがって DoD 5 ★のユーザー決裁は発生しない)。
+  実数値・3 軸判定の内訳・限定は下記「現況 (2026-09-27) — T2」の「DoD 5」項。
 - **DoD 6 = 遵守**。CLAUDE.md 計測表に行は足していない。
 - **既定値は 1 つも変えていない** (`kGuidanceScale=7.5f`・seed の env→時刻フォールバックとも無改変)
   ため、DoD 5 ★のユーザー決裁は T1 では発生しない。
+
+**現況 (2026-09-27) — T2 (実重み DoD 2 突合 + DoD 5 スイープ) 実走完了**
+実走は研究機 (SAC OFF)・worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs`。
+生成物とログは `docs/logs/e2-t2/` 配下。★**本節の数値は記録執筆時に一次証拠 (PNG の sha256 再計算 /
+`grid_results.csv` / `analysis_*.log`) を開いて検算した**。
+
+★**成果物の保全範囲 (要決裁の残件)**: `docs/logs/e2-t2/` の実体は **81 PNG / 約 268MB**。
+このうち **commit したのは DoD 2 の突合 PNG 6 枚・全ログ (60 走行分の `log/*.log`)・CSV 3 組・
+contact sheets・`analysis_*.log`・`dod2_notes.txt`** で、**スイープ本体の `*/img/*.png` 60 枚
+(約 240MB) は commit していない** (研究機ローカルにのみ存在)。
+E-1 は img を全数 commit している (`git ls-files docs/logs/e1/` = PNG 20 件) ため**先例とは異なる扱い**であり、
+240MB をリポジトリに恒久追加するかは**記録係の裁量を超える** = **ユーザー/PL の決裁待ち**。
+影響: 本節が引用する cfg アーム 3 枚の sha256 (`abeede2f…`/`4703af70…`/`7fa14633…`) は、
+commit 済みの範囲からは**再計算できない**。再現が必要なら研究機ローカルか再走行が要る。
+
+**準備段階の前提破損 (先に読むこと)**
+- worktree に gitignore 対象の `src/tests/data/unet_io.safetensors` が無く、`dollama.exe --preset
+  illustrious-xl` の実走が段 1 (`BackendImageGenerator` / sdxl backend) ではなく **段 3 (`StubGenerator`)
+  へ静かにフォールバックしていた** (`build_image_generator` の ov_ready 判定が embeds パスの存在も
+  要求する)。既知症状 = `[[feedback_worktree_missing_test_data]]` / T1 の DoD 4 ★も同じ不在を記録している。
+- 対処: main checkout の同ファイル (498,395,472 B) からハードリンクを張って復旧。以後のログに
+  `dollama HTTP server (sdxl backend [preset=illustrious-xl] — NPU)` が出ることで段 1 到達を確認
+  (一次証拠: `docs/logs/e2-t2/p1_dod2.log`)。
+- ★**教訓 (T1 の「構成を落とした緑」と同型)**: 実走の**段**を確認せずに出力を採らない。
+  段 3 フォールバックは exit=0 / PNG 生成ありで**静かに**起こる。
+
+**DoD 2 (既定経路の無改変ゲート) = 充足。ただし突合相手を差し替えた**
+- ★**DoD 2 原文の「2-6e の p1/p2/p3 sha256 と 3/3 一致」は、この時点では原理的に成立しない**:
+  2-6e の PNG は **E-0 (VAE `scaling_factor` を 0.18215 へ・commit `272e854`) より前**の exe で生成された
+  もので、E-0 は既に main へ入っており (`git merge-base --is-ancestor 272e854 766082a` = 真)、
+  E-2 branch は E-0 の**後**に分岐している (`git merge-base main feat/e2-sampling-knobs` = **`766082a`**)。
+  つまり 2-6e との差は **E-0 由来の正当な差分**であり、E-2 の回帰とは無関係。
+  実際に E-2 worktree 出力は 2-6e の値と不一致だった。
+  → **突合相手を merge-base `766082a` (E-0 後・E-2 分岐前の main) に差し替えて判定した**。
+  ★この差し替えは DoD 原文の緩和ではなく、**原文が意図した「既定経路に回帰なし」を測れる唯一の基準への
+  訂正**である (2-6e 基準では E-0 の変更が回帰として誤検出される)。
+- **A/B 比較結果 = p1/p2/p3 3/3 sha256 完全一致**。両アームとも
+  env `DOLLAMA_SEED=1234` / `--preset illustrious-xl` / `--steps 20` / **`--seed`・`--cfg` 未指定**:
+
+  | prompt | sha256 (E-2 worktree / main `766082a` 共通) |
+  |---|---|
+  | p1 | `88be13a7c1544f406d6ca6193bc7a08fc63e8c919d4390b0acb164e550de98fd` |
+  | p2 | `f99a511ba049d428cdab0f2f32dd007de5530540bf501d4987546e18311122e1` |
+  | p3 | `d8d3e2b137cc9827b04be73caa25ee2a67c975163e7543cd15fe49f675a1bb1b` |
+
+  一次証拠 = `docs/logs/e2-t2/p{1,2,3}_dod2.png` (E-2 側) と
+  `docs/logs/e2-t2/baseline-main-766082a/p{1,2,3}_base.png` (main 側) の sha256 を記録執筆時に再計算し
+  6 値すべてを確認した。★**`dod2_notes.txt` 中の「`docs/logs/e2-t2-baseline/`」というパス表記は誤り**で、
+  現物は `docs/logs/e2-t2/baseline-main-766082a/` (訂正済・ファイル自体は同一)。
+- **走行条件の明示 (DoD 2 の ⚠ が要求している項目)**: **`--fast` / `--fp8` はいずれも未指定 = 既定 OFF**。
+  ★ただし**この点をログから確認することはできない** — `src/main.cpp` は `--fast`/`--fp8` の
+  実効値を出力しない (l.221-223 でフラグを立てるだけ)。根拠は起動コマンド側 (スイープは
+  `scripts/dollma_eval_image_grid.py` の `cmd` に `--fast` が 0 件)。**DoD 2 の PNG は手動実走のため
+  argv が保全されておらず、`--fast` 未指定は二次証拠 (実走者の記録) のみ**。
+  → 残債: 実効 fast 構成をログに出す (T1 が seed に対して `[gen] seed=<値>(req|env|time)` を足したのと同じ流儀)。
+- **`--seed` CLI 経路の実地検証 = 充足 (T1 DoD 4 ★★ の宿題)**。T1 では argv 解析を通す test が 0 件で
+  「ビルドが通る」までしか言えていなかった。T2 のスイープ **60 走行すべてのログに `[gen] seed=<値>(req)`**
+  が出ている (`grep -l "seed=.*(req)" docs/logs/e2-t2/*/log/*.log` = **60/60**) =
+  **CLI `--seed` が env `DOLLAMA_SEED` より優先される 3 段解決が実走で確認された**。
+  ★**`--cfg` の実効値はログに出ない** (`[gen]` 行に cfg の出力が無い)。`--cfg` が効いていることの
+  一次証拠は**出力 PNG が cfg アームごとに異なること**で取った (同一 prompt/seed で
+  cfg0 `abeede2f…` / cfg5 `4703af70…` / cfg10 `7fa14633…` = 3 値すべて相違)。
+  → 残債: cfg の実効値もログに出す。
+- ★**`--seed 9999 --cfg 7.5` の単発 smoke については、ログが保全されていない**
+  (`docs/logs/e2-t2/` 配下で "9999" に一致するのは `dod2_notes.txt` = **二次証拠のみ**)。
+  この smoke 自体を一次証拠として引かないこと。上記 60/60 の方が強い証拠なので判定には影響しない。
+
+**ハーネス拡張 (T2 で加えた変更・`src/` は無改変)**
+- `scripts/dollma_eval_image_grid.py`: **cfg 軸を追加** (`build_grid` が `(preset, pid, seed, cfg)` の直積・
+  出力名に `__cfg<値>`・CSV に `cfg` 列)。`run_one` を env 依存から **CLI `--seed` / `--cfg` の明示指定**に変更
+  (= T1 で足した引数経路を実際に叩く形にした。これが上記 60/60 の `(req)` を生んでいる)。
+  ★`cfg=0.0` は「未指定と等価」の意味で参照アームに使っている — 一次証拠 =
+  `src/server/backend_image_generator.hpp` l.180 `const float cfg = req.has_guidance_scale ?
+  req.guidance_scale : 0.0f;` で未指定時も `0.0f` が渡り、backend 側が既定 (`kGuidanceScale=7.5f`) へ委譲する。
+- `scripts/dollma_e2_t2_analyze.py` (**新規**): 共通規律 2 の 3 軸判定ツール。
+  ① 符号一致 ② 参照アーム分散帯超え ③ paired 95%CI が 0 を跨がない を計算し、
+  **3 軸すべて真のときだけ `有効レバー`**、それ以外は `頭打ち/ノイズ支配` と出す (同 script の `verdict` 行)。
+
+**DoD 5 (スイープ) = 充足。結論 = 既存ノブでは頭打ち・既定変更なし**
+- **走行スコープ**: preset `illustrious-xl` 単独 / prompts p1,p2,p3 / seed 1000-1003 (4 本) /
+  cfg = [**0.0 (=未指定 → 既定 7.5 相当)**, 5.0, 10.0] / steps = [12, 20, 28]。
+  **総走行数 = 60 枚** (cfg 軸 36 = 3 prompt × 4 seed × 3 cfg、steps=12 が 12、steps=28 が 12。
+  **steps=20 アームは cfg=0.0 の 12 枚を参照として再利用**しているため 3×4×3+12+12 = 60)。
+  ★**gpu-benchmarker 報告の「全 72 枚」は誤り** — `grid_results.csv` の行数は 36/12/12 = **60**、
+  PNG 実数も 36/12/12 = **60** (記録執筆時に `wc -l` と `ls | wc -l` で計数)。
+- **健全性 = 全 60 行で `exit=0` / `log_ok=True` / `log_reason` 空 / PNG 実在** (CSV 3 本を
+  記録執筆時にパースして計数)。**段 3 フォールバック検出 0 件**。
+- **3 軸判定 (主指標 = recall。参照アームは cfg=0.0 / steps=20)**:
+
+  | 条件 | delta_mean | 95%CI | ①符号一致 | ②分散帯超え | ③CI が 0 を除外 | 判定 |
+  |---|---|---|---|---|---|---|
+  | cfg=5.0 vs 既定 | **0.0000** | [0.0000, 0.0000] | True (縮退) | False | False | 頭打ち/ノイズ支配 |
+  | cfg=10.0 vs 既定 | **-0.0167** | [-0.0387, 0.0054] | True (縮退) | False | False | 頭打ち/ノイズ支配 |
+  | steps=12 vs 20 | **-0.0093** | [-0.0479, 0.0294] | False | False | False | 頭打ち/ノイズ支配 |
+  | steps=28 vs 20 | **0.0000** | [0.0000, 0.0000] | True (縮退) | False | False | 頭打ち/ノイズ支配 |
+
+  各 n=12。**参照アームの分散帯 (②の分母) = recall で 0.0570** (prompt ごとの seed 間 std を平均した値・
+  `analysis_cfg.log` / `analysis_steps.log` に同一値)。
+  → **4 条件すべてで「有効レバー」に到達したものは無い (0/4)**。
+  ★**「3 軸とも不成立」と書かないこと** — 上表のとおり**軸①は 3 条件で True** になっている。
+  ただしそれは delta が全ペアで 0 の**縮退** (`sign_consistent` は非ゼロ符号が無ければ True を返す実装・
+  `majority_sign=0`) であって、効果の証拠ではない。**総合判定を分ける決定打は②と③で、両方 False**。
+- **副指標 `worst_anatomy` は参考値扱い**。理由 = F-0a 実測で ScorerNet の分解能が Limbs 軸のみ生存と
+  判明しており (CLAUDE.md 計測表「品質 FB ループ F-0a 信号ゲート」行)、絶対値が 0.0000-0.0041 と
+  極小。★**この軸では軸②③が個別に True になる条件がある** (例: cfg=10.0 の worst_anatomy は
+  ②分散帯超え=True、steps=28 は ③CI が 0 を除外=True) が、**分散帯自体が 0.000487 と極小なため
+  「超えた」ことに実質的な意味が無い**。総合判定はいずれも `頭打ち/ノイズ支配`。**この軸を根拠に
+  既定変更を論じないこと。**
+- **結論 = 既定値は 1 つも変更しない** (`kGuidanceScale=7.5f` / steps=20 / seed フォールバックとも無改変)。
+  → DoD 5 ★のユーザー決裁は**発生しない**。
+- ★**この結論の限定 (超えて読まないこと)**: 言えるのは
+  「**この走行の範囲 (illustrious-xl / cfg 5.0-10.0 / steps 12-28 / 3 prompt × 4 seed / recall 主指標)**
+  で 3 軸判定を通るレバーが無かった」まで。
+  **「CFG と steps は画質に効かない」という一般命題は示していない** — cfg アームは PNG レベルでは
+  明確に別画像 (上記 sha256 3 値相違) を出しており、**動いていないのはノブではなく指標**である。
+  他 preset・より広い cfg 範囲・他プロンプト群は未測。
+
+**E-2 全体の状態 = 完了 (DoD 1-6 すべて充足)。ただし main 未 merge・未 push。**
+- DoD 1 実装済 / **DoD 2 充足 (T2・突合相手 `766082a`)** / DoD 3 実装済 / DoD 4 走行 B で 55/55 緑
+  (★限定は DoD 4 の記述どおり — 実重み経路の一部は worktree の重み不在で SKIP) /
+  **DoD 5 充足 (結論 = 頭打ち・既定変更なし)** / DoD 6 遵守。
+- ★**branch `feat/e2-sampling-knobs` は main へ merge されておらず push もされていない** (2026-09-27 時点)。
+  したがって**出荷物 (main) には `--seed`/`--cfg`/HTTP `guidance_scale`/`seed` はまだ入っていない**。
+  E-5 の発火条件「HTTP `seed` が入った後」を main 基準で読む場合は未成立 (branch 基準では成立)。
+- **残債 (T2 で新たに立った分・いずれも `src/` 変更を伴うため本記録では直さない)**:
+  ① 実効 fast 構成 (`--fast`/`--fp8`) をログに出す ② `--cfg` の実効値をログに出す
+  ③ 段 3 フォールバックを**静かに**起こさない (実走の段を機械判定可能にする)
+  ④ T1 から継続: `src/tests/test_http.cpp` l.380 のログ文字列 `nullopt` が stale。
 
 **担当エージェント**: cpp-implementer (ノブ実装・Sonnet 可 → Opus high レビュー) → gpu-benchmarker (スイープ)。
 **走る機械**: ノブ実装とユニット test は**開発機可**。スイープ実走は**研究機** (新規 exe = SAC OFF 依頼)。
@@ -543,6 +680,26 @@ Sonnet 実装後は Opus high レビュー。
 **走る機械**: 実装・golden 突合は**開発機可**。画評価は**研究機**。
 **発火条件**: **条件発火** — E-2 が「既存ノブ (steps/CFG/seed) だけでは頭打ち」を示したときのみ。
 E-2 で既定調整だけで改善が取れるなら E-3 は起票しない。
+★**2026-09-27: この発火条件は E-2 T2 の DoD 5 スイープで満たされた** — 4 条件 (cfg 5.0 / cfg 10.0 /
+steps 12 / steps 28) すべてが 3 軸判定で `頭打ち/ノイズ支配`・有効レバー **0/4**・既定変更なし
+(実数値と限定は E-2 節「現況 (2026-09-27) — T2」の「DoD 5」項)。
+⚠ **ただし発火条件の充足 = 着手の決裁ではない**。起票・着手はユーザー/PL の決裁を要する。
+また★**上の目的節にある「アニメ系は Karras/DPM++ 前提」「v-pred は出力が壊れる見込み」は
+T2 を経ても依然として未検証の一般論**である (T2 は scheduler を 1 つも試していない)。
+発火したのは「既存ノブが頭打ち」までで、**E-3 が効くという見込みは何も裏付けられていない**。
+
+★**T2 が示した、E-3 着手前に検討すべき材料 (次のレバー候補)** — E-3 と**競合**する候補を含む:
+1. **評価軸 (recall) の分散帯が広い**: 参照アームの seed 間 std = **0.0570** に対し、観測された
+   最大の delta が **-0.0167** = 分散帯の 3 分の 1 以下。**この物差しでは、仮に E-3 が効いても
+   検出できない可能性がある** (E-3 を回す前に、seed 本数を増やす / 分散の小さい指標に替える方が先かもしれない)。
+2. **採点器の分解能不足**: 副指標 `worst_anatomy` は F-0a 実測どおり Limbs 軸のみ生存で、
+   絶対値 0.0000-0.0041・分散帯 0.000487 と極小 = 実質的に死んでいる。
+   **採点器 (ScorerNet / quality head) の分解能を上げる方が、sampler を増やすより上流のレバーになりうる**
+   (Phase 4 の Q-2 / 「7 死軸の分解能診断」と同じ対象)。
+3. **より広い CFG 範囲**: T2 は cfg 5.0-10.0 の 3 点しか見ていない。**cfg 2-3 の低域や 12 以上の高域は未測**で、
+   「既存ノブの頭打ち」は**測った範囲の話**にすぎない。E-3 より安い再測として先に潰せる。
+4. (T2 のスコープ外) preset は `illustrious-xl` 単独・prompt は p1/p2/p3 のみ = **他 preset / 他題材は未測**。
+
 **依存**: E-2 (発火判断)、E-1 (評価物差し)。E-4 の v-pred 系候補は E-3 に依存する (逆向きの依存に注意)。
 
 ---
