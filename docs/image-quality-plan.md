@@ -173,9 +173,13 @@ CSV を吐くハーネスを 1 本作る。
 HTTP 経路は格子を回せない。一次証拠:
 - **HTTP に seed が無い** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch
   `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み**のため、**本 branch 上ではこの
-  一次証拠は成り立たない** (`src/server/generator.hpp` l.51 に `std::optional<uint64_t> seed;` /
-  `src/server/api.cpp` l.176-184 が `body.contains("seed")` → `gr.seed` で受理。ともに 2026-09-22 に
-  現物で確認。同様に `guidance_scale` も l.168-174 で受理される) — 詳細は E-2 節「現況 (2026-09-22)」と
+  一次証拠は成り立たない** (`src/server/generator.hpp` l.53-56 に `bool has_seed` / `uint64_t seed` /
+  `bool has_guidance_scale` / `float guidance_scale` / `src/server/api.cpp` l.177-187 が
+  `body.contains("seed")` → `gr.has_seed=true; gr.seed=...` で受理。同様に `guidance_scale` も
+  l.166-176 で受理される。行番号・型はいずれも **`c00e72b` の現物**で 2026-09-22 に確認。
+  ★初版 `4afbe2f` では `std::optional<uint64_t> seed;` / `std::optional<float> guidance_scale;`
+  (同 commit の l.50-51) だったが、CUDA ビルド回帰のため
+  `c00e72b` で POD 表現へ変更済み — 経緯は E-2 節「現況」) — 詳細は E-2 節「現況 (2026-09-22)」と
   §3 の同趣旨バナーを参照。**E-1 の結論 (格子は CLI で回す) は下の「HTTP に preset が無い」だけで
   今も成立する**ので変更しない。以下は起票時の記述をそのまま残す:
   (`src/server/generator.hpp` l.34-46 の `GenRequest` に seed フィールド無し /
@@ -357,11 +361,76 @@ reward 比較のノイズ除去」/ `docs/roadmap.md` l.321「**次レバー** (
 
 **現況 (2026-09-22) — T1 (ノブ配線 + 仕様表更新) 実装完了・未レビュー**
 実装場所は worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs` (main 未 merge)。
+★**以下の DoD 欄は commit `4afbe2f` 時点で書かれた**。その後 `c00e72b` で CUDA ビルド回帰を修正して
+`GenRequest` の表現が変わっているため、**型・フィールド名は下記「CUDA ビルド回帰 (`c00e72b`)」を正とする**。
+
+**CUDA ビルド回帰 (`c00e72b`・2026-09-22) — 記録監査をすり抜けた事故**
+
+- **何が壊れていたか**: T1 初版 `4afbe2f` は `GenRequest` (`src/server/generator.hpp`) に
+  `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` を追加した。この構造体は
+  `src/server/pipeline_generator_factory.cu` からも間接 include される
+  (`pipeline_generator_factory.hpp` / `pipeline_generator.hpp` がどちらも `server/generator.hpp` を include)。
+  本プロジェクトの `.cu` は `src/meson.build` l.46 で **`-Xcompiler /std:c++14` を強制**している
+  (同 l.37 の注記: CUDA 13.3 + MSVC で c++17/20 ヘッダ組合せの 0xC0000409 を回避するため) ので、
+  **`std::optional` がコンパイルできず `with_cuda=true` のビルドが通らなかった**。
+  ★**失敗ビルドのエラー出力は保全していない** (`c00e72b` 後の build ディレクトリで上書き済み)。
+  上記の機構は現物から導出したもの = `src/meson.build` l.46 (`-Xcompiler '/std:c++14'`・注記は同 l.37) +
+  include 連鎖 (`pipeline_generator_factory.cu` l.15 → `pipeline_generator_factory.hpp` l.23 /
+  同 .cu l.21 → `pipeline_generator.hpp` l.41 → どちらも `server/generator.hpp`) + 初版 `4afbe2f` の
+  `generator.hpp` が `#include <optional>` していたこと。**「ビルドが失敗した」事象そのものの一次証拠
+  (コンパイラ出力) は無い**。
+- **なぜ見逃したか**: **T1 に対する記録監査 3 ラウンドはすべて `with_cuda=false` 構成で行われた**
+  (★この「3 ラウンドとも」は **PL からの申し送り**であり、本記録執筆時に一次証拠で数えたものではない。
+  下記 DoD 4 走行 A の構成が `with_cuda=false` だったことについても**一次証拠は残っていない**
+  — 根拠は当時の記録 (二次) のみ。走行 A のログは同一 build ディレクトリの走行 B で上書きされている)。
+  この構成では `.cu` が 1 つもコンパイルされないため、回帰が発生しうる TU が
+  **ビルドグラフに存在しない**。「`meson test` 32/32 緑」はこの構成の緑であり、
+  CUDA ビルドの成否については何も言っていなかった。
+- **どこで発覚したか**: **研究機での T2 実走準備で `with_cuda=true` としてビルドした時点**
+  (★発覚の場面も PL からの申し送り。本記録側の一次証拠は、`c00e72b` が実際に
+  `with_cuda=true`/`with_openvino=true` 構成の build ディレクトリを残していること = DoD 4 走行 B)。
+  レビューや test ではなく、実走のためのビルドが最初の検出器になった。
+- **どう直したか**: `c00e72b` で `std::optional<T>` を **POD のフラグ + 値フィールド**
+  (`bool has_seed` / `uint64_t seed` ・ `bool has_guidance_scale` / `float guidance_scale`) に置換
+  (`src/server/generator.hpp` l.53-56)。
+  ★**「POD」なのは E-2 ノブ部の 4 フィールドだけ**で、`GenRequest` 自体は `std::string prompt` /
+  `std::vector<LoraSpec> loras` を含むため POD / trivially-copyable ではない
+  (現物 l.34-57 = 全 13 フィールド)。
+  呼び出し側は `api.cpp` / `backend_image_generator.hpp` / `main.cpp` /
+  `test_diffusion_backend.cpp` / `test_http.cpp` を追従。
+  **意味論 (未指定→env/時刻・backend 既定へフォールバック) は不変**であることは
+  `git diff 4afbe2f c00e72b` の全差分で確認済み (分岐条件が `req.seed` → `req.has_seed`、
+  値取得が `*req.seed` → `req.seed` に替わっただけ)。
+  条件コンパイルでフィールドを隠す案は **ODR 違反の恐れがある**ため採らなかった
+  (一次証拠 = `src/server/generator.hpp` の当該コメント「ODR 事故防止のため POD 表現に固定する
+  (フィールドを条件コンパイルで隠さない)」。同種の実害の前例は CLAUDE.md 計測表
+  「ランタイム LoRA (L-2 完了)」行に記録の `class DeviceWeights` ODR 事故)。
+- ★**教訓 (今後の同種事故を防ぐための本記録の主目的)**:
+  **CUDA / OpenVINO を有効にしたビルドを一度も通していない状態で「`meson test` 全緑」を完了扱いにしない。**
+  構成を落としたビルドの緑は「その構成で壊れていない」しか意味せず、**落とした部分の無傷を保証しない**。
+  記録・レビュー側も、test 結果を引用するときは **どの build option 構成の走行か**を必ず併記する
+  (本節 DoD 4 はその書き方に従う)。
+
 DoD ごとの状態:
 
-- **DoD 1 = 実装済み**。`GenRequest` (`src/server/generator.hpp`) に `std::optional<uint64_t> seed` /
-  `std::optional<float> guidance_scale` を**末尾に**追加 (DoD 1 の ⚠ どおり集成初期化の並びを崩さず、
-  `src/main.cpp` では `req.seed = ...` / `req.guidance_scale = ...` の代入で設定)。
+- **DoD 1 = 実装済み**。`GenRequest` (`src/server/generator.hpp`) に sampling ノブ 2 件を**末尾に**追加。
+  ★**現物 (`c00e72b`) の E-2 ノブ部は POD のフラグ + 値フィールド** (構造体全体が POD という意味ではない
+  = 上記「どう直したか」の ★) — l.53-56 に `bool has_seed = false` / `uint64_t seed = 0` /
+  `bool has_guidance_scale = false` / `float guidance_scale = 0.0f`
+  (初版 `4afbe2f` は `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` だった。
+  変更理由は上記「CUDA ビルド回帰」)。
+  **DoD 1 の ⚠ (集成初期化の非破壊) は `c00e72b` でも維持されている** — 一次証拠:
+  ① 追加 4 フィールドは構造体の**末尾**にあり、`prompt/negative_prompt/n/steps/width/height` の並びは無改変
+  (`git diff 4afbe2f c00e72b -- src/server/generator.hpp` = **2 hunk**: 末尾ブロックの差し替えと、
+  先頭の `-#include <optional>` 削除。既存フィールドを触る hunk は無い)、
+  ② `src/main.cpp` の `GenRequest req{prompt, negative, 1, steps, width, height};` という位置指定の
+  集成初期化は**一切変更されていない** (同 diff の `src/main.cpp` 側は `--seed`/`--cfg` の代入部のみ)、
+  ③ ノブは集成初期化に足さず `if (cli_seed) { req.has_seed = true; req.seed = *cli_seed; }` /
+  `if (cli_cfg) { req.has_guidance_scale = true; req.guidance_scale = *cli_cfg; }` の**代入**で設定
+  (`matting` / `preset_prefix` と同じ流儀)。
+  なお `src/main.cpp` のローカル変数側は `std::optional<uint64_t> cli_seed` / `std::optional<float> cli_cfg`
+  のままである (`main.cpp` は `.cpp` TU なので c++14 制約を受けない)。POD 化したのは
+  `GenRequest` の E-2 ノブ部だけ。
   CLI `--seed <uint64>` / `--cfg <float>` を追加 (パース失敗時は**未指定扱い**でエラーにしない)。
   ⚠ **この 2 引数は実行未検証** — argv 解析を通す test が 0 件のため、言えるのはビルド成立までである
   (詳細と一次証拠は下記 DoD 4 の ★★)。また **`--http` 起動時は両引数とも捨てられる**
@@ -372,21 +441,61 @@ DoD ごとの状態:
   backend へ渡し既定 (SDXL `kGuidanceScale=7.5f`) へ委譲。
 - **DoD 2 = 未充足 (T2 = 研究機の担当として残る)**。T1 のユニット test で示せたのは
   ① `BackendImageGenerator` が未指定時に backend へ渡す**実効引数**が従来と同じ (`cfg==0.0f`・seed は
-  env→時刻の非ゼロ値)、② HTTP で未指定なら `GenRequest` が `nullopt` のまま、の 2 点まで。
+  env→時刻の非ゼロ値)、② HTTP で未指定なら `GenRequest` が未指定のまま
+  (`c00e72b` 以降は `has_guidance_scale`/`has_seed` がともに false。`src/tests/test_http.cpp` l.375 の判定。
+  ★同 l.380 のログ文字列は `[gen-knobs-unset] 未指定時 nullopt OK` と **stale** のまま = 残債・src 未修正)、
+  の 2 点まで。
   いずれも fake/stub backend 上の検証であり、**2-6e の p1/p2/p3 PNG sha256 3/3 一致は未実施**。
   ★実重みでの sha256 突合と、その走行条件 (`--fast` 有無の明示記録) は T2 で行う。
 - **DoD 3 = 実装済み**。`docs/http-api-spec.md` の拡張フィールド表に `guidance_scale` / `seed` を追加し、
   併せて既存乖離 2 件 (`preset_prefix` (2-6e) / `loras` (L-2)) も同時に解消した。
   同 doc の CLI 引数抜粋にも `--seed` / `--cfg` を追記。
 - **DoD 4 = 部分充足**。test 追加は `src/tests/test_diffusion_backend.cpp` (`RecordingFakeBackend` で
-  未指定/env のみ/req 明示の 3 ケース) と `src/tests/test_http.cpp` (`RecordingGenerator` で伝播・未指定
-  nullopt・非数値 cfg 400・負数 seed 400)。`meson test` は **32/32 緑**
-  (`build/meson-logs/testlog.txt`・2026-09-22T23:20:16)。
-  ★**この build 構成は `with_cuda=false` / `with_openvino=false` / `with_http=true`** であり、
+  未指定/env のみ/req 明示の 3 ケース) と `src/tests/test_http.cpp` (`RecordingGenerator` で伝播・
+  **未指定 = `has_seed`/`has_guidance_scale` がともに false** (`test_generations_sampling_knobs_unset`)・
+  非数値 cfg 400・負数 seed 400)。
+  **走行 A (初版 `4afbe2f`・記録として残す)**: `meson test` **32/32 緑**
+  (当時の出典は `build/meson-logs/testlog.txt`・2026-09-22T23:20:16)。
+  ★**走行 A のログは同一 build ディレクトリの走行 B で上書きされ現存しない** (現物 `testlog.txt` の
+  1 行目は `2026-09-22T23:56:53` のみ = 走行 B)。したがって **32/32・`with_cuda=false` は当時の記録 (二次)
+  であり、現時点で再検証できない**。
+  当時の記録によればこの build 構成は **`with_cuda=false` / `with_openvino=false` / `with_http=true`** で、
   CUDA/OV 依存 test は登録されない = **実重み経路はこの走行で 1 件も走っていない**
-  (「全緑」を実重み検証の代わりに読まないこと)。
+  (「全緑」を実重み検証の代わりに読まないこと)。**この構成では CUDA ビルド回帰も検出できなかった**
+  (上記「CUDA ビルド回帰」)。
+  **走行 B (`c00e72b`・2026-09-22T23:56:53 開始)**: `with_cuda=true` / `with_openvino=true` /
+  `with_http=true` (`build/meson-info/intro-buildoptions.json` で確認) で**ビルド成立**し、
+  `meson test` **55/55 Ok / Fail 0** (`build/meson-logs/testlog.txt` の `Ok: 55 / Fail: 0`)。
+  → **解消した限定**: ① CUDA 有効ビルドが通る = `.cu` TU 群も新 `GenRequest` を含めてコンパイル/リンク可、
+  ② 登録 test が 32→55 に増え、**GPU カーネル test が実走** (例: `test_gemm` / `test_conv2d` /
+  `test_attention` / `test_groupnorm` / `test_device_arena` がいずれも ALL PASSED)。
+  ★`test_groupnorm` の `bench_groupnorm_mb` はここでは **`ALL PASSED` = ゲート通過の事実のみ**を採る。
+  同 bench の GB/s 値は**閾値 (300 GB/s) を超えたかの合否判定用であり、性能比較の数値ではない**
+  (同一行の実測が median 0.0624ms に対し min 0.04448 / max 7.37501ms = **測定ばらつきが大きい**)。
+  CLAUDE.md 計測表「GroupNorm multi-block (G-4k S1a 完了)」の値と引き算して**退行/改善を論じないこと**。
+  → ★**残る限定 (「実重み経路が緑」と読まないこと)**: この worktree には gitignore 対象の
+  golden / 重みが無く (拡散系 = `src/tests/data/unet_io.safetensors` / `txt2img_io.safetensors` 等、
+  LM 系 = `data/bitnet/bitnet_dense*_fp32.safetensors` — `data/bitnet/vocab.json` は現存)、
+  **11 test が重み/golden 不在で `[SKIP]` を出している**
+  (text_conditioner / scheduler / bitnet_infer / bitnet_int8 / vae_decode / unet /
+  unet_fast / diffusion / diffusion_batch2 / pipeline_generator / bitnet_gpu)。
+  ★**preset の大型重みは現存する** — `models/presets/illustrious-xl/unet_weights.safetensors` 5,135,149,736 B /
+  `vae_weights.safetensors` 98,995,758 B が実体としてあり、testlog も
+  `unet = ../models/presets/illustrious-xl/unet_weights.safetensors [OK]` / `vae = ... [OK]` を出している。
+  **「worktree に大型テストデータが 1 つも無い」わけではない**。
+  ★**SKIP のうち 2 件は重み/golden 不在とは別原因**なので上の 11 件に数えない:
+  ① `test_allocator` の `test_cuda_alloc_no_cuda_throws` は `SKIP (HAVE_CUDA あり)` =
+  **CUDA が有効だから**スキップする (CUDA 無効時に例外を投げる経路の test なので、この構成では恒久的に SKIP)、
+  ② `test_txt2img` は `[SKIP] アセットが見つかりません (tokenizers.dll)` = env `DOLLAMA_OV_TOKENIZERS_DLL`
+  未設定が原因。
+  さらに `test_cli_generate` は stderr に
+  `[factory] 重み/golden が不足しています — StubGenerator にフォールバック`
+  (`embed = src/tests/data/unet_io.safetensors [MISSING]`) を出しており、**実重み拡散は走っていない**。
+  したがって走行 B で言えるのは「CUDA 有効ビルドが通り、重みを要さない GPU test が緑」までで、
+  **実重みでの PNG 生成 e2e と 2-6e sha256 一致は依然未実施 = DoD 2 は引き続き未充足**。
   ★★**`src/main.cpp` の引数解析を通す test は 0 件** (`grep -rn '"--seed"\|"--cfg"\|"--prompt"' src/tests/`
-  = **0 件**・2026-09-22 実行)。上記 2 本はどちらも `GenRequest` を test 側で直接組み立てており、
+  = **0 件**・2026-09-22 実行。**`c00e72b` の現物で 2026-09-27 に再実行しても 0 件**)。
+  上記 2 本はどちらも `GenRequest` を test 側で直接組み立てており、
   argv 解析を 1 行も通らない。したがって **`--seed` / `--cfg` については「コンパイル・リンクが通った」
   ことまでしか言えず、引数が実際に拾われるかは未検証**。→ T2 で `dollama --prompt ... --seed ...` の
   smoke を 1 本走らせて実効値 (`[gen] seed=<値>(req)`) を確認する。
@@ -502,7 +611,7 @@ E-1/E-5 の格子は原則 **CLI 1 プロセス 1 枚** (E-1 節のとおり) �
 | 制約 | 一次証拠 |
 |---|---|
 | **LoRA は HTTP 専用・CLI から到達できない** | `grep -rn -i lora src/server/cli_generate.hpp src/main.cpp` = **0 件**。`loras` の受理は `src/server/api.cpp` l.179 のみ。`GenRequest::loras` (`src/server/generator.hpp` l.43) は HTTP ハンドラからしか埋まらない |
-| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`・`GenRequest::seed` は `std::optional<uint64_t>`。2026-09-22 に現物で確認) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
+| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.has_seed=true; gr.seed=...`・`GenRequest` の当該ノブ部は `bool has_seed` + `uint64_t seed` の POD 表現 (構造体全体は POD ではない)。`c00e72b` の現物で 2026-09-22 に確認。★T1 初版 `4afbe2f` では `std::optional<uint64_t> seed` だったが CUDA ビルド回帰のため `c00e72b` で POD 化・意味論は不変) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
 
 env `DOLLAMA_SEED` は**サーバープロセスの環境変数**であり、**HTTP クライアント側からリクエスト単位で指定できない**
 (`getenv` 自体は `generate()` ごとに評価される — `src/server/backend_image_generator.hpp` l.132 が

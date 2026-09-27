@@ -188,8 +188,24 @@ dollama [--port 8080] [--steps 20] [--width 1024] [--height 1024]
 ```
 
 - `--seed` / `--cfg` (E-2) は CLI 生成経路で上表の `seed` / `guidance_scale` と**同じ
-  `GenRequest` フィールド**に入る (`src/main.cpp`)。未指定なら nullopt = 従来経路。
+  `GenRequest` フィールド**に入る (`src/main.cpp`)。未指定なら従来経路 (seed は env→時刻・
+  CFG は backend 既定へフォールバック)。
   値のパースに失敗した場合は**未指定として扱う** (エラーにしない)。
+- ★**「未指定」の C++ 表現は `std::optional` ではなく POD の有無フラグ** (`c00e72b` 以降)。
+  `GenRequest` (`src/server/generator.hpp`) の **E-2 ノブ部**は
+  `bool has_seed` / `uint64_t seed` ・ `bool has_guidance_scale` / `float guidance_scale` の 4 フィールドで
+  (構造体全体は `prompt` / `loras` 等を含む**全 13 フィールド**であり、`std::string` /
+  `std::vector<LoraSpec>` を持つため **POD / trivially-copyable ではない**。POD なのはこのノブ部だけ)、
+  **`has_*=false` (既定) が「未指定」**・値フィールドは `has_*=true` のときのみ有効
+  (HTTP 側も `api.cpp` が `body.contains(...)` のときだけ `has_*=true` を立てる)。
+  初版 (`4afbe2f`) は `std::optional<uint64_t> seed` / `std::optional<float> guidance_scale` だったが、
+  この構造体は `src/server/pipeline_generator_factory.cu` 等の **`.cu` TU からも間接 include** され
+  (`pipeline_generator_factory.hpp` / `pipeline_generator.hpp` がどちらも `server/generator.hpp` を include)、
+  本プロジェクトの `.cu` は `src/meson.build` で `-Xcompiler /std:c++14` を強制しているため
+  **`std::optional` が使えず CUDA 有効ビルドが壊れた**。`c00e72b` でノブ部を POD 表現に変更して解消
+  (条件コンパイルでフィールドを隠す案は ODR 違反の恐れがあるため不採用)。
+  **意味論 (未指定→env/時刻・backend 既定へフォールバック) は初版から変わっていない**。
+  経緯と教訓は `docs/image-quality-plan.md` E-2 節「現況」。
 - ★**`--http` 起動時は `--seed` / `--cfg` は使われない (サーバ既定にはならない)**。`src/main.cpp` は
   `http_mode` なら `GenRequest` を組む前に `start_server` へ return するため、両引数は**パースされるだけで
   捨てられる** (HTTP 経路の `GenRequest` は `src/server/api.cpp` 側でしか組まれない)。
