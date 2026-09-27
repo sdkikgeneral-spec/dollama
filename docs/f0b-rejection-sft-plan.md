@@ -41,10 +41,10 @@
 
 | Pkg | 内容 | 担当 | 担当機 | 依存 | status |
 |---|---|---|---|---|---|
-| **G-1** | LM 確率的サンプリング (temperature/top-k) 追加 + best-of-N rollout 収集 (N8×M400→SDXL→reward→top-1 選抜) → SFT データセット | gpu-benchmarker | 研究機 (GPU ~3.4h) | Q-2✅ | 🔲 未 |
-| **G-2a** | rejection-sampling SFT (`train_bitnet.py` に SFT 経路・正典 bitnet_dense から層状低LR) + **diverse set-F1 非退行** 評価 (生成不要) + test | model-trainer | 本機 | G-1 | 🔲 未 |
-| **G-2b** | **平均 reward 前後比** の実測 (SDXL 生成を伴う→GPU 必須) | gpu-benchmarker | 研究機 (GPU) | G-2a | 🔲 未 |
-| **G-3** | 出荷判定 (reward↑ ∧ 正典 set-F1 非退行なら正典化・満たさねば不採用でクローズ) | PL + model-trainer | 本機 | G-2a/b | 🔲 未 |
+| **G-1** | LM 確率的サンプリング (temperature/top-k) 追加 + best-of-N rollout 収集 (N8×M400→SDXL→reward→top-1 選抜) → SFT データセット | gpu-benchmarker | 研究機 (GPU ~3.4h) | Q-2✅ | ✅ 完了 (2026-07-05・400/400) |
+| **G-2a** | rejection-sampling SFT (`train_bitnet.py` に SFT 経路・正典 bitnet_dense から層状低LR) + **diverse set-F1 非退行** 評価 (生成不要) + test | model-trainer | 本機 | G-1 | ✅ 完了 (2026-07-05・非退行ゲート未達) |
+| **G-2b** | **平均 reward 前後比** の実測 (SDXL 生成を伴う→GPU 必須) | gpu-benchmarker | 研究機 (GPU) | G-2a | ✅ 完了 (2026-07-05・200枚) |
+| **G-3** | 出荷判定 (reward↑ ∧ 正典 set-F1 非退行なら正典化・満たさねば不採用でクローズ) | PL + model-trainer | 本機 | G-2a/b | ✅ 完了 (2026-07-05・不採用でクローズ) |
 
 > **PL 条件付き承認 (2026-07-04)** の必須条件:
 > 1. **G-2 は 2 分割**: 訓練+set-F1 は本機 (G-2a)、reward 前後比は SDXL 生成を伴うため研究機 GPU (G-2b)。
@@ -89,7 +89,7 @@
 - deepghs 合流 / ScorerNet anatomy 7死軸の分解能改善 = F-0b と独立の別レバー (必要時)。
 - ternary GEMM 圧縮実験 = 別軸。
 
-## 現在地 (最終更新: 2026-07-04 21:49 JST)
+## 現在地 (最終更新: 2026-09-28 = 記録監査 BLOCK の是正。走行の追加なし)
 - ✅ Q-2 quality 枝 (信号ゲート通過) → F-0b ゲート解除
 - ✅ PL 条件付き承認 (G-2 分割・リーク防止・seed 固定が条件)
 - ✅ **Package G-1 完走: 400/400 (2026-07-05 11:22 JST)**。
@@ -98,28 +98,54 @@
   - resume/chunk 化 (`scripts/dollma_rollout_bestofn.py --limit` + `dollma_g1_driver.sh`)・`_sample_generate` in train_bitnet.py。
 - ⚠️ **Package G-2a 完了・set-F1 非退行ゲート未達 (2026-07-05)**:
   - `train_bitnet.py --sft-rejection` 追加 (正典 bitnet_dense から層状 warm-start・低LR・破滅的忘却なし)。隔離重み `data/bitnet/bitnet_dense_sft{,_fp32}.safetensors`・正典無改変・test 3/3。
-  - set-F1 前後: in-dist 0.4552→0.4570(+) / **diverse_a 0.3332→0.3158(−0.017)** / **diverse_b 0.3804→0.3563(−0.024)** / retention 0.9807→0.9784(−0.002)。
-  - lr×ep sweep 全条件で diverse_a/b 退行=**構造的** (チューニングノイズでない)。原因=best-of-N の reward(解剖+美的) と gold タグ set-F1 は非整合。日本語184空条件も同方向。
+  - set-F1 前後: in-dist 0.4552→0.4570(+) / **diverse_a 0.3332→0.3158(−0.0174)** / **diverse_b 0.3804→0.3563(−0.0241)** / retention 0.9807→0.9784(−0.002)。
+  - ⚠️ **「構造的 (チューニングノイズでない)」は撤回 (2026-09-28 是正・監査 2026-09-27 指摘)** → **同一 seed 内の全レシピ (本採用 + lr×ep sweep 4 条件) で退行の符号が揃った。ただし seed 間分散は未測定のため、seed noise 帯との識別はできていない。**
+    - 一次証拠 (seed 未制御): `data/bitnet/_g2a_eval/eval_report_{canon_g2a,sft_g2a,cand_lr5e-6_ep1,cand_lr5e-6_ep2,cand_lr1e-5_ep1,cand_lr1e-5_ep2}.json` の provenance は **6 本すべて `"seed": 20260620`** (`scripts/train_bitnet.py` の `--seed` 既定も 20260620)。SFT アームの seed 変動走行はゼロ。
+    - ★**訓練 seed の一次証拠を追加 (2026-09-28・監査 軽微2)**: 上の eval_report が示すのは**評価時の seed**。**SFT 訓練そのものの seed** は `data/bitnet/train_stats_sft.json` の先頭 `"seed": 20260620` に記録されている (同ファイル `"mode": "sft_rejection"`・`hyperparams` = epochs 3 / batch_size 32 / lr 2e-05 / max_len 64 / loss_mode tags・`data.train` 400 / `data.val` 500・`model.params` 32,976,896)。被験変数としては訓練 seed と評価 seed は別物なので、「訓練が単一 seed」の根拠は `train_stats_sft.json` を正とする。
+    - **既存の判定基準との並置**: 施策 D (容量増 33M→80M) は diverse_a F1 の per-seed delta 最大幅 **−0.0240** を「seed ノイズ」と断じている (`docs/measurements-log.md` Phase 4-D 行)。F-0b の退行幅 (−0.0174 / −0.0241) は**これとほぼ同値**であり、単一 seed の観測では seed noise 帯と区別できない。
+  - 退行の**仮説** (未検証): best-of-N の reward(解剖+美的) と gold タグ set-F1 は非整合・日本語184空条件も同方向。
   - **論点**: F の狙いは元々「recall でなく良い絵へ学習軸を移す」= set-F1 卒業。set-F1 軽微退行は F 思想そのものとも言える。判定には reward 前後比 (G-2b) が必須。
 - ✅ **Package G-2b 完了 (2026-07-05)**: held-out 100入力 (G-1訓練/eval と disjoint・en46/ja54) で greedy→SDXL→reward ペア比較 (200枚)。
-  - reward mean pre −0.2974 → post −0.2803・**Δ mean +0.017 / median +0.013 / 正60% / ~2.4σ** (弱い正)。
+  - reward mean pre −0.2974 → post −0.2803・**Δ mean +0.017 / median +0.013 / 正60%**。
+  - ⚠️ **「~2.4σ」「弱い正」は撤回 (2026-09-28 是正・監査 2026-09-27 指摘)** → **有意差を検出できなかった (検出力不足)**。
+    - 100 件を独立標本として扱った naive t≈2.40 は**疑似反復によるアーティファクト**。監査 (2026-09-27) によるクラスタ補正の再解析では **t=0.955・95%CI [−0.0115, +0.0348] = 0 を含む** = 有意でない。
+    - ★**推定量の明記 (2026-09-28 追記・監査 中①)**: 上記 t=0.955 の推定量は **「同一プロンプトを 1 観測に集約した unweighted cluster-mean の 1 標本 t 検定 (G=47)」** (cluster mean Δ +0.0114 / se 0.0119)。**「クラスタ補正」という語だけでは推定量が一意に定まらず、別の補正だと結論が逆になる**: 同じ 200 行に **cluster-robust sandwich (CR0/CR1・G=47)** を当てると **t=2.76 / 2.73** で「有意」側に出る (ja 54 件の複製が within-cluster 分散ほぼ 0 ゆえ「高精度」と評価される = 疑似反復をそのまま情報量に数える推定量)。
+    - ★**最も反論されにくい一次根拠 = en のみ 46 件** (uniq prompt 46 = 真に独立・疑似反復ゼロ): **Δ mean +0.0112 / t=0.915 / 95%CI [−0.0134, +0.0357] (0 を含む)**。ja を落としても「有意でない」は変わらない。
+    - 本セッション (2026-09-28) に `data/rollouts/g2b_prepost.jsonl` 200 行から独立再計算した 4 値: **naive t=2.4025 / cluster-mean t=0.9549 / CR sandwich t=2.7592 (CR0) ・2.7297 (CR1) / en46 t=0.9154**。Z-2 の出口では**推定量を明示して 3 通り (naive / cluster-mean / CR sandwich) を並べる**こと。
+    - 疑似反復の一次証拠: `data/rollouts/g2b_prepost.jsonl` の `lang=ja` 54 件は、pre/post いずれのアームでも `prompt` の uniq 数が **1** (en は 46 件で uniq 46)。つまり ja 分は「同一プロンプト 1 組を SDXL seed だけ変えて 54 回複製した」標本。
+    - 機構 (既知性質・F-0b 起因ではない): **日本語入力は `encode_text_greedy` が英数字タグしか拾わず空条件化し、greedy 生成が同一プロンプトへ収束する** (本 doc「確定パラメータ」節の「既知の制約」・[[project_expression_fidelity_gap]])。
   - Δ 内訳: **ほぼ全量 quality 由来** (quality +0.0155 / anatomy +0.0016)。en +0.011 / ja +0.022。
-  - 但し書き: SDXL seed 非再現 → per-input Δ に seed ノイズ (Δ std 0.071 の主因)。信号は弱く seed 交絡あり。
+  - 但し書き: SDXL seed 非再現 → per-input Δ に seed ノイズ (Δ std 0.071 の主因)。
   - スクリプト `scripts/dollma_g2b_reward_prepost.py` / `dollma_g2b_driver.sh`。
-- ✅ **G-3 判定: 不採用でクローズ (ユーザー決裁 2026-07-05)**: reward↑ (+0.017・弱・seed交絡) が信頼 proxy(set-F1) 退行 (−0.017/−0.024・構造的) を正当化できない。**正典 bitnet_dense 無改変維持・SFT 重みは隔離保存 (data/bitnet/bitnet_dense_sft*)・知見記録**。
+- ✅ **G-3 判定: 不採用でクローズ (ユーザー決裁 2026-07-05)**: reward↑ (+0.017・有意性は未確立) が信頼 proxy(set-F1) 退行 (−0.0174/−0.0241) を正当化できない、という判断。**正典 bitnet_dense 無改変維持・SFT 重みは隔離保存 (data/bitnet/bitnet_dense_sft*)・知見記録**。
+  - **処置 (正典無改変・SFT 重み隔離) は妥当であり変更しない**。2026-09-28 の是正対象は処置の是非ではなく**主張の強さ**のみ。
 
-## 🏁 F-0b 完遂・不採用クローズ (2026-07-05)
+## 🏁 F-0b 完遂・クローズ (2026-07-05・結論の強さを 2026-09-28 に是正)
 
-**結論**: RAFT-SFT (best-of-N→top-1→SFT) を end-to-end で実装・実走・評価。**パイプラインは検証済み・再利用可能**だが、M=400・現 reward では **出荷に値する効果は出ず不採用**。
-- G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017 弱)・G-3 不採用。
-- **確定した知見**: ① best-of-N の reward(解剖+美的) と gold タグ set-F1 は非整合 → SFT は set-F1 を構造的に割る (全レシピ)。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]])。
+**結論**: RAFT-SFT (best-of-N→top-1→SFT) を end-to-end で実装・実走・評価。**パイプラインは検証済み・再利用可能**。**この 1 走行では出荷に値する効果を検出できなかったため不採用でクローズした**。
+- ⚠️ **棄却されたのは「RAFT-SFT という手法」ではない** (2026-09-28 是正)。棄却されたのは
+  **「anatomy 軸が死んだ現行 reward 設計・単一 seed (20260620)・検出力不足という条件下で、M=400 の RAFT-SFT の効果を検出できなかった」**という一点。手法自体の一般的な無効性は示していない。
+  - 報酬の実効寄与は **quality 軸に支配されている**: Δ 内訳 quality **+0.015494** / anatomy **+0.001586** (合計 +0.017081 = Δ mean と一致) = **Δ の 9 割超が quality 由来 (Δ 基準で quality 90.7% / anatomy 9.3%)**。★**「anatomy 寄与率 7.5%」は定義未記載のまま引用した値で独立再現できていない (2026-09-28 是正・監査 中③)**: Δ 基準なら 9.29%・水準基準 (200 行の平均絶対寄与 anatomy 0.003253 / quality 0.285610) なら 1.13% で、**7.5% はどちらの定義でも再現しない → 寄与率の定義を決めて再計算するのは Z-1 の宿題**。主表現は「Δ の 9 割超が quality」を使う。
+  - 一次証拠 (anatomy の分解能): `data/rollouts/g2b_prepost.jsonl` 200 行の `axes` argmax は Limbs 148 / Hands 35 / Head 17 = **8 軸のうち 5 軸は一度も argmax にならない**。★**F-0a の「7 死軸」と同じ物差し (軸別 max 値 < 0.012) を当てると死軸は 7 本** (2026-09-28 追記・監査 中②): Limbs **0.09347** のみ生存で Hands 0.00141 / Head 0.00993 / Eyes 0.00154 / Ears 0.00173 / Mouth 0.00117 / Digits 0.00164 / GlobalAnatomy 0.00150。**Hands は argmax を 35 回取るが max 0.00141 = 他軸がさらに小さいだけで死んでいる**。argmax 分布 (3 軸が立つ) と dynamic range (1 軸だけ生存) は別の物差しなので混ぜて数えないこと。
+  - **処置面は変更なし**: 正典無改変・SFT 重み隔離は不採用判定下で妥当。
+- G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017・有意性未確立)・G-3 不採用。
+- **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
+- **再検証 (未実施)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
+  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。全 status は 🔲 未。再検証の結果が
+  **依然「不採用」になることも十分あり得る** (採用へ仕向ける作業ではない)。
 - **次レバー (F-0b とは別軸・優先度順の仮説)**: (a) **reward 設計**の見直し (anatomy が死んでいる → quality 主体でよいか/新軸) (b) **日本語条件付けトークナイザ改修** (空条件を実条件に・[[project_expression_fidelity_gap]]) (c) SDXL seed 制御 (HTTP に seed 引数・SAC 制約下の実現方法) で reward 比較のノイズ除去 (d) 教師枚数増 M拡大 (効果量 +0.017 自体は seed 交絡で伸びにくい公算・優先度低)。
+  ※ これらは F-0b の**再検証**とは別物。再検証 (手続き不備の是正) は `docs/f0b-reverification-plan.md` Z-1〜Z-5。
 - 再利用資産: `train_bitnet.py --sft-rejection` / `dollma_rollout_bestofn.py` (resume/chunk) / `dollma_g2b_reward_prepost.py` / 各 driver・test。隔離重み `bitnet_dense_sft*` は将来の reward 改善時に再評価可。
-  - モノリシック走行を 101 入力で停止・退避 `data/rollouts/sft_bestofn.done101.bak.jsonl` / `candidates_bestofn.done101.bak.jsonl`。
-  - 統計 (101件): winner reward mean −0.180 / std 0.076・best−worst mean 0.192・ja54/en47・候補多様性 8/8・disjoint OK。best-of-N は Q-2 quality 軸が選抜駆動。
-  - **実測 19.5s/枚**。残り299件 (~13h)。**resume-skip+50件チャンク化** して 101→400 継続中 (gpu-benchmarker・完了 post_id skip・append)。
-  - ⚠️ 現行 script は起動時 `"w"` truncate → resume 改修前の再実行厳禁 (.done101.bak が保険)。
-- 未着手: G-2a (SFT+set-F1・本機 model-trainer) / G-2b (reward 前後比・研究機 GPU) / G-3 (出荷判定)
+- **ステータスは一意**: G-1 / G-2a / G-2b / G-3 は**すべて完了** (上記「分割タスク台帳」と「現在地」参照)。
+  ※ 2026-09-28 是正: 本節末尾に「未着手: G-2a / G-2b / G-3」および G-1 の途中経過 (101 入力で継続中) が
+  残っていて上部の ✅ と矛盾していた (監査 2026-09-27 指摘)。下記の通り**G-1 の途中経過の記録として位置づけ直した**
+  (記録は消さない)。
+
+**【履歴・G-1 の途中経過 (2026-07-05 完走前のスナップショット。現状ではない)】**
+- モノリシック走行を 101 入力で停止・退避 `data/rollouts/sft_bestofn.done101.bak.jsonl` / `candidates_bestofn.done101.bak.jsonl`。
+- 統計 (101件時点): winner reward mean −0.180 / std 0.076・best−worst mean 0.192・ja54/en47・候補多様性 8/8・disjoint OK。best-of-N は Q-2 quality 軸が選抜駆動。
+- **実測 19.5s/枚**。当時の残り 299 件 (~13h)。**resume-skip+50件チャンク化**で 101→400 を継続 → **400/400 完走済**。
+- ⚠️ 当時の script は起動時 `"w"` truncate → resume 改修前の再実行厳禁 (.done101.bak が保険)。
 
 ## 参照
 - reward: `scripts/dollma_reward.py` (anatomy+quality w0.4) / rollout: `scripts/dollma_collect_rollouts.py` (Q-2 で quality 結線済)
@@ -127,3 +153,5 @@
 - quality 枝: `docs/q2-quality-branch-plan.md` / QualityMLP `data/scorer/quality_mlp*.safetensors` / CLIP image IR `models/clip-image/`
 - 評価: diverse set-F1 = `scripts/dollma_make_eval_diverse.py` / `scripts/test_dollma_eval_diverse.py` (training-spec §13/§17)
 - F 全体: CLAUDE.md 計測表 Phase4 F 行 / `docs/measurements-log.md` / [[project_phase4_F_status]] / roadmap F-0b 行
+- 再検証台帳 (Z-1〜Z-5・全て未実施): `docs/f0b-reverification-plan.md`
+- G-2b 生データ: `data/rollouts/g2b_prepost.jsonl` (200 行 = pre/post × 100 入力) / G-2a 評価 provenance: `data/bitnet/_g2a_eval/eval_report_*.json`

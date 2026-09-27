@@ -122,6 +122,18 @@
   - **QUALITY_WEIGHT 0.3→0.4 決着 (ユーザー決裁・2026-07-04)**: `dollma_reward.py` を 0.4 に変更 (test 定数参照化・17緑)。
     weight 0.4 で E-2 再計算 → **reward std 0.0797→0.1038 (>0.1 PL 一次ゲート達成)** / best−worst 0.3178→0.3575。
     根拠: anatomy 7/8死 (Limbs のみ) に対し quality は OOF +0.53 の信頼軸。**両 PL 閾値 (std>0.1 ∧ best−worst>0.3) をクリア**。
+  - ★**注記 (2026-09-28 追記・記録監査): `data/rollouts/e2_quality_signal.json` の `gate.separation_maintained_or_improved: false` を「clean/clutter 分離が悪化した」と読まないこと** =
+    **被験変数が違う**。E-2 の分離指標は `scripts/dollma_e2_quality_signal.py` の `CLUTTER` 集合 =
+    **入力題材 (`input_text`) 基準**で群分けしており、出力は `baseline_clean_absmean 0.026` /
+    `baseline_clutter_absmean 0.0246` / `baseline_separation_x 0.94` → **ベースライン自体が分離していない**
+    (この 0.026 vs 0.0246 は `docs/measurements-log.md` F-0a 行が「入力意味では**分離せず**」と既に記録済みの値と一致)。
+    一方 F-0a の「**4 倍分離**」(0.0070 vs 0.0285 = 4.07x) は **生成 prompt 基準** (clean tag 列 n12 vs clutter n68)。
+    同スクリプトの `# 分離維持/改善: clutter/clean 比が baseline(4.07x) 以上か` というコメントは
+    **実際に比較している量 (入力題材基準 0.94x → 0.82x) と食い違っている**。
+    よって **F-0a の生成 prompt 基準 4x が維持されたか悪化したかは未測定・未判定**。
+    ★**Q-2 のゲート通過宣言そのものは正当** — 当時の判定基準は「std>0.1 **or** 分離維持」の選択的条件で、
+    `new_reward_std 0.1038 > 0.1` (および best−worst 0.3575>0.3) を満たしているため。Q-2 の成否は変更しない。
+    残債: 生成 prompt 基準での分離再測 (F-0a と同じ群分けで clean/clutter を作り直す) は**未起票**。
 
 ## 🎉 Q-2 quality 枝分離 — 全 Package 完了 (2026-07-04)
 

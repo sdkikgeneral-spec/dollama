@@ -583,7 +583,7 @@ frontmatter: 標準 tools / model 行なし / description は「PyTorch 訓練�
 - 担当スクリプト (実在): `scripts/train_bitnet.py` `scripts/train_scorer.py` `scripts/dollma_train_quality_mlp.py`、sweep 系 `scripts/dollma_a_seedsweep.py` `scripts/dollma_b2000_seedsweep.py` `scripts/dollma_b10k_seedsweep.py` `scripts/dollma_d_seedsweep.py` (+ `*_analyze.py`)、評価 `scripts/dollma_make_eval_diverse.py`。
 - `train_bitnet.py` の主要フラグ: `--train-file` / `--identity` / `--arch` / `--sft-rejection` / `--distill-kl` / `--distill-ext` / `--copy` / `--publish`。
 - **確定レシピ**: 入力多様化 (tags-stay-real) が既定。正典は「33M で b2000 多様化 ∧ a12k identity のまとめ焼き」。identity retention は ~0.98 が床。主指標は **diverse 生成 set-F1** (recall@10 は退役)。
-- **効果が確定した/しなかった軸** (再試行させないため): 施策 B (入力多様化) のみが diverse-F1 を頑健に上げ **~2,000 件で飽和**。施策 A は retention 専 (F1 非寄与)。施策 D (容量 33M→80M) は陰性で 80M 不採用。蒸留 4 路線 (D2/D4/D5/D6) は全て非寄与 (効果は過学習抑制のみ)。F-0b RAFT-SFT は不採用 (reward +0.017 に対し set-F1 が構造的に退行)。
+- **効果が確定した/しなかった軸** (再試行させないため): 施策 B (入力多様化) のみが diverse-F1 を頑健に上げ **~2,000 件で飽和**。施策 A は retention 専 (F1 非寄与)。施策 D (容量 33M→80M) は陰性で 80M 不採用。蒸留 4 路線 (D2/D4/D5/D6) は全て非寄与 (効果は過学習抑制のみ)。F-0b RAFT-SFT は**不採用クローズ** (2026-09-27 の記録監査で結論の強さを是正 = 「有効でないと示した」のではなく**効果を検出できなかった**。★**数値と限定をここに焼き写さないこと** — 本 doc の Global Constraints「可変値を定義に焼かない」に従いポインタのみ: CLAUDE.md 計測表 F-0b 行 / `docs/f0b-reverification-plan.md`)。
 - **正典無改変**: 実験は必ず別名。正典差し替えはユーザー決裁の「まとめ焼き」時のみ。golden 再生成は同時に行う。
 - seed sweep の作法: 4 seed paired・eval が律速 (`--eval-only` の再利用)・`_results/*.npz` 存在で冪等 skip。
 - 判断が要る設計 (規模・量子化方式・データ源) は `project-leader` に確認する。
