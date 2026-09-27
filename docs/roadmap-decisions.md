@@ -131,11 +131,17 @@ reward≈0)。ただし生成 prompt の clean vs clutter で **|r| 4倍分離**
 前提の Q-2 (quality を CLIP-embed 枝に分離・自作 QualityMLP を CLIP image embed 上で waifu 蒸留
 OOF corr+0.53・NPU 疎通・reward std 0.038→0.104 で信号ゲート通過・docs/q2-quality-branch-plan.md)
 完了後、RAFT (best-of-8→top-1→SFT) を G-1 400ペア→G-2a SFT(正典から層状)→G-2b reward前後比→
-G-3 判定で end-to-end 実装・実走。**結果=不採用**: 便益 reward +0.017 (弱・60%正・~2.4σ・SDXL
-seed 交絡・ほぼ全量 quality由来) が コスト diverse set-F1 −0.017/−0.024 (構造的・全レシピ) を
-正当化できず。正典 bitnet_dense 無改変・SFT 重み隔離保存。知見: best-of-N reward(解剖+美的) と
-gold タグ set-F1 は非整合 / anatomy ほぼ死 / SDXL seed 非再現(SAC)が比較ノイズ源 / 日本語空条件。
-パイプライン再利用可。次レバー = reward設計 / 日本語条件付け改修 / seed制御。
+G-3 判定で end-to-end 実装・実走。**結果=不採用 (効果を検出できなかった)**: 便益 reward +0.017
+(60%正・ほぼ全量 quality由来) が コスト diverse set-F1 −0.0174/−0.0241 を正当化できず。
+正典 bitnet_dense 無改変・SFT 重み隔離保存 (この処置は妥当・変更なし)。
+⚠️ **2026-09-28 是正 (記録監査 2026-09-27 BLOCK)**: 旧記載の「~2.4σ」と set-F1 退行の「構造的・全レシピ」
+は撤回。① reward Δ は疑似反復 (日本語 54 件が同一プロンプトの複製) 込みの naive t≈2.40 で、クラスタ補正
+再解析では **t=0.955・95%CI [−0.0115,+0.0348] (0 を含む) = 有意でない**。② set-F1 退行は**同一 seed
+20260620 の全レシピで符号が揃っただけ**で seed 間分散は未測定 (施策 D が seed ノイズと断じた −0.0240 と同値)。
+③ 棄却の射程は「anatomy 死軸の現 reward 設計・単一 seed・検出力不足での不検出」で手法一般の否定ではない。
+知見: 「reward(解剖+美的) と gold タグ set-F1 は非整合」は仮説 / anatomy ほぼ死 (8軸中5軸は非 argmax) /
+SDXL seed 非再現(SAC)が比較ノイズ源 / 日本語空条件。パイプライン再利用可。
+次レバー = reward設計 / 日本語条件付け改修 / seed制御。再検証台帳 = `docs/f0b-reverification-plan.md` (Z-1〜Z-5 未実施)。
 
 ---
 

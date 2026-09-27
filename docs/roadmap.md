@@ -316,10 +316,11 @@ authored 層 (character.hpp) は完了、以下は learned 層・後処理段。
 | **D** 容量増 | 33M→80M。**陰性確定・80M 不採用** (F1 seed ノイズ・retention 床割れ・勝者=33M) | ✅ クローズ (training-spec §16) |
 | **F** 品質ループ | B スコアラ→SDXL 画像→採点→報酬で LM fine-tune。recall でなく「良い絵を生む」方向へ | 🔄 進行 (F-0a/F-0b 下記) |
 | **F-0a** 信号ゲート | reward 収集 80/80 → **判定 = 信号弱** (std 0.038 / best−worst 0.203)。clean vs clutter で \|r\| 4倍分離 = 弱いが本物の勾配 | ✅ 実走・判定済 (roadmap-decisions) |
-| **F-0b** SFT | RAFT best-of-8→SFT を end-to-end 実走 → **不採用クローズ** (reward +0.017 が set-F1 −0.02 を正当化できず・正典無改変) | ✅ 不採用クローズ (f0b-rejection-sft-plan.md) |
+| **F-0b** SFT | RAFT best-of-8→SFT を end-to-end 実走 → **効果を検出できず不採用クローズ** (reward Δ+0.017 は疑似反復補正後 **有意でない** = 監査 2026-09-27 再解析 t=0.955・95%CI 0 を含む / set-F1 −0.0174/−0.0241 は**同一 seed 20260620 のみ**・seed 間分散未測定で seed noise 帯と識別不能 / 正典無改変)。**棄却は「anatomy 死軸の現 reward 設計・単一 seed・検出力不足」条件下の不検出であり手法一般の否定ではない** | ✅ クローズ (f0b-rejection-sft-plan.md)・再検証台帳 Z-1〜Z-5 は**未実施** (f0b-reverification-plan.md) |
 
 **C と F は同じ軸の両端**: C = より良いオフライン proxy、F = 本物のオンライン信号。背骨は**物差しを
 proxy→実品質へ動かすこと**。**次レバー** (F-0b 後): reward 設計 / 日本語条件付け改修 / seed 制御。
+**F-0b の再検証** (手続き不備の是正・採用に仕向ける作業ではない) は `docs/f0b-reverification-plan.md` Z-1〜Z-5 (全 🔲 未)。
 **着手は CLAUDE.md ルール** (プランモード設計→承認→PL 振り分け)。
 
 ---
