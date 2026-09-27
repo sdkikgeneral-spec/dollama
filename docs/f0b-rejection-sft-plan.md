@@ -101,6 +101,7 @@
   - set-F1 前後: in-dist 0.4552→0.4570(+) / **diverse_a 0.3332→0.3158(−0.0174)** / **diverse_b 0.3804→0.3563(−0.0241)** / retention 0.9807→0.9784(−0.002)。
   - ⚠️ **「構造的 (チューニングノイズでない)」は撤回 (2026-09-28 是正・監査 2026-09-27 指摘)** → **同一 seed 内の全レシピ (本採用 + lr×ep sweep 4 条件) で退行の符号が揃った。ただし seed 間分散は未測定のため、seed noise 帯との識別はできていない。**
     - 一次証拠 (seed 未制御): `data/bitnet/_g2a_eval/eval_report_{canon_g2a,sft_g2a,cand_lr5e-6_ep1,cand_lr5e-6_ep2,cand_lr1e-5_ep1,cand_lr1e-5_ep2}.json` の provenance は **6 本すべて `"seed": 20260620`** (`scripts/train_bitnet.py` の `--seed` 既定も 20260620)。SFT アームの seed 変動走行はゼロ。
+    - ★**訓練 seed の一次証拠を追加 (2026-09-28・監査 軽微2)**: 上の eval_report が示すのは**評価時の seed**。**SFT 訓練そのものの seed** は `data/bitnet/train_stats_sft.json` の先頭 `"seed": 20260620` に記録されている (同ファイル `"mode": "sft_rejection"`・`hyperparams` = epochs 3 / batch_size 32 / lr 2e-05 / max_len 64 / loss_mode tags・`data.train` 400 / `data.val` 500・`model.params` 32,976,896)。被験変数としては訓練 seed と評価 seed は別物なので、「訓練が単一 seed」の根拠は `train_stats_sft.json` を正とする。
     - **既存の判定基準との並置**: 施策 D (容量増 33M→80M) は diverse_a F1 の per-seed delta 最大幅 **−0.0240** を「seed ノイズ」と断じている (`docs/measurements-log.md` Phase 4-D 行)。F-0b の退行幅 (−0.0174 / −0.0241) は**これとほぼ同値**であり、単一 seed の観測では seed noise 帯と区別できない。
   - 退行の**仮説** (未検証): best-of-N の reward(解剖+美的) と gold タグ set-F1 は非整合・日本語184空条件も同方向。
   - **論点**: F の狙いは元々「recall でなく良い絵へ学習軸を移す」= set-F1 卒業。set-F1 軽微退行は F 思想そのものとも言える。判定には reward 前後比 (G-2b) が必須。
@@ -108,6 +109,9 @@
   - reward mean pre −0.2974 → post −0.2803・**Δ mean +0.017 / median +0.013 / 正60%**。
   - ⚠️ **「~2.4σ」「弱い正」は撤回 (2026-09-28 是正・監査 2026-09-27 指摘)** → **有意差を検出できなかった (検出力不足)**。
     - 100 件を独立標本として扱った naive t≈2.40 は**疑似反復によるアーティファクト**。監査 (2026-09-27) によるクラスタ補正の再解析では **t=0.955・95%CI [−0.0115, +0.0348] = 0 を含む** = 有意でない。
+    - ★**推定量の明記 (2026-09-28 追記・監査 中①)**: 上記 t=0.955 の推定量は **「同一プロンプトを 1 観測に集約した unweighted cluster-mean の 1 標本 t 検定 (G=47)」** (cluster mean Δ +0.0114 / se 0.0119)。**「クラスタ補正」という語だけでは推定量が一意に定まらず、別の補正だと結論が逆になる**: 同じ 200 行に **cluster-robust sandwich (CR0/CR1・G=47)** を当てると **t=2.76 / 2.73** で「有意」側に出る (ja 54 件の複製が within-cluster 分散ほぼ 0 ゆえ「高精度」と評価される = 疑似反復をそのまま情報量に数える推定量)。
+    - ★**最も反論されにくい一次根拠 = en のみ 46 件** (uniq prompt 46 = 真に独立・疑似反復ゼロ): **Δ mean +0.0112 / t=0.915 / 95%CI [−0.0134, +0.0357] (0 を含む)**。ja を落としても「有意でない」は変わらない。
+    - 本セッション (2026-09-28) に `data/rollouts/g2b_prepost.jsonl` 200 行から独立再計算した 4 値: **naive t=2.4025 / cluster-mean t=0.9549 / CR sandwich t=2.7592 (CR0) ・2.7297 (CR1) / en46 t=0.9154**。Z-2 の出口では**推定量を明示して 3 通り (naive / cluster-mean / CR sandwich) を並べる**こと。
     - 疑似反復の一次証拠: `data/rollouts/g2b_prepost.jsonl` の `lang=ja` 54 件は、pre/post いずれのアームでも `prompt` の uniq 数が **1** (en は 46 件で uniq 46)。つまり ja 分は「同一プロンプト 1 組を SDXL seed だけ変えて 54 回複製した」標本。
     - 機構 (既知性質・F-0b 起因ではない): **日本語入力は `encode_text_greedy` が英数字タグしか拾わず空条件化し、greedy 生成が同一プロンプトへ収束する** (本 doc「確定パラメータ」節の「既知の制約」・[[project_expression_fidelity_gap]])。
   - Δ 内訳: **ほぼ全量 quality 由来** (quality +0.0155 / anatomy +0.0016)。en +0.011 / ja +0.022。
@@ -121,8 +125,8 @@
 **結論**: RAFT-SFT (best-of-N→top-1→SFT) を end-to-end で実装・実走・評価。**パイプラインは検証済み・再利用可能**。**この 1 走行では出荷に値する効果を検出できなかったため不採用でクローズした**。
 - ⚠️ **棄却されたのは「RAFT-SFT という手法」ではない** (2026-09-28 是正)。棄却されたのは
   **「anatomy 軸が死んだ現行 reward 設計・単一 seed (20260620)・検出力不足という条件下で、M=400 の RAFT-SFT の効果を検出できなかった」**という一点。手法自体の一般的な無効性は示していない。
-  - 報酬の実効寄与は **quality 軸に支配されている**: Δ 内訳 quality +0.0155 / anatomy +0.0016 (= Δ の 9 割超が quality 由来)・監査 (2026-09-27) の再計算では anatomy の寄与率 **7.5%**。
-  - 一次証拠 (anatomy の分解能): `data/rollouts/g2b_prepost.jsonl` 200 行の `axes` argmax は Limbs 148 / Hands 35 / Head 17 = **8 軸のうち 5 軸は一度も argmax にならない** (F-0a の「7 死軸」と同型)。
+  - 報酬の実効寄与は **quality 軸に支配されている**: Δ 内訳 quality **+0.015494** / anatomy **+0.001586** (合計 +0.017081 = Δ mean と一致) = **Δ の 9 割超が quality 由来 (Δ 基準で quality 90.7% / anatomy 9.3%)**。★**「anatomy 寄与率 7.5%」は定義未記載のまま引用した値で独立再現できていない (2026-09-28 是正・監査 中③)**: Δ 基準なら 9.29%・水準基準 (200 行の平均絶対寄与 anatomy 0.003253 / quality 0.285610) なら 1.13% で、**7.5% はどちらの定義でも再現しない → 寄与率の定義を決めて再計算するのは Z-1 の宿題**。主表現は「Δ の 9 割超が quality」を使う。
+  - 一次証拠 (anatomy の分解能): `data/rollouts/g2b_prepost.jsonl` 200 行の `axes` argmax は Limbs 148 / Hands 35 / Head 17 = **8 軸のうち 5 軸は一度も argmax にならない**。★**F-0a の「7 死軸」と同じ物差し (軸別 max 値 < 0.012) を当てると死軸は 7 本** (2026-09-28 追記・監査 中②): Limbs **0.09347** のみ生存で Hands 0.00141 / Head 0.00993 / Eyes 0.00154 / Ears 0.00173 / Mouth 0.00117 / Digits 0.00164 / GlobalAnatomy 0.00150。**Hands は argmax を 35 回取るが max 0.00141 = 他軸がさらに小さいだけで死んでいる**。argmax 分布 (3 軸が立つ) と dynamic range (1 軸だけ生存) は別の物差しなので混ぜて数えないこと。
   - **処置面は変更なし**: 正典無改変・SFT 重み隔離は不採用判定下で妥当。
 - G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017・有意性未確立)・G-3 不採用。
 - **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
