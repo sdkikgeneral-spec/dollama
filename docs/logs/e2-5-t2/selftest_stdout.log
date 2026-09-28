@@ -1,0 +1,25 @@
+[selftest] PASS clamp01 下限クランプ
+[selftest] PASS clamp01 上限クランプ
+[selftest] PASS clamp01 中間は無変化
+[selftest] PASS logit(0.5) == 0
+[selftest] PASS logit(0.0) は下限クランプ後の値と一致
+[selftest] PASS logit(1.0) は上限クランプ後の値と一致
+[selftest] PASS soft_recall (OOV=0.0 混入・全語平均)
+[selftest] PASS soft_recall_iv (語彙内語のみ平均)
+[selftest] PASS soft_recall_logit (語彙内語の logit 平均)
+[selftest] PASS n_oov == 1
+[selftest] PASS oov_words == 'not_in_vocab_word'
+[selftest] PASS 全語彙外で soft_recall == 0.0
+[selftest] PASS 全語彙外で soft_recall_iv is None
+[selftest] PASS 全語彙外で soft_recall_logit is None
+[selftest] PASS 全語彙外で n_oov == 2
+[selftest] PASS vocab_coverage は prompt_id をキーに list を返す
+[selftest] PASS vocab_coverage は語彙外語のみ列挙
+[selftest] PASS vocab_coverage は語彙内語を含めない
+[selftest] PASS parse_grid_csv 行数一致
+[selftest] PASS parse_grid_csv は文字列値の dict を返す (csv.DictReader 契約)
+[selftest] PASS parse_grid_csv 2行目 (無効行) log_ok='False'
+[selftest] PASS rescore_row: png 不在行は recall=None
+[selftest] PASS rescore_row: png 不在行は soft_recall=None
+[selftest] PASS _floats_from_rows は空/None を除外
+[selftest] ALL PASS

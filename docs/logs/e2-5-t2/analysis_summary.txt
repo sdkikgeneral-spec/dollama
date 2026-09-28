@@ -1,0 +1,25 @@
+=== distinct 観測値数 (16走行中) ===
+recall             n_valid=16 distinct=5 min_step=0.0111
+soft_recall        n_valid=16 distinct=16 min_step=0.0006
+soft_recall_iv     n_valid=16 distinct=16 min_step=0.0047
+soft_recall_logit  n_valid=16 distinct=16 min_step=0.0058
+
+=== OOV (語彙カバレッジ) ===
+p1: n_oov=1 oov_words='silver hair' recall_total=10
+p2: n_oov=0 oov_words='' recall_total=9
+p3: n_oov=1 oov_words='dynamic pose' recall_total=10
+p4: n_oov=0 oov_words='' recall_total=10
+
+=== per-prompt seed std (参照アーム分散帯) ===
+recall             per-prompt std=[0.0577, 0.0555, 0.0577, 0.1155] mean_std=0.0716
+soft_recall        per-prompt std=[0.0643, 0.0757, 0.0551, 0.1039] mean_std=0.0748
+soft_recall_iv     per-prompt std=[0.0715, 0.0757, 0.0612, 0.1039] mean_std=0.0781
+soft_recall_logit  per-prompt std=[0.5319, 0.684, 0.598, 0.7582] mean_std=0.6431
+
+=== SNR = (1/N_words_of_prompt) / std_seed  ※recall/soft_recall/soft_recall_iv のみ(同一[0,1]スケール) ===
+recall             per-prompt SNR=[1.732, 2.0, 1.732, 0.866] mean_SNR=1.5826
+soft_recall        per-prompt SNR=[1.555, 1.467, 1.816, 0.962] mean_SNR=1.4500
+soft_recall_iv     per-prompt SNR=[1.399, 1.467, 1.635, 0.962] mean_SNR=1.3659
+
+=== soft_recall_logit (別スケール・参考値のみ) ===
+std per prompt(logit単位)=[0.5319, 0.684, 0.598, 0.7582] mean=0.6431

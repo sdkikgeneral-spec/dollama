@@ -195,6 +195,97 @@ def mean_std(values):
 
 
 # ============================================================
+# E-2.5 T1: 連続値指標 (WD14 生確信度の soft recall)
+# ============================================================
+_LOGIT_EPS = 1e-6
+
+
+def clamp01(p, eps=_LOGIT_EPS):
+    """p を [eps, 1-eps] にクランプする (sigmoid 飽和域の log(0)/log(inf) 回避)。"""
+    if p < eps:
+        return eps
+    if p > 1.0 - eps:
+        return 1.0 - eps
+    return p
+
+
+def logit(p, eps=_LOGIT_EPS):
+    """クランプ済み確信度の logit (= log(p/(1-p)))。"""
+    import math
+    p = clamp01(p, eps)
+    return math.log(p / (1.0 - p))
+
+
+def soft_recall_metrics(words, name_to_prob, vocab_names):
+    """words (参照語・空白区切り) の WD14 生確信度による連続値指標をまとめて返す。
+
+    - soft_recall: 語彙外語を 0.0 として含めた全語平均 (recall と同じ分母で量子化を除去)。
+    - soft_recall_iv: 語彙内語のみの平均 (語彙外語による定数希釈を除いた版)。
+    - soft_recall_logit: 語彙内語の logit 平均 (sigmoid 飽和域の圧縮を回避)。
+    - n_oov / oov_words: 語彙外語の数と列挙 (";" 区切り)。
+
+    語彙内語が 1 つも無い場合、soft_recall_iv / soft_recall_logit は None を返す
+    (soft_recall は 語彙外語のみ分でも算出可能 = 0.0 になる)。
+    """
+    total = len(words)
+    probs_all = []
+    probs_iv = []
+    logits_iv = []
+    oov_words = []
+    for w in words:
+        tag = word_to_tag(w)
+        if tag in vocab_names:
+            p = float(name_to_prob.get(tag, 0.0))
+            probs_all.append(p)
+            probs_iv.append(p)
+            logits_iv.append(logit(p))
+        else:
+            probs_all.append(0.0)
+            oov_words.append(w)
+    soft_recall = (sum(probs_all) / total) if total else None
+    soft_recall_iv = (sum(probs_iv) / len(probs_iv)) if probs_iv else None
+    soft_recall_logit = (sum(logits_iv) / len(logits_iv)) if logits_iv else None
+    return {
+        "soft_recall": soft_recall,
+        "soft_recall_iv": soft_recall_iv,
+        "soft_recall_logit": soft_recall_logit,
+        "n_oov": len(oov_words),
+        "oov_words": ";".join(oov_words),
+    }
+
+
+def vocab_coverage(prompt_ids, vocab_names):
+    """prompt_ids (PROMPTS のキー) それぞれの参照語のうち語彙外の語を一覧する。"""
+    report = {}
+    for pid in prompt_ids:
+        words = PROMPTS[pid]["words"]
+        report[pid] = [w for w in words if word_to_tag(w) not in vocab_names]
+    return report
+
+
+def print_vocab_coverage(prompt_ids, vocab_names):
+    """語彙カバレッジ診断を標準出力する (現行 recall が 0.7/0.8 で張り付く理由の手がかり)。"""
+    report = vocab_coverage(prompt_ids, vocab_names)
+    total_words = sum(len(PROMPTS[pid]["words"]) for pid in prompt_ids)
+    total_oov = sum(len(v) for v in report.values())
+    print(f"[eval] 語彙カバレッジ診断: 総語数={total_words} 語彙外={total_oov}")
+    for pid, oov in report.items():
+        if oov:
+            print(f"[eval]   {pid}: OOV={oov}")
+        else:
+            print(f"[eval]   {pid}: OOV なし")
+    return report
+
+
+def parse_grid_csv(csv_path):
+    """既存 grid_results.csv (csv.DictReader そのまま) を読む純ヘルパ (--rescore-dir 用)。"""
+    with open(csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    return rows
+
+
+# ============================================================
 # 実走部 (--run でのみ呼ばれる。重い import は関数内に隔離)
 # ============================================================
 def _assets_status(args):
@@ -354,9 +445,13 @@ def run_on_research_machine(args):
     # --- OV モデルをロード (grid 全体で 1 回だけ・per-image reload しない) ---
     core = ov.Core()
     wd14_names, wd14_cats = load_wd14_tags(WD14_TAGS_CSV)
+    vocab_names = set(n for n, c in zip(wd14_names, wd14_cats) if c != 9)
     wd14_model = core.compile_model(core.read_model(WD14_XML), args.wd14_device)
     scorer_model = core.compile_model(core.read_model(SCORER_IR), args.scorer_device)
     print(f"[eval] WD14({args.wd14_device})/ScorerNet({args.scorer_device}) ロード完了")
+
+    # E-2.5 T1: 語彙カバレッジ診断 (soft recall 導入の手がかり・OV ロード後・生成前に出す)
+    print_vocab_coverage(args.prompts, vocab_names)
 
     seeds = list(range(args.seed_base, args.seed_base + args.seeds))
     grid = build_grid(args.presets, args.prompts, seeds, args.cfg_values)
@@ -385,6 +480,8 @@ def run_on_research_machine(args):
             n_bad += 1
             row.update({
                 "recall_matched": None, "recall_total": None, "recall": None,
+                "soft_recall": None, "soft_recall_iv": None, "soft_recall_logit": None,
+                "n_oov": None, "oov_words": "",
                 **{f"axis_{a}": None for a in AXIS_NAMES}, "argmax_axis": None,
                 "worst_anatomy": None,
             })
@@ -400,6 +497,11 @@ def run_on_research_machine(args):
                      if wd14_cats[j] != 9 and float(out[j]) >= args.wd14_thresh]
         matched, total, recall = compute_recall(cond["words"], hit_names)
 
+        # E-2.5 T1: 連続値指標 (WD14 生確信度の soft recall・量子化を除いた版)
+        name_to_prob = {wd14_names[j]: float(out[j])
+                         for j in range(len(out)) if wd14_cats[j] != 9}
+        soft = soft_recall_metrics(cond["words"], name_to_prob, vocab_names)
+
         # ScorerNet anatomy 8 軸
         sx = preprocess_for_scorer(out_png)
         logits = scorer_model(sx)[scorer_model.output(0)][0]
@@ -409,6 +511,10 @@ def run_on_research_machine(args):
 
         row.update({
             "recall_matched": matched, "recall_total": total, "recall": round(recall, 4),
+            "soft_recall": round(soft["soft_recall"], 4) if soft["soft_recall"] is not None else None,
+            "soft_recall_iv": round(soft["soft_recall_iv"], 4) if soft["soft_recall_iv"] is not None else None,
+            "soft_recall_logit": round(soft["soft_recall_logit"], 4) if soft["soft_recall_logit"] is not None else None,
+            "n_oov": soft["n_oov"], "oov_words": soft["oov_words"],
             **{f"axis_{a}": round(axes[k], 4) for k, a in enumerate(AXIS_NAMES)},
             "argmax_axis": argmax_axis, "worst_anatomy": round(worst, 4),
         })
@@ -432,7 +538,8 @@ def run_on_research_machine(args):
     # --- CSV 出力 (生データ) ---
     csv_path = os.path.join(args.out_dir, "grid_results.csv")
     fieldnames = (["preset", "prompt_id", "seed", "cfg", "sec", "exit", "log_ok", "log_reason",
-                    "png", "recall_matched", "recall_total", "recall"]
+                    "png", "recall_matched", "recall_total", "recall",
+                    "soft_recall", "soft_recall_iv", "soft_recall_logit", "n_oov", "oov_words"]
                   + [f"axis_{a}" for a in AXIS_NAMES] + ["argmax_axis", "worst_anatomy"])
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -444,6 +551,9 @@ def run_on_research_machine(args):
     # --- 集計 CSV (条件ごと 平均±std・秒は characterization のみ明記) ---
     agg_path = os.path.join(args.out_dir, "grid_summary.csv")
     agg_fields = ["preset", "prompt_id", "cfg", "n", "n_valid", "recall_mean", "recall_std",
+                  "soft_recall_mean", "soft_recall_std",
+                  "soft_recall_iv_mean", "soft_recall_iv_std",
+                  "soft_recall_logit_mean", "soft_recall_logit_std",
                   "worst_anatomy_mean", "worst_anatomy_std",
                   "sec_mean_characterization_only", "sec_std_characterization_only"]
     with open(agg_path, "w", newline="", encoding="utf-8") as f:
@@ -456,6 +566,12 @@ def run_on_research_machine(args):
                            and r["cfg"] == cfg]
                     valid = [r for r in sub if r["recall"] is not None]
                     rmean, rstd = mean_std([r["recall"] for r in valid])
+                    smean_s, sstd_s = mean_std(
+                        [r["soft_recall"] for r in valid if r["soft_recall"] is not None])
+                    siv_mean, siv_std = mean_std(
+                        [r["soft_recall_iv"] for r in valid if r["soft_recall_iv"] is not None])
+                    sl_mean, sl_std = mean_std(
+                        [r["soft_recall_logit"] for r in valid if r["soft_recall_logit"] is not None])
                     wmean, wstd = mean_std([r["worst_anatomy"] for r in valid])
                     smean, sstd = mean_std([r["sec"] for r in sub])
                     w.writerow({
@@ -463,6 +579,12 @@ def run_on_research_machine(args):
                         "n": len(sub), "n_valid": len(valid),
                         "recall_mean": round(rmean, 4) if rmean is not None else None,
                         "recall_std": round(rstd, 4) if rstd is not None else None,
+                        "soft_recall_mean": round(smean_s, 4) if smean_s is not None else None,
+                        "soft_recall_std": round(sstd_s, 4) if sstd_s is not None else None,
+                        "soft_recall_iv_mean": round(siv_mean, 4) if siv_mean is not None else None,
+                        "soft_recall_iv_std": round(siv_std, 4) if siv_std is not None else None,
+                        "soft_recall_logit_mean": round(sl_mean, 4) if sl_mean is not None else None,
+                        "soft_recall_logit_std": round(sl_std, 4) if sl_std is not None else None,
                         "worst_anatomy_mean": round(wmean, 4) if wmean is not None else None,
                         "worst_anatomy_std": round(wstd, 4) if wstd is not None else None,
                         "sec_mean_characterization_only": round(smean, 2) if smean is not None else None,
@@ -501,6 +623,248 @@ def run_on_research_machine(args):
     print(f"[eval] exe_sha256={snap_before['exe']} integrity_ok={integrity_ok}")
 
 
+# ============================================================
+# E-2.5 T1: --rescore-dir (SDXL 生成を呼ばず既存 CSV+PNG を再採点する)
+# ============================================================
+def rescore_row(row, wd14_model, wd14_names, wd14_cats, vocab_names, wd14_thresh, root):
+    """既存 grid_results.csv の1行 + PNG から recall 系 (旧 + soft) を再計算する。
+
+    row は文字列値の dict (csv.DictReader 出力) を想定。元の row をコピーし、
+    recall 系列を再計算した値で上書きした dict を返す (他の列はそのまま保持)。
+    """
+    out_row = dict(row)
+    png_rel = row.get("png", "") or ""
+    log_ok = str(row.get("log_ok", "")).strip() in ("True", "true", "1")
+    png_path = os.path.join(root, png_rel) if png_rel else ""
+
+    if not log_ok or not png_rel or not os.path.isfile(png_path):
+        out_row.update({
+            "recall_matched": None, "recall_total": None, "recall": None,
+            "soft_recall": None, "soft_recall_iv": None, "soft_recall_logit": None,
+            "n_oov": None, "oov_words": "",
+        })
+        return out_row
+
+    pid = row["prompt_id"]
+    cond = PROMPTS[pid]
+    x = preprocess_wd14(png_path)
+    out = wd14_model(x)[wd14_model.output(0)][0]
+    hit_names = [wd14_names[j] for j in range(len(out))
+                 if wd14_cats[j] != 9 and float(out[j]) >= wd14_thresh]
+    matched, total, recall = compute_recall(cond["words"], hit_names)
+    name_to_prob = {wd14_names[j]: float(out[j]) for j in range(len(out)) if wd14_cats[j] != 9}
+    soft = soft_recall_metrics(cond["words"], name_to_prob, vocab_names)
+
+    out_row.update({
+        "recall_matched": matched, "recall_total": total, "recall": round(recall, 4),
+        "soft_recall": round(soft["soft_recall"], 4) if soft["soft_recall"] is not None else None,
+        "soft_recall_iv": round(soft["soft_recall_iv"], 4) if soft["soft_recall_iv"] is not None else None,
+        "soft_recall_logit": round(soft["soft_recall_logit"], 4) if soft["soft_recall_logit"] is not None else None,
+        "n_oov": soft["n_oov"], "oov_words": soft["oov_words"],
+    })
+    return out_row
+
+
+def _floats_from_rows(rows, key):
+    """rows の key 列 (文字列 or None) から float リストを取り出す (空/None/変換不能は捨てる)。"""
+    vals = []
+    for r in rows:
+        v = r.get(key)
+        if v is None or v == "":
+            continue
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            continue
+    return vals
+
+
+def run_rescore(args):
+    """既存 grid_results.csv + PNG 群を SDXL 生成なしで再採点する (`--rescore-dir` モード)。
+
+    exe 不要・dollama.exe は一切呼ばない。WD14 (OV) のみロードして全指標を再計算し、
+    `grid_results_rescored.csv` / `grid_summary_rescored.csv` を出力する。
+    """
+    import openvino as ov
+
+    src_csv = os.path.join(args.rescore_dir, "grid_results.csv")
+    if not os.path.isfile(src_csv):
+        print(f"[rescore] [SKIP] 入力 CSV が無い: {src_csv}")
+        return
+
+    rows = parse_grid_csv(src_csv)
+    print(f"[rescore] 入力行数: {len(rows)} ({src_csv})")
+    if not rows:
+        print("[rescore] [SKIP] 入力 CSV が空")
+        return
+
+    wd14_names, wd14_cats = load_wd14_tags(WD14_TAGS_CSV)
+    vocab_names = set(n for n, c in zip(wd14_names, wd14_cats) if c != 9)
+    core = ov.Core()
+    wd14_model = core.compile_model(core.read_model(WD14_XML), args.wd14_device)
+    print(f"[rescore] WD14({args.wd14_device}) ロード完了")
+
+    prompt_ids_present = sorted(set(r["prompt_id"] for r in rows))
+    print_vocab_coverage(prompt_ids_present, vocab_names)
+
+    out_rows = []
+    for i, row in enumerate(rows):
+        out_rows.append(rescore_row(row, wd14_model, wd14_names, wd14_cats, vocab_names,
+                                     args.wd14_thresh, ROOT))
+        if (i + 1) % 20 == 0 or (i + 1) == len(rows):
+            print(f"[rescore] {i + 1}/{len(rows)}")
+
+    out_fieldnames = list(rows[0].keys())
+    for extra in ["soft_recall", "soft_recall_iv", "soft_recall_logit", "n_oov", "oov_words"]:
+        if extra not in out_fieldnames:
+            out_fieldnames.append(extra)
+
+    out_csv = os.path.join(args.rescore_dir, "grid_results_rescored.csv")
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=out_fieldnames)
+        w.writeheader()
+        for r in out_rows:
+            w.writerow(r)
+    print(f"[rescore] CSV (生データ 再計算): {out_csv}")
+
+    # --- 集計 (既存 --run 経路と同じ mean_std を再利用) ---
+    presets = sorted(set(r["preset"] for r in out_rows))
+    prompt_ids = sorted(set(r["prompt_id"] for r in out_rows))
+    cfgs = sorted(set(r["cfg"] for r in out_rows), key=lambda v: float(v))
+
+    agg_fields = ["preset", "prompt_id", "cfg", "n", "n_valid",
+                  "recall_mean", "recall_std",
+                  "soft_recall_mean", "soft_recall_std",
+                  "soft_recall_iv_mean", "soft_recall_iv_std",
+                  "soft_recall_logit_mean", "soft_recall_logit_std"]
+    agg_csv = os.path.join(args.rescore_dir, "grid_summary_rescored.csv")
+    with open(agg_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=agg_fields)
+        w.writeheader()
+        for preset in presets:
+            for pid in prompt_ids:
+                for cfg in cfgs:
+                    sub = [r for r in out_rows if r["preset"] == preset
+                           and r["prompt_id"] == pid and r["cfg"] == cfg]
+                    valid = [r for r in sub if r.get("recall") not in (None, "")]
+                    rmean, rstd = mean_std(_floats_from_rows(sub, "recall"))
+                    smean, sstd = mean_std(_floats_from_rows(sub, "soft_recall"))
+                    simean, sistd = mean_std(_floats_from_rows(sub, "soft_recall_iv"))
+                    slmean, slstd = mean_std(_floats_from_rows(sub, "soft_recall_logit"))
+                    w.writerow({
+                        "preset": preset, "prompt_id": pid, "cfg": cfg,
+                        "n": len(sub), "n_valid": len(valid),
+                        "recall_mean": round(rmean, 4) if rmean is not None else None,
+                        "recall_std": round(rstd, 4) if rstd is not None else None,
+                        "soft_recall_mean": round(smean, 4) if smean is not None else None,
+                        "soft_recall_std": round(sstd, 4) if sstd is not None else None,
+                        "soft_recall_iv_mean": round(simean, 4) if simean is not None else None,
+                        "soft_recall_iv_std": round(sistd, 4) if sistd is not None else None,
+                        "soft_recall_logit_mean": round(slmean, 4) if slmean is not None else None,
+                        "soft_recall_logit_std": round(slstd, 4) if slstd is not None else None,
+                    })
+    print(f"[rescore] CSV (集計 平均±std 再計算): {agg_csv}")
+    print(f"[rescore] 完了: {len(out_rows)} 行 → {args.rescore_dir}")
+
+
+# ============================================================
+# E-2.5 T1: --selftest (OV・PNG・exe 非依存の純ヘルパ検査)
+# ============================================================
+def run_selftest():
+    """純ヘルパの算術・境界値・CSV パースを合成 fixture で検査する。
+
+    OpenVINO / PNG / dollama.exe に一切依存しないため開発機・研究機どちらでも実行可能。
+    全 assert 通過で True、1 つでも失敗すれば False を返す (失敗一覧を標準出力へ列挙)。
+    """
+    import math
+    import tempfile
+
+    failures = []
+
+    def check(name, cond):
+        if cond:
+            print(f"[selftest] PASS {name}")
+        else:
+            failures.append(name)
+            print(f"[selftest] FAIL {name}")
+
+    # --- clamp01 / logit 境界値 ---
+    check("clamp01 下限クランプ", clamp01(0.0) == _LOGIT_EPS)
+    check("clamp01 上限クランプ", clamp01(1.0) == 1.0 - _LOGIT_EPS)
+    check("clamp01 中間は無変化", abs(clamp01(0.5) - 0.5) < 1e-12)
+    check("logit(0.5) == 0", abs(logit(0.5)) < 1e-9)
+    expected_lo = math.log(_LOGIT_EPS / (1.0 - _LOGIT_EPS))
+    check("logit(0.0) は下限クランプ後の値と一致", abs(logit(0.0) - expected_lo) < 1e-9)
+    expected_hi = math.log((1.0 - _LOGIT_EPS) / _LOGIT_EPS)
+    check("logit(1.0) は上限クランプ後の値と一致", abs(logit(1.0) - expected_hi) < 1e-9)
+
+    # --- soft_recall_metrics 算術 (語彙内/語彙外 混在) ---
+    vocab = {"1girl", "solo", "standing", "blue_eyes"}
+    name_to_prob = {"1girl": 0.9, "solo": 0.1, "standing": 0.0}
+    words = ["1girl", "solo", "standing", "not_in_vocab_word"]
+    m = soft_recall_metrics(words, name_to_prob, vocab)
+    check("soft_recall (OOV=0.0 混入・全語平均)",
+          abs(m["soft_recall"] - ((0.9 + 0.1 + 0.0 + 0.0) / 4)) < 1e-9)
+    check("soft_recall_iv (語彙内語のみ平均)",
+          abs(m["soft_recall_iv"] - ((0.9 + 0.1 + 0.0) / 3)) < 1e-9)
+    expected_logit_mean = (logit(0.9) + logit(0.1) + logit(0.0)) / 3
+    check("soft_recall_logit (語彙内語の logit 平均)",
+          abs(m["soft_recall_logit"] - expected_logit_mean) < 1e-9)
+    check("n_oov == 1", m["n_oov"] == 1)
+    check("oov_words == 'not_in_vocab_word'", m["oov_words"] == "not_in_vocab_word")
+
+    # --- 語彙内語が 1 つも無いケース (iv/logit は None・soft_recall は 0.0) ---
+    m2 = soft_recall_metrics(["ghost_word", "another_ghost"], {}, vocab)
+    check("全語彙外で soft_recall == 0.0", m2["soft_recall"] == 0.0)
+    check("全語彙外で soft_recall_iv is None", m2["soft_recall_iv"] is None)
+    check("全語彙外で soft_recall_logit is None", m2["soft_recall_logit"] is None)
+    check("全語彙外で n_oov == 2", m2["n_oov"] == 2)
+
+    # --- 語彙カバレッジ診断 ---
+    small_vocab = {"1girl", "solo", "standing", "full_body"}
+    cov = vocab_coverage(["p1"], small_vocab)
+    check("vocab_coverage は prompt_id をキーに list を返す", isinstance(cov["p1"], list))
+    check("vocab_coverage は語彙外語のみ列挙", "silver hair" in cov["p1"])
+    check("vocab_coverage は語彙内語を含めない", "solo" not in cov["p1"])
+
+    # --- rescore の CSV パース (合成 fixture) ---
+    with tempfile.TemporaryDirectory() as td:
+        csv_path = os.path.join(td, "grid_results.csv")
+        fieldnames = ["preset", "prompt_id", "seed", "cfg", "sec", "exit", "log_ok",
+                      "log_reason", "png", "recall_matched", "recall_total", "recall"]
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerow({"preset": "illustrious-xl", "prompt_id": "p1", "seed": 1000, "cfg": 0.0,
+                        "sec": 1.0, "exit": 0, "log_ok": "True", "log_reason": "", "png": "",
+                        "recall_matched": 5, "recall_total": 10, "recall": 0.5})
+            w.writerow({"preset": "illustrious-xl", "prompt_id": "p1", "seed": 1001, "cfg": 0.0,
+                        "sec": 1.0, "exit": 1, "log_ok": "False", "log_reason": "bad", "png": "",
+                        "recall_matched": "", "recall_total": "", "recall": ""})
+        parsed = parse_grid_csv(csv_path)
+        check("parse_grid_csv 行数一致", len(parsed) == 2)
+        check("parse_grid_csv は文字列値の dict を返す (csv.DictReader 契約)",
+              parsed[0]["recall"] == "0.5")
+        check("parse_grid_csv 2行目 (無効行) log_ok='False'", parsed[1]["log_ok"] == "False")
+
+        # rescore_row: png が無い行 (無効行扱い) → soft 系すべて None になること。
+        invalid_row = rescore_row(parsed[1], None, [], [], set(), 0.35, ROOT)
+        check("rescore_row: png 不在行は recall=None", invalid_row["recall"] is None)
+        check("rescore_row: png 不在行は soft_recall=None", invalid_row["soft_recall"] is None)
+
+        # _floats_from_rows: 空文字/None を無視して float リストを作ること。
+        vals = _floats_from_rows(
+            [{"x": "0.5"}, {"x": ""}, {"x": None}, {"x": "1.5"}], "x")
+        check("_floats_from_rows は空/None を除外", vals == [0.5, 1.5])
+
+    ok = (len(failures) == 0)
+    if ok:
+        print("[selftest] ALL PASS")
+    else:
+        print(f"[selftest] {len(failures)} FAIL: {', '.join(failures)}")
+    return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="E-1 画質評価ハーネス (条件×seed の直積・研究機専用・開発機は [SKIP])")
@@ -522,7 +886,29 @@ def main(argv=None):
     ap.add_argument("--gen-timeout", dest="gen_timeout", type=float, default=180.0)
     ap.add_argument("--run", action="store_true",
                     help="研究機で実走する (RTX5080+OV+dollama.exe 必須)。未指定は計画表示のみ。")
+    # E-2.5 T1: --selftest / --rescore-dir は他モードと独立 (OV/PNG/exe 依存度が異なる)。
+    ap.add_argument("--selftest", action="store_true",
+                    help="OV/PNG/exe 非依存の純ヘルパ検査を実行する (開発機・研究機どちらでも可)。")
+    ap.add_argument("--rescore-dir", dest="rescore_dir", default=None,
+                    help="既存 grid_results.csv + PNG を SDXL 生成なしで再採点する "
+                         "(dollama.exe 不要・OpenVINO+WD14 IR のみ必要)。")
     args = ap.parse_args(argv)
+
+    if args.selftest:
+        ok = run_selftest()
+        sys.exit(0 if ok else 1)
+
+    if args.rescore_dir:
+        try:
+            import openvino  # noqa: F401
+        except Exception:
+            print("[rescore] [SKIP] openvino 不在 (--rescore-dir は WD14 IR ロードに OpenVINO が必要)")
+            return
+        if not os.path.isfile(WD14_XML):
+            print(f"[rescore] [SKIP] WD14 IR 不在: {WD14_XML}")
+            return
+        run_rescore(args)
+        return
 
     if args.seeds < 4:
         print(f"[eval] [WARN] --seeds={args.seeds} < 4 (規律①: N=1 で優劣を書かない・"

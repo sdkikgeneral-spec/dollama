@@ -1,0 +1,12 @@
+=== run_rescore native E-1 CSV (no cfg column) ===
+$ python scripts/dollma_eval_image_grid.py --rescore-dir docs/logs/e1
+‚Üí per-row rescore SUCCEEDS (grid_results_rescored.csv written 16/16), but summary generation crashes: KeyError: 'cfg' (line 733, run_rescore) because E-1's CSV schema predates the cfg-sweep format and has no 'cfg' column.
+
+=== dollma_e2_t2_analyze.py smoke test ===
+$ python scripts/dollma_e2_t2_analyze.py --csv docs/logs/e1/grid_results_rescored.csv --metrics recall soft_recall soft_recall_iv soft_recall_logit
+‚Üí same root cause: KeyError: 'cfg' at line 137 (cfgs = sorted(set(r["cfg"] for r in rows)...))
+
+=== isolation test: same rows + synthetic constant cfg='7.5' column added ===
+$ python scripts/dollma_e2_t2_analyze.py --csv docs/logs/e2-5-t2/e1_with_fake_cfg_smoketest_only.csv --ref-cfg 7.5 --metrics recall soft_recall soft_recall_iv soft_recall_logit
+[analyze] ì«Ç›çûÇ›çsêî=16 cfgs=['7.5']
+‚Üí NO crash. Only ref-cfg present (no non-ref arm) ‚Üí no verdict printed, as expected for a single-condition grid. This confirms the crash is caused solely by the missing 'cfg' column in E-1's native CSV, not by the new soft_recall* columns/metrics logic itself.
