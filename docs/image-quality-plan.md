@@ -91,11 +91,12 @@
 | ID | 目的 (要旨) | 担当 | 機械 | 発火条件 | 依存 | 状態 (★2026-09-27 時点) |
 |---|---|---|---|---|---|---|
 | E-0 | 既定 preset の VAE `scaling_factor` 残債の解消 | cuda-kernel-dev → gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | 完了・main merge 済 (実装 `272e854` / merge `2d442b3`) |
-| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | **main merge 済 (`f72d595` / merge `d8f9c0b`)。ただし本台帳の DoD 充足判定は未実施** — ★**DoD 5 (CSV の paired CI 列) 欠落**と★**5-1 兼用 docstring の決裁**が §E-1 に残置 (下記 E-1 節「現況 (2026-09-20)」)。★T2 で cfg 軸を追加 = **その変更は E-2 branch 上で未 merge** |
-| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 | **T1+T2 完了 = DoD 1-6 充足。ただし branch `feat/e2-sampling-knobs` は main 未 merge・未 push** (詳細は E-2 節「現況 (2026-09-27) — T2」) |
+| E-1 | 多 seed 画質評価ハーネス | gpu-benchmarker | 研究機 | 即時 (発注済 ※) | なし | **main merge 済 (`f72d595` / merge `d8f9c0b`)。ただし本台帳の DoD 充足判定は未実施** — ★**DoD 5 (CSV の paired CI 列) 欠落**と★**5-1 兼用 docstring の決裁**が §E-1 に残置 (下記 E-1 節「現況 (2026-09-20)」)。★T2 で cfg 軸を追加 = ~~その変更は E-2 branch 上で未 merge~~ → **E-2 と共に main merge 済 (`4ad8f87`・2026-09-27)** |
+| E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 | **T1+T2 完了 = DoD 1-6 充足。main merge 済 (`4ad8f87` Merge branch 'feat/e2-sampling-knobs'・2026-09-27 22:39)** (旧記載「main 未 merge・未 push」は陳腐化。詳細は E-2 節「現況 (2026-09-27) — T2」) |
+| E-2.5 | 評価指標の連続値化 (WD14 生確信度の soft recall)。E-3 節「次のレバー候補」① の ② 方向 | (実装者の記録なし) | 実装=開発機可 / 再採点=OV+WD14 IR のある機械 | (台帳上未定義) | E-1 | **T1 実装 = 未 commit・レビュー記録なし**。E-1 の既存 16 枚を再採点 1 回・判定なし。詳細は E-2.5 節 (★2026-09-28 追記) |
 | E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 | **発火条件は充足** (E-2 T2 で有効レバー 0/4)。**充足 = 着手決裁ではない**・E-3 が効く見込みは未裏付け。競合候補は E-3 節「次のレバー候補」 |
 | E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) | 未着手 |
-| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 | 未着手。発火条件は **branch 基準では充足・main 基準では未** (E-2 未 merge) |
+| E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 | 未着手。発火条件は **main 基準でも充足** (E-2 が `4ad8f87` で main merge 済・main の `src/server/api.cpp` l.177 が `body.contains("seed")` を受理)。旧記載「main 基準では未」は陳腐化。★**充足 = 着手決裁ではない** |
 
 ※ **「発注済」の出典**: リポ内に対応する branch / commit / issue は**無い** (2026-09-20 時点で
 `git log` / `git branch` に該当なし)。本欄は **main thread からの口頭発注 (2026-09-19・リポ外の状態)** を
@@ -172,7 +173,7 @@ CSV を吐くハーネスを 1 本作る。
 **実行経路 = CLI・1 プロセス 1 枚 (前提として明記)**
 HTTP 経路は格子を回せない。一次証拠:
 - **HTTP に seed が無い** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch
-  `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み**のため、**本 branch 上ではこの
+  `feat/e2-sampling-knobs`・~~main 未 merge~~ → `4ad8f87` で main merge 済) で HTTP `seed` は実装済み**のため、**本 branch 上ではこの
   一次証拠は成り立たない** (`src/server/generator.hpp` l.53-56 に `bool has_seed` / `uint64_t seed` /
   `bool has_guidance_scale` / `float guidance_scale` / `src/server/api.cpp` l.177-187 が
   `body.contains("seed")` → `gr.has_seed=true; gr.seed=...` で受理。同様に `guidance_scale` も
@@ -285,7 +286,7 @@ E-1 は「既存の採点資産で集計する」が、その資産には**既�
    (`src/server/backend_image_generator.hpp` l.53-62, l.131 で `DOLLAMA_SEED` を読む。CLI に `--seed` は無い —
    `src/main.cpp` l.174-222 の引数分岐は `--http/--port/--steps/--width/--height/--prompt/--negative/
    --out/--no-matting/--no-preset-prefix/--fast/--fp8/--preset` のみ)。E-2 で `--seed` が入ったら差し替える。
-   ★**2026-09-27: この条件は満たされた** — E-2 T1 で `--seed`/`--cfg` が入り (branch のみ・main 未 merge)、
+   ★**2026-09-27: この条件は満たされた** — E-2 T1 で `--seed`/`--cfg` が入り (~~branch のみ・main 未 merge~~ → `4ad8f87` で main merge 済)、
    T2 のスイープは env ではなく **CLI `--seed` 経由**で 60 走行すべてログに `[gen] seed=<値>(req)` を残している
    (E-2 節「現況 (2026-09-27) — T2」)。★**ただし `--cfg` の実効値はログに出ていない** = 本 DoD 3 の
    「ログに残ること」は seed については充足・**cfg については未充足** (E-2 の残債②)。
@@ -379,7 +380,7 @@ reward 比較のノイズ除去」/ `docs/roadmap.md` l.321「**次レバー** (
 6. 秒が動いても CLAUDE.md 計測表に行を足さない (共通規律 6)。
 
 **現況 (2026-09-22) — T1 (ノブ配線 + 仕様表更新) 実装完了・未レビュー**
-実装場所は worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs` (main 未 merge)。
+実装場所は worktree `E:\Develop\Projects\dollama-wt-e2t1` / branch `feat/e2-sampling-knobs` (~~main 未 merge~~ → 2026-09-27 `4ad8f87` で main merge 済)。
 ★**以下の DoD 欄は commit `4afbe2f` 時点で書かれた**。その後 `c00e72b` で CUDA ビルド回帰を修正して
 `GenRequest` の表現が変わっているため、**型・フィールド名は下記「CUDA ビルド回帰 (`c00e72b`)」を正とする**。
 
@@ -755,13 +756,18 @@ commit 済みの範囲からは**再計算できない**。再現が必要なら
   明確に別画像 (上記 sha256 3 値相違) を出しており、**動いていないのはノブではなく指標**である。
   他 preset・より広い cfg 範囲・他プロンプト群は未測。
 
-**E-2 全体の状態 = 完了 (DoD 1-6 すべて充足)。ただし main 未 merge・未 push。**
+**E-2 全体の状態 = 完了 (DoD 1-6 すべて充足)。main merge 済 (`4ad8f87` Merge branch 'feat/e2-sampling-knobs'・2026-09-27 22:39)。**
+(★2026-09-28 追記: 下の「merge されておらず push もされていない (2026-09-27 時点)」は T2 記録執筆時の状態で、その後に解消した。
+一次証拠 = `git log --first-parent main` に `4ad8f87` があり、`git merge-base --is-ancestor 4ad8f87 origin/main` が真
+(ローカルの `origin/main` 追跡 ref での確認)。記録として下の行は取り消し線で残す。)
 - DoD 1 実装済 / **DoD 2 充足 (T2・突合相手 `766082a`)** / DoD 3 実装済 / DoD 4 走行 B で 55/55 緑
   (★限定は DoD 4 の記述どおり — 実重み経路の一部は worktree の重み不在で SKIP) /
   **DoD 5 充足 (結論 = 頭打ち・既定変更なし)** / DoD 6 遵守。
-- ★**branch `feat/e2-sampling-knobs` は main へ merge されておらず push もされていない** (2026-09-27 時点)。
+- ~~★**branch `feat/e2-sampling-knobs` は main へ merge されておらず push もされていない** (2026-09-27 時点)。
   したがって**出荷物 (main) には `--seed`/`--cfg`/HTTP `guidance_scale`/`seed` はまだ入っていない**。
-  E-5 の発火条件「HTTP `seed` が入った後」を main 基準で読む場合は未成立 (branch 基準では成立)。
+  E-5 の発火条件「HTTP `seed` が入った後」を main 基準で読む場合は未成立 (branch 基準では成立)。~~
+  → **陳腐化 (2026-09-28 訂正)**: `4ad8f87` で main merge 済。main の `src/server/api.cpp` は
+  `guidance_scale` (l.166) / `seed` (l.177) を受理する = E-5 の発火条件は main 基準でも充足 (着手決裁ではない)。
 - **残債 (T2 で新たに立った分。①②④ は `src/` 変更を伴うため本記録では直さない。③ は下記のとおり
   src 作業ではなかったので運用規律へ書き換えた)**:
   ① 実効 fast 構成 (`--fast`/`--fp8`) をログに出す ② `--cfg` の実効値をログに出す
@@ -778,6 +784,108 @@ commit 済みの範囲からは**再計算できない**。再現が必要なら
 **走る機械**: ノブ実装とユニット test は**開発機可**。スイープ実走は**研究機** (新規 exe = SAC OFF 依頼)。
 **発火条件**: **E-1 完了後**。
 **依存**: E-1 (物差しが無いとスイープ結果を判定できない)。
+
+---
+
+## E-2.5 — 評価指標の連続値化 (soft recall)
+
+★**本節は 2026-09-28 の追記**。起票時 (2026-09-19) の台帳には E-2.5 は存在しない。
+ID `E-2.5` は worktree 名 (`e25-t1-soft-recall`) とログディレクトリ名 (`docs/logs/e2-5-t2/`) に
+合わせたもので、**発注文・DoD はリポ外にあり本台帳では未定義**。
+
+**目的** — E-3 節「次のレバー候補」① が示した問題 (主指標 recall は語数 9-10 を分母とする
+0.10-0.11 刻みの量子化指標で、1 語未満の効果を原理的に表現できない) に対し、同 ① の
+「② 連続値の指標に替える」方向を実装したもの。
+
+**現況 (2026-09-28) — T1 (指標実装) = 実装済み・未 commit・レビュー記録なし**
+- commit 先: worktree `.claude/worktrees/e25-t1-soft-recall` / branch `worktree-e25-t1-soft-recall`
+  (base = main `27b9ff8`)。★実装・走行はこの worktree では行われていない (下記「成果物の出自」)。変更は `scripts/dollma_eval_image_grid.py` のみ (`git diff --stat` = +387/−1)。
+  **`src/` は無改変**。
+- ★**T1/T2 の区分**: ログディレクトリは `e2-5-t2` という名前だが、中身は T1 実装物の検証である
+  (`docs/logs/e2-5-t2/README.md`)。T1/T2 の定義はリポ内に無く**未確定**。
+- ★Opus high レビュー (共通規律 4) の実施記録は**無い**。
+- ★**成果物の出自 (worktree で作られたものではない)**: `scripts/dollma_eval_image_grid.py` の変更・
+  `docs/logs/e2-5-t2/` の 5 ファイル・`docs/logs/e1/grid_results_rescored.csv` の原本は、
+  **共有 main checkout (`E:\Develop\Projects\dollama`) に未 commit のまま残っていたもの**
+  (mtime 2026-09-27 22:55〜22:57) で、2026-09-28 に main thread が本 worktree へコピーした。
+  記録執筆時に両側 7 ファイルの sha256 を突合し、**全ファイルがバイト同一**であることを確認した
+  (コピーした主体が main thread である点は main thread の申告)。
+  main checkout 側の原本は、本記録の commit を push した後に main thread が片付ける予定。
+- ★**再採点の走行場所は推定のみ**: main checkout と推定する (WD14 IR `models/wd14-swinv2-tagger-v3/` は
+  main checkout 側にだけあり、本 worktree には `models/` が無い)。mtime はコピーで変わるので、
+  走行場所を mtime から**断定することはできない**。
+
+**T1 で足したもの** (一次証拠 = 上記 `git diff`):
+- `soft_recall_metrics()` — 参照語ごとに WD14 の**生確信度** (category≠9 のタグ) を引いて 3 指標を返す:
+  - `soft_recall` = 語彙外語を 0.0 として**全語で平均** (recall と同じ分母・量子化だけを除いた版)
+  - `soft_recall_iv` = **語彙内語だけ**の平均 (語彙外語による定数希釈を除いた版)
+  - `soft_recall_logit` = 語彙内語の logit 平均 (確信度を [1e-6, 1−1e-6] にクランプしてから logit。**[0,1] スケールではない**)
+  - 併せて `n_oov` / `oov_words` (語彙外語の数と列挙)
+- 語彙カバレッジ診断 (`print_vocab_coverage`) — prompt ごとの語彙外語を標準出力する。
+- `--run` 経路: `grid_results.csv` / `grid_summary.csv` に上記列を追加。
+  ★**`--run` 経路での新指標はまだ 1 度も実走していない** (新規 SDXL 生成を伴う走行の記録が無い)。
+- `--rescore-dir <dir>` — 既存 `grid_results.csv` + PNG を **SDXL 生成なし** (dollama.exe 不要・OV + WD14 IR のみ) で
+  再採点し、`grid_results_rescored.csv` / `grid_summary_rescored.csv` を `<dir>` に書く。
+  再計算するのは recall 系 (`recall_matched`/`recall_total`/`recall`/soft 3 種/`n_oov`/`oov_words`) だけで、
+  `axis_*` / `worst_anatomy` / `sec` は**入力行をそのまま複写**する (`rescore_row` の `dict(row)`)。
+- `--selftest` — OV / PNG / exe 非依存の純ヘルパ検査 (合成 fixture・24 項目)。
+
+**検証 (T1 の範囲)**
+- `--selftest`: `docs/logs/e2-5-t2/selftest_stdout.log` に **24 PASS + `ALL PASS`**
+  (24 = script 内の `check(` 呼び出し数と一致)。
+  記録執筆時に**研究機** (hostname `KIK-WIN-RTX58`・RTX 5080・Python 3.14.6) で再実行し、
+  **exit 0・24 PASS・`ALL PASS`** を確認した。★**開発機では未確認** (初版は「開発機で再実行」と誤記・記録監査で訂正)。
+- `--rescore-dir docs/logs/e1`: E-1 の 16 行すべてが再採点され `docs/logs/e1/grid_results_rescored.csv` が出た。
+  `recall` / `recall_matched` は E-1 原本 (`docs/logs/e1/grid_results.csv`) と **16/16 行で同値**
+  (記録執筆時に両 CSV を突合) = 再採点経路が旧 recall を再現する。
+  ★`docs/logs/e2-5-t2/grid_results_rescored.csv` は同ファイルの**複製** (sha256 `8791fdb4…` が一致・別走行ではない)。
+- ★**既知の欠陥 (未修正)**: E-1 の CSV は cfg 列を持たない (E-2 T2 の cfg 軸追加より前の走行) ため、
+  `run_rescore` の集計段 `cfgs = sorted(set(r["cfg"] for r in out_rows), ...)` で `KeyError: 'cfg'` になり、
+  **`grid_summary_rescored.csv` は生成されていない** (per-row CSV は集計前に書かれるので残る)。
+  `scripts/dollma_e2_t2_analyze.py` (無改変) も同じ箇所 (`cfgs = sorted(set(r["cfg"] for r in rows), ...)`) で落ちる。
+  出典は `docs/logs/e2-5-t2/analyze_smoketest.log` (注釈付き要約・traceback は保全なし) と上記ソース行。
+  ★回避確認に使った `e1_with_fake_cfg_smoketest_only.csv` は**定数 cfg=7.5 列を人工付加した偽データ**で、
+  比較アームが無いため 3 軸判定は 1 件も出ていない = **「落ちない」ことしか示していない**。分析の入力にしないこと。
+
+**E-1 16 枚での characterization (判定なし)** — `docs/logs/e2-5-t2/analysis_summary.txt`。
+★**この要約を生成したスクリプト/コマンドは保全されていない**。下の「検算」欄は記録執筆時に
+`grid_results_rescored.csv` から手計算で確かめた範囲。std は **標本 std (n−1)** の prompt 別値の平均
+(= `dollma_e2_t2_analyze.py` の分散帯と同じ定義)。E-1 README / `grid_summary.csv` の std は
+ハーネスの `mean_std` = **母 std (÷n)** なので**桁が近くても混ぜないこと** (例: p1 recall は 0.0577 vs 0.050)。
+
+| 指標 | distinct 値 (16 走行中) | 最小刻み | 参照分散帯 (prompt 別 std の平均) | mean SNR (1 語 / std) | 検算 |
+|---|---|---|---|---|---|
+| recall | 5 | 0.0111 | 0.0716 | 1.5826 | distinct・刻み・std 4 値・平均・SNR (p1/p2/p4) を検算済 |
+| soft_recall | **16** | 0.0006 | 0.0748 | 1.4500 | distinct・刻み・std (p1/p4) を検算済。他は未検算 |
+| soft_recall_iv | 16 | 0.0047 | 0.0781 | 1.3659 | 未検算 |
+| soft_recall_logit | 16 | 0.0058 | 0.6431 (**logit 単位**) | (別スケールのため算出せず) | 未検算 |
+
+- 「SNR」は同要約の定義 = `(1 / その prompt の語数) / seed 間 std` (**1 語ぶんの変化**を効果の単位に置いた比)。
+  本台帳の共通規律 2 の 3 軸にこの量は無い。**要約作成者の定義であり、検出力の標準的な指標ではない**。
+- 読めること: 連続値化で**量子化は消えた** (distinct 5 → 16)。分散帯については、
+  **点推定では縮小は観測されなかった** (recall 0.0716 / soft_recall 0.0748 / soft_recall_iv 0.0781)。
+  ただし **prompt あたり n=4** なので、この差は識別できない。
+- ★**言えないこと**:
+  - 「soft recall で検出力が上がった/上がらない」の判定。データは **E-1 の 1 条件
+    (illustrious-xl / cfg 既定 / 4 prompt × 4 seed)** だけで、比較アームを含む走行は 1 本も無い。
+    1 語未満の効果を soft recall が拾えるかは、刻みが細かくなったこと以外に**未検証**。
+  - **SNR 列の recall 対 soft の比較**。分子の意味が同じではない (like-for-like ではない):
+    recall では 1 語が 0→1 に変わると 1 刻み (= 1/N) 動く。soft 系では 1 語ぶんの変化は Δp/N で、
+    Δp は 1 未満になりうる。同じ「1/N」を分子に置いた SNR 1.58 / 1.45 / 1.37 を並べて
+    優劣を読まないこと。
+- **語彙カバレッジ**: `silver hair` (p1) と `dynamic pose` (p3) が WD14 語彙外 (`n_oov=1`)。p2 / p4 は 0。
+  記録執筆時に main checkout の `models/wd14-swinv2-tagger-v3/selected_tags.csv` を検索し、
+  `silver_hair` / `dynamic_pose` の行が無いこと (`grey_hair` はある) を確認した。
+  (★再採点を走らせた機械の `selected_tags.csv` と同一ファイルかは未確認。)
+  → ★**p1 / p3 の recall は構造的に最大 0.9** (10 語中 1 語が原理的に一致しない)。整合する観測として、
+  `docs/logs/` 配下の CSV (E-1 / E-2 T2) に p1・p3 で `recall_matched=10` の行は **0 件** (記録執筆時に grep)。
+
+**残債 (T1 時点)**
+1. `--rescore-dir` の集計段を cfg 列なしの CSV でも落ちないようにする (未修正)。
+2. `--run` 経路での新指標の実走 (未実施)。
+3. 比較アームを含む走行での soft recall の 3 軸判定 (未実施)。判定に使う指標 (3 種のどれを主にするか) も未決。
+4. 語彙外語 2 件の扱い (語リストを WD14 語彙に揃えるか) は未決。語リストを変えると E-1 / E-2 T2 との連続性が切れる。
+5. `analysis_summary.txt` の生成手順が保全されていない。再現可能な形 (script) にするかは未決。
 
 ---
 
@@ -910,7 +1018,7 @@ E-1/E-5 の格子は原則 **CLI 1 プロセス 1 枚** (E-1 節のとおり) �
 | 制約 | 一次証拠 |
 |---|---|
 | **LoRA は HTTP 専用・CLI から到達できない** | `grep -rn -i lora src/server/cli_generate.hpp src/main.cpp` = **0 件**。`loras` の受理は `src/server/api.cpp` l.179 のみ。`GenRequest::loras` (`src/server/generator.hpp` l.43) は HTTP ハンドラからしか埋まらない |
-| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・main 未 merge) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.has_seed=true; gr.seed=...`・`GenRequest` の当該ノブ部は `bool has_seed` + `uint64_t seed` の POD 表現 (構造体全体は POD ではない)。`c00e72b` の現物で 2026-09-22 に確認。★T1 初版 `4afbe2f` では `std::optional<uint64_t> seed` だったが CUDA ビルド回帰のため `c00e72b` で POD 化・意味論は不変) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
+| **seed は HTTP から指定できない** ★**起票時 (2026-09-19/20) のスナップショット。E-2 T1 (branch `feat/e2-sampling-knobs`・~~main 未 merge~~ → `4ad8f87` で main merge 済) で HTTP `seed` は実装済み** (`src/server/api.cpp` の `body.contains("seed")` → `gr.has_seed=true; gr.seed=...`・`GenRequest` の当該ノブ部は `bool has_seed` + `uint64_t seed` の POD 表現 (構造体全体は POD ではない)。`c00e72b` の現物で 2026-09-22 に確認。★T1 初版 `4afbe2f` では `std::optional<uint64_t> seed` だったが CUDA ビルド回帰のため `c00e72b` で POD 化・意味論は不変) — **本行の制約は T1 branch 上では既に解消**。§3 の同趣旨バナーも参照 | `GenRequest` (`src/server/generator.hpp` l.34-46) に seed フィールド無し・`api.cpp` l.128-217 の受理フィールドにも無し。seed は env `DOLLAMA_SEED` のみ (`src/server/backend_image_generator.hpp` l.53-62, l.131) ★**この出典行番号は起票時のもの。T1 後の現物とはずれる** |
 
 env `DOLLAMA_SEED` は**サーバープロセスの環境変数**であり、**HTTP クライアント側からリクエスト単位で指定できない**
 (`getenv` 自体は `generate()` ごとに評価される — `src/server/backend_image_generator.hpp` l.132 が
@@ -949,8 +1057,9 @@ E-5 の発火条件は「E-2 完了」一般ではなく、**E-2 のうち HTTP 
 **発火条件**: **E-2 のうち HTTP `seed` が入った後** (上記「実行経路の制約」。
 CLI `--seed` だけでは不可 = LoRA が CLI に無いため)。
 ★**2026-09-22 現在: この条件は E-2 T1 (branch `feat/e2-sampling-knobs`) で満たされている**
-(`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`)。**ただし main 未 merge** のため、
-E-5 を走らせる前に「どのツリーで走らせるか」を確認すること。
+(`src/server/api.cpp` の `body.contains("seed")` → `gr.seed`)。~~**ただし main 未 merge** のため、
+E-5 を走らせる前に「どのツリーで走らせるか」を確認すること。~~
+→ **2026-09-28 訂正: E-2 は `4ad8f87` で main merge 済** = main 基準でも発火条件は充足 (着手決裁ではない)。
 **依存**: **E-2 (特に HTTP `seed`)**、E-1 (指標定義・集計部)。ユーザーのライセンス決裁。
 
 ---
@@ -961,7 +1070,7 @@ E-5 を走らせる前に「どのツリーで走らせるか」を確認する�
 是正時に全行の行番号を再検算済)。
 
 ★**本表は起票時 (2026-09-19/20) のスナップショットであり、そのまま残す**。ただし E-2 T1
-(2026-09-22・branch `feat/e2-sampling-knobs`・main 未 merge) 以降、下記 6 行は**現在の src の状態を
+(2026-09-22・branch `feat/e2-sampling-knobs`・~~main 未 merge~~ → 2026-09-27 `4ad8f87` で main merge 済) 以降、下記 6 行は**現在の src の状態を
 表さない** — 読むときは E-2 節「現況 (2026-09-22)」と突き合わせること:
 「CLI に `--cfg` / `--seed` が無い」/「HTTP が受けるフィールドに `guidance_scale` も `seed` も無い」/
 「`GenRequest` に seed フィールドが無い」/「seed は env `DOLLAMA_SEED` 経由のみ」/
