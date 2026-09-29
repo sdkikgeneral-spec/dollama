@@ -44,8 +44,11 @@ python scripts/dollma_f0b_z2_seed_variance.py              # 本計算 → docs/
 
 ## 要点 (数値の断定的解釈はしていない・詳細は JSON / サブエージェント報告参照)
 
-- 4 推定量 (naive / cluster-mean / CR0 / CR1 / en46) の t 値は、`docs/f0b-reverification-plan.md`
-  の 2026-09-28 記録値 (2.4025 / 0.9549 / 2.7592 / 2.7297 / 0.9154) と全て一致した (`cross_check.ok=true`)。
+- 5 系列 (naive / cluster-mean / CR0 / CR1 / en46) の t 値は、`docs/f0b-reverification-plan.md`
+  の 2026-09-28 記録値 (2.4025 / 0.9549 / 2.7592 / 2.7297 / 0.9154) と全て一致した。
+  この一致は、JSON の計算値を `exit1_estimators.recorded_reference_values_2026_09_28` と別途突き合わせて確かめたもの。
+  `cross_check.ok=true` の根拠にはならない (cross_check は同じ値を 2 経路で計算して照合するだけで、記録値とは比べていない)。
+  (2026-09-29 監査 軽微で訂正。旧記載は「4 推定量」「(`cross_check.ok=true`)」)
 - 記録に残る「cluster-mean 95%CI [-0.0115, +0.0348]」の下端は、解析的 t/z CI (t(46) → [-0.0126,+0.0354]・
   z → [-0.0120,+0.0348]) では再現しないが、**nonparametric cluster bootstrap percentile CI では
   seed によって -0.0111〜-0.0119 のレンジに入り、-0.0115 に近い** (10 seed sweep [20260620, 0-7, 42]・
