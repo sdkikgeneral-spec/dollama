@@ -1,0 +1,82 @@
+F-0b 再検証 Z-3 実行記録
+========================================================================
+
+実行日 (UTC): 2026-09-29〜30
+実行場所: git worktree E:\Develop\Projects\dollama\.claude\worktrees\f0b-z3-setf1-bootstrap
+          (branch worktree-f0b-z3-setf1-bootstrap)
+環境: Python 3.14 / torch 2.11.0+cu128 / CUDA (device=cuda) / numpy / scipy
+      (バージョンは z3_result.json の env ブロックに記載)
+作業起点: commit 6651d1f (Z-2 merge 後の HEAD)
+
+やったこと:
+  1. 入力の準備 (worktree 内・main checkout への書き込みなし):
+     - `data/bitnet/vocab.json` / `pairs.val.jsonl` / `pairs.eval_diverse_{a,b}.jsonl` は
+       git 管理下で worktree に既に存在 (main checkout と sha256 一致・下記参照)。
+       これらを `docs/logs/f0b-z3/_scratch_data/` にコピーし、--data-dir をそこへ向けることで
+       eval_report/npz の出力先を worktree の docs/logs 配下に閉じ込めた
+       (train_bitnet.py --eval-only は data_dir 直下に eval_report_<name>.json /
+       eval_persample_<name>.npz を書くため、main の data/bitnet/ や worktree の data/bitnet/ 直下を
+       汚さないための措置)。
+     - 隔離重み `bitnet_dense_fp32.safetensors` (正典・無改変) / `bitnet_dense_sft_fp32.safetensors`
+       (F-0b の SFT 隔離重み) は main checkout の絶対パスを --weights に直接渡した (コピーなし・読み取りのみ)。
+
+  2. canon 評価:
+     python scripts/train_bitnet.py --eval-only \
+       --data-dir docs/logs/f0b-z3/_scratch_data \
+       --weights "E:\Develop\Projects\dollama\data\bitnet\bitnet_dense_fp32.safetensors" \
+       --device cuda --seed 20260620 --eval-name canon_z3 --dump-persample
+     結果 (stdout 抜粋):
+       GEN set-metrics (pairs.eval_diverse_a.jsonl): macro R=0.3287 F1=0.3332 (n_cases=1500)
+       GEN set-metrics (pairs.eval_diverse_b.jsonl): macro R=0.3764 F1=0.3804 (n_cases=1500)
+     → 元台帳 (docs/f0b-rejection-sft-plan.md l.101) の canon 値 0.3332 / 0.3804 と一致。
+
+  3. SFT 評価 (同一コマンド・--weights のみ差し替え):
+     python scripts/train_bitnet.py --eval-only \
+       --data-dir docs/logs/f0b-z3/_scratch_data \
+       --weights "E:\Develop\Projects\dollama\data\bitnet\bitnet_dense_sft_fp32.safetensors" \
+       --device cuda --seed 20260620 --eval-name sft_z3 --dump-persample
+     結果 (stdout 抜粋):
+       GEN set-metrics (pairs.eval_diverse_a.jsonl): macro R=0.3107 F1=0.3158 (n_cases=1500)
+       GEN set-metrics (pairs.eval_diverse_b.jsonl): macro R=0.3512 F1=0.3563 (n_cases=1500)
+     → 元台帳の SFT 値 0.3158 / 0.3563 と一致。Δ = -0.0174 / -0.0241 も一致。
+     → **再現確認 = 成功** (原因調査は不要だった)。
+
+  4. Z-3 本計算:
+     python scripts/dollma_f0b_z3_setf1_bootstrap.py \
+       --canon-npz docs/logs/f0b-z3/_scratch_data/eval_persample_canon_z3.npz \
+       --sft-npz docs/logs/f0b-z3/_scratch_data/eval_persample_sft_z3.npz \
+       --canon-report docs/logs/f0b-z3/_scratch_data/eval_report_canon_z3.json \
+       --sft-report docs/logs/f0b-z3/_scratch_data/eval_report_sft_z3.json \
+       --out docs/logs/f0b-z3/z3_result.json
+     事前に --selftest で合成データの自己検査 (OK) を確認済み。
+
+標準出力 (本計算・要約):
+  diverse_a: recomputed delta=-0.017412 (recorded -0.0174) within_rounding=True
+    n_valid_paired=1500 mean_diff=-0.017412 t=-7.0673 df=1499
+    paired_t_ci95=[-0.022244, -0.012579]
+    bootstrap(seed=20260620, B=20000) ci95=[-0.022167, -0.012620]
+    bootstrap seed sweep (10 seed): lo in [-0.022258, -0.022167] (width 0.000091)
+                                     hi in [-0.012647, -0.012524] (width 0.000123)
+    frac_negative=0.3727 frac_positive=0.2773 frac_zero=0.3500
+    cross_check ok=True n_checks=14 n_fail=0
+  diverse_b: recomputed delta=-0.024143 (recorded -0.0241) within_rounding=True
+    n_valid_paired=1500 mean_diff=-0.024143 t=-8.8882 df=1499
+    paired_t_ci95=[-0.029471, -0.018815]
+    bootstrap(seed=20260620, B=20000) ci95=[-0.029525, -0.018794]
+    bootstrap seed sweep (10 seed): lo in [-0.029572, -0.029435] (width 0.000138)
+                                     hi in [-0.018869, -0.018774] (width 0.000095)
+    frac_negative=0.4093 frac_positive=0.2767 frac_zero=0.3140
+    cross_check ok=True n_checks=14 n_fail=0
+
+入力 sha256 (main checkout・読み取りのみ。worktree に git 管理下で存在するファイルも同一 sha256 で一致確認済み):
+  data/bitnet/bitnet_dense_fp32.safetensors     5043772dd13f6fd854d9909191960d8e593ea830638ebd482e8d691df9ad0b61
+  data/bitnet/bitnet_dense_sft_fp32.safetensors 3b2e2181155122ef94a4cfd8d767696728076344ff642726e4b1cebb8eab8e15
+  data/bitnet/pairs.eval_diverse_a.jsonl        02c37d15fbe757d054d8d5e253ca2b5be52da66a381d4ca2ed199253d0bba828
+  data/bitnet/pairs.eval_diverse_b.jsonl        f5514da802437545d9581f9402641a546b6cb30981d3393b37e4bbd9244927c8
+  data/bitnet/pairs.val.jsonl                   8548b250c6b65cf40cea45936a23705409cb939566395f46079d1fb1e7d2cb4c
+  data/bitnet/vocab.json                        af520585b4414e82f21aadfff37a12d0e97c5f362ba7e7ea1f307bfe4b1e7d51
+
+正典・main checkout への書き込み: なし。
+  - `data/bitnet/bitnet_dense{,_fp32}.safetensors` / identity / golden は無改変 (--weights は読み取りのみ)。
+  - eval_report / npz の出力は全て worktree の `docs/logs/f0b-z3/_scratch_data/` (scratch) に置いた。
+  - main checkout の data/bitnet/ には一切書き込んでいない (--data-dir を明示的に scratch に向けた)。
