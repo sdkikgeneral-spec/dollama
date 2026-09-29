@@ -108,7 +108,7 @@
 - ✅ **Package G-2b 完了 (2026-07-05)**: held-out 100入力 (G-1訓練/eval と disjoint・en46/ja54) で greedy→SDXL→reward ペア比較 (200枚)。
   - reward mean pre −0.2974 → post −0.2803・**Δ mean +0.017 / median +0.013 / 正60%**。
   - ⚠️ **「~2.4σ」「弱い正」は撤回 (2026-09-28 是正・監査 2026-09-27 指摘)** → **有意差を検出できなかった (検出力不足)**。
-    - 100 件を独立標本として扱った naive t≈2.40 は**疑似反復によるアーティファクト**。監査 (2026-09-27) によるクラスタ補正の再解析では **t=0.955・95%CI [−0.0115, +0.0348] = 0 を含む** = 有意でない。
+    - 100 件を独立標本として扱った naive t≈2.40 は**疑似反復によるアーティファクト**。監査 (2026-09-27) によるクラスタ補正の再解析では **t=0.955・95%CI [−0.0115, +0.0348] = 0 を含む** = 有意でない。★この CI は unweighted cluster-mean (G=47) の監査引用値で**出自未確定・解析的 CI では非再現** (Z-2 再計算 t(46) [−0.01261, +0.03539]。`docs/f0b-reverification-plan.md` 是正対象表直下の注記)。
     - ★**推定量の明記 (2026-09-28 追記・監査 中①)**: 上記 t=0.955 の推定量は **「同一プロンプトを 1 観測に集約した unweighted cluster-mean の 1 標本 t 検定 (G=47)」** (cluster mean Δ +0.0114 / se 0.0119)。**「クラスタ補正」という語だけでは推定量が一意に定まらず、別の補正だと結論が逆になる**: 同じ 200 行に **cluster-robust sandwich (CR0/CR1・G=47)** を当てると **t=2.76 / 2.73** で「有意」側に出る (ja 54 件の複製が within-cluster 分散ほぼ 0 ゆえ「高精度」と評価される = 疑似反復をそのまま情報量に数える推定量)。
     - ★**最も反論されにくい一次根拠 = en のみ 46 件** (uniq prompt 46 = 真に独立・疑似反復ゼロ): **Δ mean +0.0112 / t=0.915 / 95%CI [−0.0134, +0.0357] (0 を含む)**。ja を落としても「有意でない」は変わらない。
     - 本セッション (2026-09-28) に `data/rollouts/g2b_prepost.jsonl` 200 行から独立再計算した 4 値: **naive t=2.4025 / cluster-mean t=0.9549 / CR sandwich t=2.7592 (CR0) ・2.7297 (CR1) / en46 t=0.9154**。Z-2 の出口では**推定量を明示して 3 通り (naive / cluster-mean / CR sandwich) を並べる**こと。
@@ -130,8 +130,8 @@
   - **処置面は変更なし**: 正典無改変・SFT 重み隔離は不採用判定下で妥当。
 - G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017・有意性未確立)・G-3 不採用。
 - **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
-- **再検証 (Z-1 のみ算出済)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
-  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。Z-1 は算出済・判定なし (同「### Z-1」節)、Z-2〜Z-5 は 🔲 未。再検証の結果が
+- **再検証 (Z-1・Z-2 のみ算出済)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
+  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。Z-1・Z-2 は算出済・判定なし (同「### Z-1」「### Z-2」節)、Z-3〜Z-5 は 🔲 未。再検証の結果が
   **依然「不採用」になることも十分あり得る** (採用へ仕向ける作業ではない)。
 - **次レバー (F-0b とは別軸・優先度順の仮説)**: (a) **reward 設計**の見直し (anatomy が死んでいる → quality 主体でよいか/新軸) (b) **日本語条件付けトークナイザ改修** (空条件を実条件に・[[project_expression_fidelity_gap]]) (c) SDXL seed 制御 (HTTP に seed 引数・SAC 制約下の実現方法) で reward 比較のノイズ除去 (d) 教師枚数増 M拡大 (効果量 +0.017 自体は seed 交絡で伸びにくい公算・優先度低)。
   ※ これらは F-0b の**再検証**とは別物。再検証 (手続き不備の是正) は `docs/f0b-reverification-plan.md` Z-1〜Z-5。
@@ -153,5 +153,5 @@
 - quality 枝: `docs/q2-quality-branch-plan.md` / QualityMLP `data/scorer/quality_mlp*.safetensors` / CLIP image IR `models/clip-image/`
 - 評価: diverse set-F1 = `scripts/dollma_make_eval_diverse.py` / `scripts/test_dollma_eval_diverse.py` (training-spec §13/§17)
 - F 全体: CLAUDE.md 計測表 Phase4 F 行 / `docs/measurements-log.md` / [[project_phase4_F_status]] / roadmap F-0b 行
-- 再検証台帳 (Z-1 算出済・判定なし / Z-2〜Z-5 未実施): `docs/f0b-reverification-plan.md`
+- 再検証台帳 (Z-1・Z-2 算出済・判定なし / Z-3〜Z-5 未実施): `docs/f0b-reverification-plan.md`
 - G-2b 生データ: `data/rollouts/g2b_prepost.jsonl` (200 行 = pre/post × 100 入力) / G-2a 評価 provenance: `data/bitnet/_g2a_eval/eval_report_*.json`

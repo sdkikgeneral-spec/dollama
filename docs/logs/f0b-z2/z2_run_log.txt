@@ -1,0 +1,56 @@
+F-0b 再検証 Z-2 実行記録 (追補・cross_check 拡張 + bootstrap seed sweep)
+========================================================================
+
+実行日 (UTC): 2026-09-29
+実行場所: git worktree E:\Develop\Projects\dollama\.claude\worktrees\f0b-z2-sigma-seed (branch worktree-f0b-z2-sigma-seed)
+環境: Python 3.14 / numpy / scipy (バージョンは z2_result.json の env ブロックに記載)
+作業起点: commit ab1cd50 (record-writer による Z-2 記録の commit) の HEAD
+
+追補内容:
+  1. cross_check を naive の mean/t のみから、以下 39 項目 (全て python ループ経路 vs numpy
+     ベクトル経路の独立2重計算) まで拡張した:
+       naive.mean / naive.t
+       cluster_mean.mean / cluster_mean.t
+       cr_sandwich.CR0.t / cr_sandwich.CR1.t
+       en_only.mean / en_only.t
+       sigma_seed.{reward,quality_contribution,anatomy_contribution}.{pre,post,pooled}.sd (9項目)
+       required_n.tau2_used / required_n.en_delta_var_observed
+       required_n.{d1,d2いずれかのdelta名}.design_a.k={1,2,4,8,16}.n_prompts_required_raw (各delta×5k=10項目)
+       required_n.{同上}.design_b.k={1,2,4,8,16}.n_prompts_required_raw (10項目)
+     docstring も実装範囲に合わせて書き直した。
+  2. cluster bootstrap percentile CI の seed 依存を確認するため、seed [20260620, 0,1,2,3,4,5,6,7,42]
+     (10通り)・B=20000 で percentile CI (lo/hi) を全て算出し、min/max/mean を
+     `exit1_estimators.cluster_mean.bootstrap_percentile_ci95_seed_sweep` に追加した。
+  3. README.md の bootstrap 幅の記述を JSON の実測値に合わせて修正した (README 以外の docs は不変)。
+
+入力 (main checkout・gitignore 対象のため repo には無い・読み取り専用で参照):
+  E:\Develop\Projects\dollama\data\rollouts\g2b_prepost.jsonl
+  sha256 = ba2db3bec55157ab24e8f10c71e7498ae04997aeeba92c4b24eb326820699e89
+  (前回実行と同一ファイル・変更なし)
+
+コマンド:
+  python scripts/dollma_f0b_z2_seed_variance.py --selftest   -> [selftest] OK (exit 0)
+  python scripts/dollma_f0b_z2_seed_variance.py              -> docs/logs/f0b-z2/z2_result.json を上書き
+
+標準出力の要約 (本計算・再実行後):
+  naive: t=2.4024753996279737 df=99
+  cluster_mean: t=0.9549437140354146 df=46
+    bootstrap 95%CI (既定 seed=20260620, B=20000): lo=-0.011915792405456926, hi=0.03474596163534591
+  CR0: t=2.759207677633939
+  CR1: t=2.7296965866091583
+  en_only: t=0.9154104065701107 df=45
+  sigma_seed pooled (reward, ja 54+54, df=106): pooled_sd=0.04663035369623135
+    chi2 95%CI: lo=0.041109562460562014 hi=0.05387755851489403
+    bootstrap 95%CI: lo=0.039841715009444466 hi=0.05209229764482895
+
+  cluster bootstrap CI seed sweep (10 seed, B=20000 each):
+    seeds: [20260620, 0, 1, 2, 3, 4, 5, 6, 7, 42]
+    lo_min=-0.011916 lo_max=-0.011064 lo_mean=-0.011570
+    hi_min=0.034256  hi_max=0.035075  hi_mean=0.034630
+    -> record-writer が手元で走らせた下端 -0.01106〜-0.01192 のレンジと一致 (本 sweep の
+       lo_min=-0.011916 / lo_max=-0.011064 が同じ範囲を再現)。
+
+  cross_check: ok=True n_checks=39 n_fail=0 (全て python ループ経路と numpy ベクトル経路が一致)
+
+既存データの再解析のみで、SDXL 生成も LM 訓練もしていない。
+main checkout の data/ へは読み取りだけで、書き込んでいない。

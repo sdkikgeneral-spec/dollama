@@ -1,0 +1,901 @@
+{
+  "stage": "F-0b 再検証 Z-2 (クラスタ補正の再解析 + σ_seed の直接推定)",
+  "plan_ref": "docs/f0b-reverification-plan.md 「### Z-2」節",
+  "inputs": {
+    "g2b_prepost": {
+      "path": "E:\\Develop\\Projects\\dollama\\data\\rollouts\\g2b_prepost.jsonl",
+      "sha256": "ba2db3bec55157ab24e8f10c71e7498ae04997aeeba92c4b24eb326820699e89",
+      "n_rows": 200
+    }
+  },
+  "env": {
+    "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "cwd": "E:\\Develop\\Projects\\dollama\\.claude\\worktrees\\f0b-z2-sigma-seed",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1"
+  },
+  "n_pairs": 100,
+  "exit1_estimators": {
+    "naive": {
+      "n": 100,
+      "mean": 0.01708055740465486,
+      "sd": 0.07109565994848399,
+      "se": 0.007109565994848399,
+      "t": 2.4024753996279737,
+      "df": 99,
+      "p_two_sided": 0.018148357078691113,
+      "ci95_t": {
+        "quantile": "t(df=99)",
+        "crit": 1.9842169515864172,
+        "lo": 0.0029736360392543185,
+        "hi": 0.031187478770055406
+      },
+      "ci95_z": {
+        "quantile": "z(normal)",
+        "crit": 1.959963984540054,
+        "lo": 0.00314606410904132,
+        "hi": 0.0310150507002684
+      }
+    },
+    "cluster_mean": {
+      "G": 47,
+      "cluster_sizes_distinct": [
+        1,
+        54
+      ],
+      "mean": 0.011385685368806,
+      "sd_of_cluster_means": 0.08173919062467272,
+      "se": 0.01192288634551267,
+      "t": 0.9549437140354146,
+      "df": 46,
+      "p_two_sided": 0.34459785130454046,
+      "ci95_t": {
+        "quantile": "t(df=46)",
+        "crit": 2.012895598919429,
+        "lo": -0.012613840082493007,
+        "hi": 0.035385210820105005
+      },
+      "ci95_z": {
+        "quantile": "z(normal)",
+        "crit": 1.959963984540054,
+        "lo": -0.011982742460163218,
+        "hi": 0.034754113197775216
+      },
+      "bootstrap_percentile_ci95": {
+        "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=20260620)",
+        "lo": -0.011915792405456926,
+        "hi": 0.03474596163534591,
+        "B": 20000,
+        "seed": 20260620
+      },
+      "bootstrap_percentile_ci95_seed_sweep": {
+        "seeds": [
+          20260620,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          42
+        ],
+        "B": 20000,
+        "runs": [
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=20260620)",
+            "lo": -0.011915792405456926,
+            "hi": 0.03474596163534591,
+            "B": 20000,
+            "seed": 20260620
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=0)",
+            "lo": -0.011274341316426071,
+            "hi": 0.03438327636469016,
+            "B": 20000,
+            "seed": 0
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=1)",
+            "lo": -0.011821413111682909,
+            "hi": 0.034256429414152044,
+            "B": 20000,
+            "seed": 1
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=2)",
+            "lo": -0.01191428851979526,
+            "hi": 0.03507485059242064,
+            "B": 20000,
+            "seed": 2
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=3)",
+            "lo": -0.011189309821959847,
+            "hi": 0.03481296360398547,
+            "B": 20000,
+            "seed": 3
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=4)",
+            "lo": -0.011063731702443324,
+            "hi": 0.03474245650648795,
+            "B": 20000,
+            "seed": 4
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=5)",
+            "lo": -0.011834771660630933,
+            "hi": 0.03454095002909658,
+            "B": 20000,
+            "seed": 5
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=6)",
+            "lo": -0.011793520501714751,
+            "hi": 0.03494300821456937,
+            "B": 20000,
+            "seed": 6
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=7)",
+            "lo": -0.011553864800696085,
+            "hi": 0.034516275035612616,
+            "B": 20000,
+            "seed": 7
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=42)",
+            "lo": -0.01133873473626566,
+            "hi": 0.0342806626042821,
+            "B": 20000,
+            "seed": 42
+          }
+        ],
+        "lo_min": -0.011915792405456926,
+        "lo_max": -0.011063731702443324,
+        "lo_mean": -0.011569976857707175,
+        "hi_min": 0.034256429414152044,
+        "hi_max": 0.03507485059242064,
+        "hi_mean": 0.03462968340006428,
+        "note": "各 run は同一データ・同一統計量 (unweighted mean-of-cluster-means) を numpy default_rng(seed) だけ変えてリサンプリングした percentile CI。lo/hi のばらつきは純粋な Monte Carlo 誤差 (B=20000) であり、データや統計量の違いによるものではない。"
+      }
+    },
+    "cr_sandwich": {
+      "mean": 0.01708055740465486,
+      "CR0": {
+        "label": "CR0 (小標本補正なし)",
+        "G": 47,
+        "var": 3.832086458673929e-05,
+        "se": 0.006190384849647014,
+        "t": 2.759207677633939,
+        "df": 46,
+        "p_two_sided": 0.008289105338719294,
+        "ci95_t": {
+          "quantile": "t(df=46)",
+          "crit": 2.012895598919429,
+          "lo": 0.004619958985182875,
+          "hi": 0.02954115582412685
+        },
+        "ci95_z": {
+          "quantile": "z(normal)",
+          "crit": 1.959963984540054,
+          "lo": 0.0049476260489043165,
+          "hi": 0.029213488760405408
+        }
+      },
+      "CR1": {
+        "label": "CR1 (G/(G-1)*(n-1)/(n-K) 補正・K=1)",
+        "G": 47,
+        "var": 3.915392686036406e-05,
+        "se": 0.00625730987408839,
+        "t": 2.7296965866091583,
+        "df": 46,
+        "p_two_sided": 0.008952903350710084,
+        "ci95_t": {
+          "quantile": "t(df=46)",
+          "crit": 2.012895598919429,
+          "lo": 0.004485245898027254,
+          "hi": 0.029675868911282467
+        },
+        "ci95_z": {
+          "quantile": "z(normal)",
+          "crit": 1.959963984540054,
+          "lo": 0.004816455411334757,
+          "hi": 0.029344659397974968
+        }
+      },
+      "cr1_factor": 1.0217391304347827,
+      "note": "df=G-1 は Cameron&Miller(2015) の慣行だが唯一の選択ではない (Satterthwaite 等の代替あり・本スクリプトでは df=G-1 のみ採用しその旨を明記する)。"
+    },
+    "en_only": {
+      "n": 46,
+      "mean": 0.011152097508434839,
+      "sd": 0.08262655172295247,
+      "se": 0.012182620416365898,
+      "t": 0.9154104065701107,
+      "df": 45,
+      "p_two_sided": 0.36485575502906076,
+      "ci95_t": {
+        "quantile": "t(df=45)",
+        "crit": 2.014103388880846,
+        "lo": -0.013384959557616701,
+        "hi": 0.035689154574486376
+      },
+      "ci95_z": {
+        "quantile": "z(normal)",
+        "crit": 1.959963984540054,
+        "lo": -0.012725399744964679,
+        "hi": 0.03502959476183436
+      }
+    },
+    "ja_all_delta_mean": 0.022130726945879323,
+    "ja_n": 54,
+    "recorded_reference_values_2026_09_28": {
+      "note": "docs/f0b-reverification-plan.md の 2026-09-28 追記との照合用。本スクリプトの計算値ではない。",
+      "t_naive": 2.4025,
+      "t_cluster_mean": 0.9549,
+      "t_CR0": 2.7592,
+      "t_CR1": 2.7297,
+      "t_en46": 0.9154,
+      "delta_en46": 0.0112,
+      "cluster_mean_ci95_analytic_quoted_from_audit": [
+        -0.0115,
+        0.0348
+      ]
+    }
+  },
+  "exit2_sigma_seed": {
+    "per_arm": {
+      "reward": {
+        "pre": {
+          "field": "reward",
+          "model": "pre",
+          "n": 54,
+          "mean": -0.3093741750113272,
+          "var": 0.0016733370904608975,
+          "sd": 0.040906443141159286,
+          "chi2_ci95_sd": {
+            "lo": 0.0343869473888587,
+            "hi": 0.05049958254683078,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 0.0317118881556233,
+            "hi": 0.048457613812265606
+          }
+        },
+        "post": {
+          "field": "reward",
+          "model": "post",
+          "n": 54,
+          "mean": -0.2872434480654479,
+          "var": 0.0026754426812103764,
+          "sd": 0.0517246815476942,
+          "chi2_ci95_sd": {
+            "lo": 0.043481020751383374,
+            "hi": 0.06385485084862091,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 0.04156474608453507,
+            "hi": 0.05968733481601653
+          }
+        }
+      },
+      "quality_contribution": {
+        "pre": {
+          "field": "quality_contribution",
+          "model": "pre",
+          "n": 54,
+          "mean": -0.3058094297847866,
+          "var": 0.0016311007048736596,
+          "sd": 0.040386887783953586,
+          "chi2_ci95_sd": {
+            "lo": 0.03395019656522487,
+            "hi": 0.04985818411093358,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 0.031210986803422255,
+            "hi": 0.04795019548997333
+          }
+        },
+        "post": {
+          "field": "quality_contribution",
+          "model": "post",
+          "n": 54,
+          "mean": -0.2871669140643318,
+          "var": 0.0026744161878642504,
+          "sd": 0.05171475793102246,
+          "chi2_ci95_sd": {
+            "lo": 0.04347267871873046,
+            "hi": 0.06384260000350225,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 0.04154615087066021,
+            "hi": 0.05967627434582299
+          }
+        }
+      },
+      "anatomy_contribution": {
+        "pre": {
+          "field": "anatomy_contribution",
+          "model": "pre",
+          "n": 54,
+          "mean": -0.0035647452265405704,
+          "var": 3.71684056747073e-06,
+          "sd": 0.0019279109334901158,
+          "chi2_ci95_sd": {
+            "lo": 0.0016206486496897442,
+            "hi": 0.002380033311445776,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 0.0015234370048305393,
+            "hi": 0.0022555298108368795
+          }
+        },
+        "post": {
+          "field": "anatomy_contribution",
+          "model": "post",
+          "n": 54,
+          "mean": -7.653400111603075e-05,
+          "var": 4.446155299122437e-09,
+          "sd": 6.667949684215108e-05,
+          "chi2_ci95_sd": {
+            "lo": 5.605240088741773e-05,
+            "hi": 8.231678181702509e-05,
+            "quantile": "chi2(df=53)"
+          },
+          "bootstrap_ci95_sd": {
+            "method": "nonparametric bootstrap (resample n=54 w/ replacement, B=20000, seed=20260620)",
+            "lo": 4.2937856675604315e-05,
+            "hi": 8.525600740767033e-05
+          }
+        }
+      }
+    },
+    "pooled": {
+      "reward": {
+        "field": "reward",
+        "n_pre": 54,
+        "n_post": 54,
+        "df": 106,
+        "pooled_var": 0.0021743898858356367,
+        "pooled_sd": 0.04663035369623135,
+        "chi2_ci95_sd": {
+          "lo": 0.041109562460562014,
+          "hi": 0.05387755851489403,
+          "quantile": "chi2(df=106)"
+        },
+        "bootstrap_ci95_sd": {
+          "method": "nonparametric bootstrap (resample pre n=54 + post n=54 independently w/ replacement, B=20000, seed=20260620, pooled sd of each replicate)",
+          "lo": 0.039841715009444466,
+          "hi": 0.05209229764482895
+        }
+      },
+      "quality_contribution": {
+        "field": "quality_contribution",
+        "n_pre": 54,
+        "n_post": 54,
+        "df": 106,
+        "pooled_var": 0.002152758446368955,
+        "pooled_sd": 0.04639782803503797,
+        "chi2_ci95_sd": {
+          "lo": 0.04090456662770207,
+          "hi": 0.05360889413806402,
+          "quantile": "chi2(df=106)"
+        },
+        "bootstrap_ci95_sd": {
+          "method": "nonparametric bootstrap (resample pre n=54 + post n=54 independently w/ replacement, B=20000, seed=20260620, pooled sd of each replicate)",
+          "lo": 0.03958430281696438,
+          "hi": 0.05184072364890282
+        }
+      },
+      "anatomy_contribution": {
+        "field": "anatomy_contribution",
+        "n_pre": 54,
+        "n_post": 54,
+        "df": 106,
+        "pooled_var": 1.8606433613849262e-06,
+        "pooled_sd": 0.0013640540170333894,
+        "chi2_ci95_sd": {
+          "lo": 0.0012025571192985968,
+          "hi": 0.0015760528131300083,
+          "quantile": "chi2(df=106)"
+        },
+        "bootstrap_ci95_sd": {
+          "method": "nonparametric bootstrap (resample pre n=54 + post n=54 independently w/ replacement, B=20000, seed=20260620, pooled sd of each replicate)",
+          "lo": 0.0010781260310368632,
+          "hi": 0.001595637648883502
+        }
+      }
+    },
+    "limitations": [
+      "σ_seed は ja の単一プロンプトペア (pre='1girl, solo, long ha...' / post 側は別の単一プロンプト) からのみ推定している。en プロンプト (46 種) には同一プロンプト×複数seedの繰り返し測定が存在しないため、en プロンプトの σ_seed をこのデータから直接検証することはできない (一般化は未検証)。",
+      "pre の σ_seed (reward) と post の σ_seed (reward) は異なる値 (0.0409 vs 0.0517) であり、『pre/post で同じσ_seedを共有する』という pooled 推定の前提は、この 2 標本だけでは強くは検証できない(2標本のF検定的な差の検定はこのスクリプトでは行っていない)。",
+      "pre と post の各 54 件は post_id (= 元の自然文入力/画像) が異なるため、生成そのものは同一シードで繰り返した測定ではなく、『同一プロンプト文字列に対する独立な SDXL 呼び出し』のばらつきである。SDXL の呼び出しごとの乱数シードは server wall-clock 由来で非制御であり (dollma_g2b_reward_prepost.py l.16-19)、post_id が変わっても呼び出しごとに新しい seed が振られるため、ここでの分散は『同一プロンプト文字列を SDXL に何度も投げたときの reward ばらつき』として扱ってよいが、『同一 post_id に対する repeat-seed 測定』ではない (post_id は 54 通りすべて異なる)。",
+      "anatomy_contribution の post 側 sd が極小 (実測は JSON 本体参照) であり、post モデルの生成が同一プロンプト下でほぼ同じ anatomy 評価に収束している可能性がある。これが「post は解剖的に安定した画像だけを生成する」ためか「ScorerNet の分解能不足でほぼ同じ値しか出ない」ためかは、本スクリプトの範囲では切り分けられない。"
+    ]
+  },
+  "exit3_required_n": {
+    "z_alpha2": 1.959963984540054,
+    "z_beta": 0.8416212335729143,
+    "sample_size_const_(z_a2+z_b)^2": 7.848879734349088,
+    "alpha": 0.05,
+    "power": 0.8,
+    "sigma_seed_pooled_reward": 0.04663035369623135,
+    "sigma_seed_pooled_reward_squared": 0.0021743898858356367,
+    "en_delta_var_observed": 0.00682714704962574,
+    "tau2_raw": 0.0024783672779544663,
+    "tau2_used": 0.0024783672779544663,
+    "tau2_floored_at_zero": false,
+    "tau2_note": "τ² = Var(Δ_en46) - 2*σ_seed²(pooled, ja由来)。en の Δ 分散は『真の効果ばらつき + pre/post 2回分のseedノイズ』を含む観測量なので、そこから pooled σ_seed² の寄与 (2倍、pre側とpost側それぞれ1回分) を差し引いて τ² を逆算している。σ_seed が en プロンプトにも同様に当てはまるという未検証の仮定に依存する (上記 limitations 参照)。",
+    "designs": {
+      "overall_naive_delta_0.017081": {
+        "delta": 0.01708055740465486,
+        "design_a_seed_varies_pre_post": [
+          {
+            "k_seeds_per_prompt": 1,
+            "var_delta_per_prompt": 0.00682714704962574,
+            "n_prompts_required": 184,
+            "n_prompts_required_raw": 183.67195693258228,
+            "total_images_required": 368
+          },
+          {
+            "k_seeds_per_prompt": 2,
+            "var_delta_per_prompt": 0.004652757163790103,
+            "n_prompts_required": 126,
+            "n_prompts_required_raw": 125.17395731973683,
+            "total_images_required": 504
+          },
+          {
+            "k_seeds_per_prompt": 4,
+            "var_delta_per_prompt": 0.0035655622208722844,
+            "n_prompts_required": 96,
+            "n_prompts_required_raw": 95.92495751331408,
+            "total_images_required": 768
+          },
+          {
+            "k_seeds_per_prompt": 8,
+            "var_delta_per_prompt": 0.0030219647494133754,
+            "n_prompts_required": 82,
+            "n_prompts_required_raw": 81.30045761010273,
+            "total_images_required": 1312
+          },
+          {
+            "k_seeds_per_prompt": 16,
+            "var_delta_per_prompt": 0.002750166013683921,
+            "n_prompts_required": 74,
+            "n_prompts_required_raw": 73.98820765849705,
+            "total_images_required": 2368
+          }
+        ],
+        "design_b_seed_fixed_optimistic_rho1": [
+          {
+            "k_seeds_per_prompt": 1,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 67,
+            "n_prompts_required_raw": 66.67595770689137,
+            "total_images_required": 134,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 2,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 67,
+            "n_prompts_required_raw": 66.67595770689137,
+            "total_images_required": 268,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 4,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 67,
+            "n_prompts_required_raw": 66.67595770689137,
+            "total_images_required": 536,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 8,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 67,
+            "n_prompts_required_raw": 66.67595770689137,
+            "total_images_required": 1072,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 16,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 67,
+            "n_prompts_required_raw": 66.67595770689137,
+            "total_images_required": 2144,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          }
+        ],
+        "design_b_seed_fixed_pessimistic_rho0_note": "ρ=0 (相殺なし) の場合は design_a と数式上同一になる (k=1相当) ので別表は出さない。"
+      },
+      "en46_delta_0.011152": {
+        "delta": 0.011152097508434839,
+        "design_a_seed_varies_pre_post": [
+          {
+            "k_seeds_per_prompt": 1,
+            "var_delta_per_prompt": 0.00682714704962574,
+            "n_prompts_required": 431,
+            "n_prompts_required_raw": 430.8576573092726,
+            "total_images_required": 862
+          },
+          {
+            "k_seeds_per_prompt": 2,
+            "var_delta_per_prompt": 0.004652757163790103,
+            "n_prompts_required": 294,
+            "n_prompts_required_raw": 293.63305595262295,
+            "total_images_required": 1176
+          },
+          {
+            "k_seeds_per_prompt": 4,
+            "var_delta_per_prompt": 0.0035655622208722844,
+            "n_prompts_required": 226,
+            "n_prompts_required_raw": 225.02075527429807,
+            "total_images_required": 1808
+          },
+          {
+            "k_seeds_per_prompt": 8,
+            "var_delta_per_prompt": 0.0030219647494133754,
+            "n_prompts_required": 191,
+            "n_prompts_required_raw": 190.71460493513567,
+            "total_images_required": 3056
+          },
+          {
+            "k_seeds_per_prompt": 16,
+            "var_delta_per_prompt": 0.002750166013683921,
+            "n_prompts_required": 174,
+            "n_prompts_required_raw": 173.56152976555447,
+            "total_images_required": 5568
+          }
+        ],
+        "design_b_seed_fixed_optimistic_rho1": [
+          {
+            "k_seeds_per_prompt": 1,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 157,
+            "n_prompts_required_raw": 156.40845459597327,
+            "total_images_required": 314,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 2,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 157,
+            "n_prompts_required_raw": 156.40845459597327,
+            "total_images_required": 628,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 4,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 157,
+            "n_prompts_required_raw": 156.40845459597327,
+            "total_images_required": 1256,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 8,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 157,
+            "n_prompts_required_raw": 156.40845459597327,
+            "total_images_required": 2512,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          },
+          {
+            "k_seeds_per_prompt": 16,
+            "var_delta_per_prompt": 0.0024783672779544663,
+            "n_prompts_required": 157,
+            "n_prompts_required_raw": 156.40845459597327,
+            "total_images_required": 5024,
+            "caveat": "ρ=1 (同一seedでpre/postを撮ればseedノイズが完全相殺される) という楽観的仮定。本データには ρ の実測値がない (pre/post は常に異なるseedで撮られているため)。"
+          }
+        ],
+        "design_b_seed_fixed_pessimistic_rho0_note": "ρ=0 (相殺なし) の場合は design_a と数式上同一になる (k=1相当) ので別表は出さない。"
+      }
+    }
+  },
+  "cross_check": {
+    "ok": true,
+    "n_checks": 39,
+    "n_fail": 0,
+    "messages": [],
+    "checks": [
+      {
+        "name": "naive.mean",
+        "recomputed_numpy": 0.017080557404654858,
+        "original": 0.01708055740465486,
+        "diff": 3.469446951953614e-18,
+        "ok": true
+      },
+      {
+        "name": "naive.t",
+        "recomputed_numpy": 2.4024753996279733,
+        "original": 2.4024753996279737,
+        "diff": 4.440892098500626e-16,
+        "ok": true
+      },
+      {
+        "name": "cluster_mean.mean",
+        "recomputed_numpy": 0.011385685368805996,
+        "original": 0.011385685368806,
+        "diff": 3.469446951953614e-18,
+        "ok": true
+      },
+      {
+        "name": "cluster_mean.t",
+        "recomputed_numpy": 0.9549437140354143,
+        "original": 0.9549437140354146,
+        "diff": 2.220446049250313e-16,
+        "ok": true
+      },
+      {
+        "name": "cr_sandwich.CR0.t",
+        "recomputed_numpy": 2.7592076776339387,
+        "original": 2.759207677633939,
+        "diff": 4.440892098500626e-16,
+        "ok": true
+      },
+      {
+        "name": "cr_sandwich.CR1.t",
+        "recomputed_numpy": 2.7296965866091583,
+        "original": 2.7296965866091583,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "en_only.mean",
+        "recomputed_numpy": 0.011152097508434839,
+        "original": 0.011152097508434839,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "en_only.t",
+        "recomputed_numpy": 0.9154104065701107,
+        "original": 0.9154104065701107,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.pre.sd",
+        "recomputed_numpy": 0.040906443141159286,
+        "original": 0.040906443141159286,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.post.sd",
+        "recomputed_numpy": 0.05172468154769419,
+        "original": 0.0517246815476942,
+        "diff": 6.938893903907228e-18,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.pooled.sd",
+        "recomputed_numpy": 0.04663035369623135,
+        "original": 0.04663035369623135,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.pre.sd",
+        "recomputed_numpy": 0.040386887783953586,
+        "original": 0.040386887783953586,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.post.sd",
+        "recomputed_numpy": 0.05171475793102246,
+        "original": 0.05171475793102246,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.pooled.sd",
+        "recomputed_numpy": 0.04639782803503796,
+        "original": 0.04639782803503797,
+        "diff": 6.938893903907228e-18,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.pre.sd",
+        "recomputed_numpy": 0.001927910933490116,
+        "original": 0.0019279109334901158,
+        "diff": 2.168404344971009e-19,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.post.sd",
+        "recomputed_numpy": 6.667949684215108e-05,
+        "original": 6.667949684215108e-05,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.pooled.sd",
+        "recomputed_numpy": 0.0013640540170333894,
+        "original": 0.0013640540170333894,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.tau2_used",
+        "recomputed_numpy": 0.0024783672779544663,
+        "original": 0.0024783672779544663,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en_delta_var_observed",
+        "recomputed_numpy": 0.00682714704962574,
+        "original": 0.00682714704962574,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 183.67195693258228,
+        "original": 183.67195693258228,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 125.17395731973683,
+        "original": 125.17395731973683,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 95.92495751331408,
+        "original": 95.92495751331408,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 81.30045761010273,
+        "original": 81.30045761010273,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 73.98820765849705,
+        "original": 73.98820765849705,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 430.8576573092726,
+        "original": 430.8576573092726,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 293.63305595262295,
+        "original": 293.63305595262295,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 225.02075527429807,
+        "original": 225.02075527429807,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 190.71460493513567,
+        "original": 190.71460493513567,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 173.56152976555447,
+        "original": 173.56152976555447,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      }
+    ],
+    "naive_mean_numpy": 0.017080557404654858,
+    "naive_t_numpy": 2.4024753996279733
+  },
+  "notes": [
+    "採否・有意性の断定はしていない (数値と分位点の明記のみ)。",
+    "GPU 実走の起票・撮影枚数の最終決定はしていない (逆算値の提示まで)。",
+    "cluster 定義は (pre.prompt, post.prompt) のペアで機械的に決めている (lang をハードコードしていない)。本データでは結果的に ja=1クラスタ(54件)・en=46 singleton クラスタ = G=47 になる。"
+  ]
+}
