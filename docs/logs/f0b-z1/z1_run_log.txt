@@ -1,0 +1,39 @@
+F-0b 再検証 Z-1 実行記録
+========================
+
+日時: 2026-09-29
+実行場所: git worktree E:\Develop\Projects\dollama\.claude\worktrees\agent-a3fa76555e564d19a
+実行環境: Python 3.14.6 (MSC v.1944 64bit AMD64) / Windows-11-10.0.26200-SP0
+
+入力ファイル (main checkout から読み取り専用参照・worktree には無い = gitignore 対象のため):
+  E:\Develop\Projects\dollama\data\rollouts\candidates_bestofn.jsonl
+    sha256 = a38fba8b9dadec8ec68e8a1d94fc3813653fe932e6cbca2623a7007f728142c5
+  E:\Develop\Projects\dollama\data\rollouts\sft_bestofn.jsonl
+    sha256 = 032470f2d4bff6e42489290a6d53a28bbe7ad8436dc1884281b0517055a57b0a
+  E:\Develop\Projects\dollama\data\rollouts\g2b_prepost.jsonl
+    sha256 = ba2db3bec55157ab24e8f10c71e7498ae04997aeeba92c4b24eb326820699e89
+
+コマンド1 (自己検査):
+  python3 scripts/dollma_f0b_z1_quality_contribution.py --selftest
+  結果: [selftest] OK (exit 0)
+
+コマンド2 (本計算):
+  python3 scripts/dollma_f0b_z1_quality_contribution.py
+  出力: docs/logs/f0b-z1/z1_result.json
+
+標準出力の要約 (コンソールは Δ が文字化けするが JSON ファイル自体は UTF-8 で正しい。
+一次証拠でバイト確認済み: `docs/logs/f0b-z1/z1_result.json` の該当箇所は \xce\x94 = U+0394 Δ):
+
+== summary ==
+winner_match.overall: {'n_groups': 400, 'n_groups_valid_official_winner': 400,
+  'n_groups_official_winner_anomaly': 0, 'n_match': 44, 'match_rate': 0.11, 'n_tie_groups': 0}
+winner_match.ja: {'n_groups': 184, 'n_groups_valid_official_winner': 184,
+  'n_groups_official_winner_anomaly': 0, 'n_match': 14, 'match_rate': 0.07608695652173914, 'n_tie_groups': 0}
+winner_match.en: {'n_groups': 216, 'n_groups_valid_official_winner': 216,
+  'n_groups_official_winner_anomaly': 0, 'n_match': 30, 'match_rate': 0.1388888888888889, 'n_tie_groups': 0}
+sanity_full_reward_argmax_mismatch_vs_is_winner: 0
+contribution.delta_based: anatomy_share=0.09287305891828718 / quality_share=0.9071269410817128
+contribution.level_based: anatomy_share=0.01125984005772925 / quality_share=0.9887401599422707
+
+生成ゼロ・訓練ゼロ (既存データの再解析のみ)。正典 bitnet_dense*/identity/golden・main checkout への書き込みは
+一切なし (読み取りのみ)。

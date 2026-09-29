@@ -125,13 +125,13 @@
 **結論**: RAFT-SFT (best-of-N→top-1→SFT) を end-to-end で実装・実走・評価。**パイプラインは検証済み・再利用可能**。**この 1 走行では出荷に値する効果を検出できなかったため不採用でクローズした**。
 - ⚠️ **棄却されたのは「RAFT-SFT という手法」ではない** (2026-09-28 是正)。棄却されたのは
   **「anatomy 軸が死んだ現行 reward 設計・単一 seed (20260620)・検出力不足という条件下で、M=400 の RAFT-SFT の効果を検出できなかった」**という一点。手法自体の一般的な無効性は示していない。
-  - 報酬の実効寄与は **quality 軸に支配されている**: Δ 内訳 quality **+0.015494** / anatomy **+0.001586** (合計 +0.017081 = Δ mean と一致) = **Δ の 9 割超が quality 由来 (Δ 基準で quality 90.7% / anatomy 9.3%)**。★**「anatomy 寄与率 7.5%」は定義未記載のまま引用した値で独立再現できていない (2026-09-28 是正・監査 中③)**: Δ 基準なら 9.29%・水準基準 (200 行の平均絶対寄与 anatomy 0.003253 / quality 0.285610) なら 1.13% で、**7.5% はどちらの定義でも再現しない → 寄与率の定義を決めて再計算するのは Z-1 の宿題**。主表現は「Δ の 9 割超が quality」を使う。
+  - 報酬の実効寄与は **quality 軸に支配されている**: Δ 内訳 quality **+0.015494** / anatomy **+0.001586** (合計 +0.017081 = Δ mean と一致) = **Δ の 9 割超が quality 由来 (Δ 基準で quality 90.7% / anatomy 9.3%)**。★**「anatomy 寄与率 7.5%」は定義未記載のまま引用した値で独立再現できていない (2026-09-28 是正・監査 中③)**: Δ 基準なら 9.29%・水準基準 (200 行の平均絶対寄与 anatomy 0.003253 / quality 0.285610) なら 1.13% で、**7.5% はどちらの定義でも再現しない → 寄与率の定義を決めて再計算するのは Z-1 の宿題** (→ 2026-09-29 Z-1 で定義確定・算出済 = `docs/f0b-reverification-plan.md`「### Z-1」節)。主表現は「Δ の 9 割超が quality」を使う。
   - 一次証拠 (anatomy の分解能): `data/rollouts/g2b_prepost.jsonl` 200 行の `axes` argmax は Limbs 148 / Hands 35 / Head 17 = **8 軸のうち 5 軸は一度も argmax にならない**。★**F-0a の「7 死軸」と同じ物差し (軸別 max 値 < 0.012) を当てると死軸は 7 本** (2026-09-28 追記・監査 中②): Limbs **0.09347** のみ生存で Hands 0.00141 / Head 0.00993 / Eyes 0.00154 / Ears 0.00173 / Mouth 0.00117 / Digits 0.00164 / GlobalAnatomy 0.00150。**Hands は argmax を 35 回取るが max 0.00141 = 他軸がさらに小さいだけで死んでいる**。argmax 分布 (3 軸が立つ) と dynamic range (1 軸だけ生存) は別の物差しなので混ぜて数えないこと。
   - **処置面は変更なし**: 正典無改変・SFT 重み隔離は不採用判定下で妥当。
 - G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017・有意性未確立)・G-3 不採用。
 - **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
-- **再検証 (未実施)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
-  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。全 status は 🔲 未。再検証の結果が
+- **再検証 (Z-1 のみ算出済)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
+  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。Z-1 は算出済・判定なし (同「### Z-1」節)、Z-2〜Z-5 は 🔲 未。再検証の結果が
   **依然「不採用」になることも十分あり得る** (採用へ仕向ける作業ではない)。
 - **次レバー (F-0b とは別軸・優先度順の仮説)**: (a) **reward 設計**の見直し (anatomy が死んでいる → quality 主体でよいか/新軸) (b) **日本語条件付けトークナイザ改修** (空条件を実条件に・[[project_expression_fidelity_gap]]) (c) SDXL seed 制御 (HTTP に seed 引数・SAC 制約下の実現方法) で reward 比較のノイズ除去 (d) 教師枚数増 M拡大 (効果量 +0.017 自体は seed 交絡で伸びにくい公算・優先度低)。
   ※ これらは F-0b の**再検証**とは別物。再検証 (手続き不備の是正) は `docs/f0b-reverification-plan.md` Z-1〜Z-5。
@@ -153,5 +153,5 @@
 - quality 枝: `docs/q2-quality-branch-plan.md` / QualityMLP `data/scorer/quality_mlp*.safetensors` / CLIP image IR `models/clip-image/`
 - 評価: diverse set-F1 = `scripts/dollma_make_eval_diverse.py` / `scripts/test_dollma_eval_diverse.py` (training-spec §13/§17)
 - F 全体: CLAUDE.md 計測表 Phase4 F 行 / `docs/measurements-log.md` / [[project_phase4_F_status]] / roadmap F-0b 行
-- 再検証台帳 (Z-1〜Z-5・全て未実施): `docs/f0b-reverification-plan.md`
+- 再検証台帳 (Z-1 算出済・判定なし / Z-2〜Z-5 未実施): `docs/f0b-reverification-plan.md`
 - G-2b 生データ: `data/rollouts/g2b_prepost.jsonl` (200 行 = pre/post × 100 入力) / G-2a 評価 provenance: `data/bitnet/_g2a_eval/eval_report_*.json`
