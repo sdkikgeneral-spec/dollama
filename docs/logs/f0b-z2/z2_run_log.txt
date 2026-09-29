@@ -1,0 +1,30 @@
+F-0b 再検証 Z-2 実行記録
+========================
+
+実行日 (UTC): 2026-09-29
+実行場所: git worktree E:\Develop\Projects\dollama\.claude\worktrees\f0b-z2-sigma-seed (branch worktree-f0b-z2-sigma-seed)
+環境: Python 3.14 / numpy / scipy (バージョンは z2_result.json の env ブロックに記載)
+
+入力 (main checkout・gitignore 対象のため repo には無い・読み取り専用で参照):
+  E:\Develop\Projects\dollama\data\rollouts\g2b_prepost.jsonl
+  sha256 = ba2db3bec55157ab24e8f10c71e7498ae04997aeeba92c4b24eb326820699e89
+  (docs/logs/f0b-z1/README.md に記載の値と一致。Z-1 と同一ファイルを使用している)
+
+コマンド:
+  python scripts/dollma_f0b_z2_seed_variance.py --selftest   -> [selftest] OK (exit 0)
+  python scripts/dollma_f0b_z2_seed_variance.py              -> docs/logs/f0b-z2/z2_result.json を書き出し
+
+標準出力の要約 (本計算):
+  naive: t=2.4024753996279737 df=99
+  cluster_mean: t=0.9549437140354146 df=46
+    bootstrap 95%CI (cluster percentile, G=47, B=20000, seed=20260620): lo=-0.011915792405456926, hi=0.03474596163534591
+  CR0: t=2.759207677633939
+  CR1: t=2.7296965866091583
+  en_only: t=0.9154104065701107 df=45
+  sigma_seed pooled (reward, ja 54+54, df=106): pooled_sd=0.04663035369623135
+    chi2 95%CI: lo=0.041109562460562014 hi=0.05387755851489403
+    bootstrap 95%CI: lo=0.039841715009444466 hi=0.05209229764482895
+  cross_check: ok=True (naive mean/t の numpy 独立再計算が一致)
+
+既存データの再解析のみで、SDXL 生成も LM 訓練もしていない。
+main checkout の data/ へは読み取りだけで、書き込んでいない。
