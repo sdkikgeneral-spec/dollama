@@ -33,7 +33,7 @@
 > **CI の数値を引くときは分位点を明記し、記録値が未再現であることを承知で引くこと**。CI の確定は Z-2 の宿題。
 > → **2026-09-29 Z-2 の帰結 (下記「### Z-2」節)**: 解析的 CI は Z-2 でも **t(46) [−0.01261, +0.03539] / z [−0.01198, +0.03475]** で、
 > 下端 −0.0115 は**再現しない**。cluster bootstrap percentile CI (B=20000) では下端が乱数 seed により
-> −0.0111〜−0.0119 に振れ、−0.0115 はその幅に入る。ただし記録値の計算条件 (手法・B・seed) が残っていないので、
+> −0.0111〜−0.0119 に振れ (10 seed・JSON `exit1_estimators.cluster_mean.bootstrap_percentile_ci95_seed_sweep`)、−0.0115 はその幅に入る。ただし記録値の計算条件 (手法・B・seed) が残っていないので、
 > **これは「bootstrap なら出うる値」という示唆にとどまり、再現の証明ではない**。記録値 [−0.0115, +0.0348] は**出自未確定の引用値のまま**扱う。
 > cluster-mean 推定量の CI が「0 を含む」ことは、t / z / bootstrap のどれでも同じ (CR sandwich の CI は 0 を含まない。推定量が違う)。
 > なお **en46 の 95%CI は t(45) 基準で [−0.0134, +0.0357] = 記録値に一致** (本セッションで独立再計算済)。
@@ -146,7 +146,7 @@
 - 意味: 保留中の GPU 実走の**枚数設計**がここで決まる。
 
 #### Z-2 結果 (2026-09-29 算出・**数値のみ。有意・採否・GPU 実走の枚数決定はしていない**)
-- **一次成果物** (commit `985a409`): スクリプト `scripts/dollma_f0b_z2_seed_variance.py` / 出力 `docs/logs/f0b-z2/z2_result.json` /
+- **一次成果物** (commit `985a409` + 追補 `468265c` = cross_check の拡張と bootstrap seed sweep の記録。追補で既存の数値は変わっていない = JSON の差分は追加行のみ): スクリプト `scripts/dollma_f0b_z2_seed_variance.py` / 出力 `docs/logs/f0b-z2/z2_result.json` /
   実行記録 `docs/logs/f0b-z2/z2_run_log.txt` / 出自と再現手順 `docs/logs/f0b-z2/README.md`。
   既存データの再解析のみで、SDXL 生成も訓練もしていない。
 - **入力**: `data/rollouts/g2b_prepost.jsonl` (200 行 = 100 ペア)。sha256 `ba2db3be…9e89` (JSON `inputs.g2b_prepost.sha256`)。
@@ -196,14 +196,19 @@
     ja の prompt uniq (pre・post とも 1) / σ_seed の pre・post・pooled / anatomy post sd / τ² /
     必要プロンプト数 (Δ 2 種 × k=1・4・16 と設計 (b))。
   - cluster bootstrap の seed 依存を見るため、スクリプトの `_cluster_bootstrap_ci` を seed 10 通り (20260620, 0〜7, 42) で走らせた。
-    B=20000 で下端 −0.01106〜−0.01192、上端 +0.03426〜+0.03507 だった。この値はログに残していない (本節が唯一の記録)。
+    B=20000 で下端 −0.01106〜−0.01192、上端 +0.03426〜+0.03507 だった。
+    ~~この値はログに残していない (本節が唯一の記録)。~~ (追補 `468265c` で解消)
+    **一次出典は JSON `exit1_estimators.cluster_mean.bootstrap_percentile_ci95_seed_sweep`** (同じ 10 seed・B=20000。
+    lo −0.011916〜−0.011064 / hi 0.034256〜0.035075 で、上の record-writer 走行と一致する)。
 - **読み方の注意** (★引用するときに誤読しやすい点):
   - **出口①の「どれを結論の根拠に採るかを理由付きで選ぶ」は Z-2 では済んでいない**。5 系列を並べただけである。
     推定量によって t が 0.92〜2.76 と割れる状況は変わっていない。選択は別途決裁が要る。
   - **記録値 CI [−0.0115, +0.0348] は再現していない**。解析的 CI (t・z) では下端が合わない。
     bootstrap では −0.0115 が seed のばらつきの幅に入るが、元の計算条件が残っていないので再現の証明にはならない。
-    なお `docs/logs/f0b-z2/README.md` にある「seed によって −0.0114〜−0.0117」という幅は、実行記録に出典がない。
-    上の record-writer の 10 seed 走行とも一致しない (より狭い)。
+    bootstrap の seed 幅の一次出典は JSON `exit1_estimators.cluster_mean.bootstrap_percentile_ci95_seed_sweep` (下端 −0.011916〜−0.011064)。
+    ~~なお `docs/logs/f0b-z2/README.md` にある「seed によって −0.0114〜−0.0117」という幅は、実行記録に出典がない。
+    上の record-writer の 10 seed 走行とも一致しない (より狭い)。~~
+    (追補 `468265c` で README は「−0.0111〜−0.0119」+ JSON の seed sweep 値に直された)
   - **Δ+0.017081 は naive 平均である**。ja の疑似反復 54 ペアを含んだまま計算している (ja のみの Δ 平均は +0.022131・JSON `exit1_estimators.ja_all_delta_mean`)。
     これは本節の出口③が「Δ=+0.017」を目標に指定したので置いた値で、**真の効果量として検証された値ではない**。
   - 設計 (a) の k=1 の Var(Δᵢ) は、定義上 en46 の観測分散 0.006827 そのものになる。
@@ -221,9 +226,14 @@
      「同一プロンプト文字列に対する独立な SDXL 呼び出し」のばらつきである。
   4. pre と post の σ_seed は 0.0409 と 0.0517 で異なる。pooled はこの 2 つが同じだという前提に立つが、その前提は検定していない。
   5. CR sandwich の df は G−1 (=46) だけを採った (Cameron & Miller 2015 の慣行)。Satterthwaite 等の代替 df は計算していない。
-  6. スクリプト docstring の「出口 (5): 全ての主要数値を 2 経路で計算」は実装と合わない。
+  6. ~~スクリプト docstring の「出口 (5): 全ての主要数値を 2 経路で計算」は実装と合わない。
      実際の `cross_check` が照合するのは **naive の mean と t だけ**である (関数 `cross_check`・run log も「naive mean/t」と記載)。
-     他の値の 2 経路検算は、上の record-writer 独立検算が代わりになっている。
+     他の値の 2 経路検算は、上の record-writer 独立検算が代わりになっている。~~
+     (`985a409` 時点の記載。追補 `468265c` で解消)
+     **2 経路検算の一次出典は JSON `cross_check`** (`ok=true`・`n_checks=39`・`n_fail=0`。項目の一覧は `cross_check.checks[].name`)。
+     対象は各推定量の mean・t (naive / cluster-mean / CR0・CR1 は t のみ / en46)、σ_seed の sd 9 本 (3 成分 × pre・post・pooled)、τ²、
+     Var(Δ_en46)、必要プロンプト数 raw 20 本。**CI・se・p は照合対象に入っていない**。docstring の「出口 (5)」も拡張に合わせて書き直された。
+     ただし docstring の列挙は必要プロンプト数を「design a の全 k」としか書いておらず、`checks` に入っている design (b) の 10 本と Var(Δ_en46) が抜けている (軽微・一次出典は JSON 側)。
 
 ### Z-3 — set-F1 per-case paired bootstrap CI
 - 入口: 隔離重み `data/bitnet/bitnet_dense_sft_fp32.safetensors` + 正典 + 凍結 diverse-val (`data/bitnet/_g2a_eval/pairs.eval_diverse_{a,b}.jsonl`)。
