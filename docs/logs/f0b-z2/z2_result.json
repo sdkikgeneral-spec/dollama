@@ -68,6 +68,100 @@
         "hi": 0.03474596163534591,
         "B": 20000,
         "seed": 20260620
+      },
+      "bootstrap_percentile_ci95_seed_sweep": {
+        "seeds": [
+          20260620,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          42
+        ],
+        "B": 20000,
+        "runs": [
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=20260620)",
+            "lo": -0.011915792405456926,
+            "hi": 0.03474596163534591,
+            "B": 20000,
+            "seed": 20260620
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=0)",
+            "lo": -0.011274341316426071,
+            "hi": 0.03438327636469016,
+            "B": 20000,
+            "seed": 0
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=1)",
+            "lo": -0.011821413111682909,
+            "hi": 0.034256429414152044,
+            "B": 20000,
+            "seed": 1
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=2)",
+            "lo": -0.01191428851979526,
+            "hi": 0.03507485059242064,
+            "B": 20000,
+            "seed": 2
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=3)",
+            "lo": -0.011189309821959847,
+            "hi": 0.03481296360398547,
+            "B": 20000,
+            "seed": 3
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=4)",
+            "lo": -0.011063731702443324,
+            "hi": 0.03474245650648795,
+            "B": 20000,
+            "seed": 4
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=5)",
+            "lo": -0.011834771660630933,
+            "hi": 0.03454095002909658,
+            "B": 20000,
+            "seed": 5
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=6)",
+            "lo": -0.011793520501714751,
+            "hi": 0.03494300821456937,
+            "B": 20000,
+            "seed": 6
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=7)",
+            "lo": -0.011553864800696085,
+            "hi": 0.034516275035612616,
+            "B": 20000,
+            "seed": 7
+          },
+          {
+            "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=47, B=20000, unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=42)",
+            "lo": -0.01133873473626566,
+            "hi": 0.0342806626042821,
+            "B": 20000,
+            "seed": 42
+          }
+        ],
+        "lo_min": -0.011915792405456926,
+        "lo_max": -0.011063731702443324,
+        "lo_mean": -0.011569976857707175,
+        "hi_min": 0.034256429414152044,
+        "hi_max": 0.03507485059242064,
+        "hi_mean": 0.03462968340006428,
+        "note": "各 run は同一データ・同一統計量 (unweighted mean-of-cluster-means) を numpy default_rng(seed) だけ変えてリサンプリングした percentile CI。lo/hi のばらつきは純粋な Monte Carlo 誤差 (B=20000) であり、データや統計量の違いによるものではない。"
       }
     },
     "cr_sandwich": {
@@ -518,7 +612,284 @@
   },
   "cross_check": {
     "ok": true,
+    "n_checks": 39,
+    "n_fail": 0,
     "messages": [],
+    "checks": [
+      {
+        "name": "naive.mean",
+        "recomputed_numpy": 0.017080557404654858,
+        "original": 0.01708055740465486,
+        "diff": 3.469446951953614e-18,
+        "ok": true
+      },
+      {
+        "name": "naive.t",
+        "recomputed_numpy": 2.4024753996279733,
+        "original": 2.4024753996279737,
+        "diff": 4.440892098500626e-16,
+        "ok": true
+      },
+      {
+        "name": "cluster_mean.mean",
+        "recomputed_numpy": 0.011385685368805996,
+        "original": 0.011385685368806,
+        "diff": 3.469446951953614e-18,
+        "ok": true
+      },
+      {
+        "name": "cluster_mean.t",
+        "recomputed_numpy": 0.9549437140354143,
+        "original": 0.9549437140354146,
+        "diff": 2.220446049250313e-16,
+        "ok": true
+      },
+      {
+        "name": "cr_sandwich.CR0.t",
+        "recomputed_numpy": 2.7592076776339387,
+        "original": 2.759207677633939,
+        "diff": 4.440892098500626e-16,
+        "ok": true
+      },
+      {
+        "name": "cr_sandwich.CR1.t",
+        "recomputed_numpy": 2.7296965866091583,
+        "original": 2.7296965866091583,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "en_only.mean",
+        "recomputed_numpy": 0.011152097508434839,
+        "original": 0.011152097508434839,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "en_only.t",
+        "recomputed_numpy": 0.9154104065701107,
+        "original": 0.9154104065701107,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.pre.sd",
+        "recomputed_numpy": 0.040906443141159286,
+        "original": 0.040906443141159286,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.post.sd",
+        "recomputed_numpy": 0.05172468154769419,
+        "original": 0.0517246815476942,
+        "diff": 6.938893903907228e-18,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.reward.pooled.sd",
+        "recomputed_numpy": 0.04663035369623135,
+        "original": 0.04663035369623135,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.pre.sd",
+        "recomputed_numpy": 0.040386887783953586,
+        "original": 0.040386887783953586,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.post.sd",
+        "recomputed_numpy": 0.05171475793102246,
+        "original": 0.05171475793102246,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.quality_contribution.pooled.sd",
+        "recomputed_numpy": 0.04639782803503796,
+        "original": 0.04639782803503797,
+        "diff": 6.938893903907228e-18,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.pre.sd",
+        "recomputed_numpy": 0.001927910933490116,
+        "original": 0.0019279109334901158,
+        "diff": 2.168404344971009e-19,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.post.sd",
+        "recomputed_numpy": 6.667949684215108e-05,
+        "original": 6.667949684215108e-05,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "sigma_seed.anatomy_contribution.pooled.sd",
+        "recomputed_numpy": 0.0013640540170333894,
+        "original": 0.0013640540170333894,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.tau2_used",
+        "recomputed_numpy": 0.0024783672779544663,
+        "original": 0.0024783672779544663,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en_delta_var_observed",
+        "recomputed_numpy": 0.00682714704962574,
+        "original": 0.00682714704962574,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 183.67195693258228,
+        "original": 183.67195693258228,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 125.17395731973683,
+        "original": 125.17395731973683,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 95.92495751331408,
+        "original": 95.92495751331408,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 81.30045761010273,
+        "original": 81.30045761010273,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_a.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 73.98820765849705,
+        "original": 73.98820765849705,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.overall_naive_delta_0.017081.design_b.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 66.67595770689137,
+        "original": 66.67595770689137,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 430.8576573092726,
+        "original": 430.8576573092726,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 293.63305595262295,
+        "original": 293.63305595262295,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 225.02075527429807,
+        "original": 225.02075527429807,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 190.71460493513567,
+        "original": 190.71460493513567,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_a.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 173.56152976555447,
+        "original": 173.56152976555447,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=1.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=2.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=4.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=8.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      },
+      {
+        "name": "required_n.en46_delta_0.011152.design_b.k=16.n_prompts_required_raw",
+        "recomputed_numpy": 156.40845459597327,
+        "original": 156.40845459597327,
+        "diff": 0.0,
+        "ok": true
+      }
+    ],
     "naive_mean_numpy": 0.017080557404654858,
     "naive_t_numpy": 2.4024753996279733
   },

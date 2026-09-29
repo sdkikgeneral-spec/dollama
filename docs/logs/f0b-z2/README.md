@@ -48,9 +48,11 @@ python scripts/dollma_f0b_z2_seed_variance.py              # 本計算 → docs/
   の 2026-09-28 記録値 (2.4025 / 0.9549 / 2.7592 / 2.7297 / 0.9154) と全て一致した (`cross_check.ok=true`)。
 - 記録に残る「cluster-mean 95%CI [-0.0115, +0.0348]」の下端は、解析的 t/z CI (t(46) → [-0.0126,+0.0354]・
   z → [-0.0120,+0.0348]) では再現しないが、**nonparametric cluster bootstrap percentile CI では
-  seed によって -0.0114〜-0.0117 のレンジに入り、-0.0115 に近い** (本スクリプトの既定 seed=20260620 での
-  1 回の実行では lo=-0.0119 で、乱数シードに依存した Monte Carlo 誤差の範囲内)。**この一致は示唆であって
+  seed によって -0.0111〜-0.0119 のレンジに入り、-0.0115 に近い** (10 seed sweep [20260620, 0-7, 42]・
+  B=20000: lo_min=-0.011916 / lo_max=-0.011064 / lo_mean=-0.011570・hi_min=0.034256 / hi_max=0.035075 /
+  hi_mean=0.034630。本スクリプトの既定 seed=20260620 では lo=-0.011916)。**この一致は示唆であって
   確定的な再現証明ではない** (元の CI がどの乱数シード・どの B で計算されたか記録が残っていないため)。
+  seed sweep の全内訳は JSON `exit1_estimators.cluster_mean.bootstrap_percentile_ci95_seed_sweep` 参照。
 - σ_seed (reward, pooled ja 54+54) = 0.0466 (chi2 95%CI [0.0411, 0.0539] / bootstrap 95%CI [0.0398, 0.0521])。
   この推定は ja の単一プロンプトペアのみに基づき、en プロンプトへの一般化は未検証 (JSON `limitations`)。
 - 必要プロンプト数の逆算は τ² (プロンプト間の真の効果ばらつき) を en46 の Δ 分散から σ_seed² 分を

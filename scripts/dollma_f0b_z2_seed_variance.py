@@ -28,8 +28,14 @@
           常に別 seed が使われているため相殺の効果を直接観測できない) ことを明記する。
     1 プロンプトあたり k seed を撒く場合の総必要枚数 (プロンプト数 × k × 2 アーム) の表も出す。
 
-  出口 (5): 検算。全ての主要数値を素朴な python ループ実装と numpy ベクトル実装の 2 経路で計算し
-    一致を確認する (cross_check ブロック)。
+  出口 (5): 検算。以下の主要数値を素朴な python ループ実装 (上記の compute_estimators /
+    compute_sigma_seed / compute_required_n) と numpy ベクトル実装 (cross_check 内で独立に再実装)
+    の 2 経路で計算し一致を確認する (cross_check ブロック):
+      naive の mean/t、cluster-mean の mean/t、CR0/CR1 の t、en46 の mean/t、
+      σ_seed の pre/post/pooled sd (reward・quality_contribution・anatomy_contribution の 3 成分)、
+      τ²、必要プロンプト数テーブル (design a の全 k・delta 組み合わせ・n_prompts_required_raw)。
+    各項目は許容誤差内 (相対誤差ベース) で一致すれば ok、1 件でも不一致なら cross_check.ok=False とし
+    不一致の内訳を messages / checks に残す。
 
 禁止事項:
   - GPU 実走の起票・撮る枚数の最終決定はしない (数値の算出まで)。
@@ -59,6 +65,9 @@ ALPHA = 0.05
 POWER = 0.8
 BOOTSTRAP_SEED = 20260620
 N_BOOTSTRAP = 20000
+# cluster bootstrap CI の seed 依存を確認するための seed 一覧 (既定 seed 20260620 を含む・
+# coordinator 指示: 20260620, 0..7, 42 の 10 通り)
+BOOTSTRAP_SEED_SWEEP = [20260620, 0, 1, 2, 3, 4, 5, 6, 7, 42]
 
 
 def sha256_of(path):
@@ -178,6 +187,9 @@ def compute_estimators(pairs):
     # --- cluster bootstrap percentile CI (cluster-mean 推定量の nonparametric 版) ---
     boot = _cluster_bootstrap_ci(list(cluster_deltas.values()), seed=BOOTSTRAP_SEED, n_boot=N_BOOTSTRAP)
     cluster_mean_est["bootstrap_percentile_ci95"] = boot
+    # --- seed 依存の確認: 複数 seed で cluster bootstrap CI を振って lo/hi のばらつきを残す ---
+    cluster_mean_est["bootstrap_percentile_ci95_seed_sweep"] = _cluster_bootstrap_ci_seed_sweep(
+        list(cluster_deltas.values()), seeds=BOOTSTRAP_SEED_SWEEP, n_boot=N_BOOTSTRAP)
 
     # --- (iii) CR0 / CR1 sandwich (OLS 切片のみモデルへのクラスタロバスト分散) ---
     u = [v - mean for v in vals]  # 全体平均を使った残差 (切片のみ OLS の残差)
@@ -267,6 +279,24 @@ def _cluster_bootstrap_ci(cluster_value_lists, seed, n_boot):
         "method": "nonparametric cluster bootstrap (resample clusters w/ replacement, G=%d, B=%d, "
                   "unweighted mean-of-cluster-means statistic, percentile CI, numpy default_rng seed=%d)" % (G, n_boot, seed),
         "lo": float(lo), "hi": float(hi), "B": n_boot, "seed": seed,
+    }
+
+
+def _cluster_bootstrap_ci_seed_sweep(cluster_value_lists, seeds, n_boot):
+    """cluster bootstrap percentile CI を複数 seed で走らせ、lo/hi の seed 依存を明示する。
+    記録の CI 下端 (-0.0115) が単一 seed の Monte Carlo 誤差の範囲内かどうかを判断する材料。
+    """
+    runs = [_cluster_bootstrap_ci(cluster_value_lists, seed=s, n_boot=n_boot) for s in seeds]
+    los = [r["lo"] for r in runs]
+    his = [r["hi"] for r in runs]
+    return {
+        "seeds": list(seeds), "B": n_boot,
+        "runs": runs,
+        "lo_min": min(los), "lo_max": max(los), "lo_mean": sum(los) / len(los),
+        "hi_min": min(his), "hi_max": max(his), "hi_mean": sum(his) / len(his),
+        "note": "各 run は同一データ・同一統計量 (unweighted mean-of-cluster-means) を numpy "
+                "default_rng(seed) だけ変えてリサンプリングした percentile CI。lo/hi のばらつきは"
+                "純粋な Monte Carlo 誤差 (B=%d) であり、データや統計量の違いによるものではない。" % n_boot,
     }
 
 
@@ -429,22 +459,132 @@ def compute_required_n(sigma_seed_pooled_reward, en_delta_var, deltas_to_detect,
 # ============================================================
 # 検算 (numpy ベクトル経路での独立再計算)
 # ============================================================
-def cross_check(pairs, estimators):
-    deltas = np.array([d["post"]["reward"] - d["pre"]["reward"] for d in pairs.values()])
-    mean_np = float(deltas.mean())
-    se_np = float(deltas.std(ddof=1) / math.sqrt(len(deltas)))
+def _check(checks, name, recomputed, original, rel_tol=1e-6, abs_tol=1e-9):
+    """recomputed (numpy 経路) と original (python ループ経路) を比較して checks に積む。
+    None 同士は一致扱い。片方だけ None は不一致。
+    """
+    if recomputed is None and original is None:
+        ok = True
+        diff = 0.0
+    elif recomputed is None or original is None:
+        ok = False
+        diff = None
+    else:
+        diff = abs(float(recomputed) - float(original))
+        thresh = max(abs_tol, rel_tol * max(1.0, abs(float(original))))
+        ok = diff <= thresh
+    checks.append({"name": name, "recomputed_numpy": recomputed, "original": original, "diff": diff, "ok": ok})
+    return ok
+
+
+def cross_check(rows, pairs, estimators, sigma_seed, required_n):
+    """全主要数値を numpy ベクトル経路で独立に再実装し、python ループ経路 (compute_estimators /
+    compute_sigma_seed / compute_required_n) の出力と突き合わせる。
+    """
+    checks = []
+
+    # --- naive ---
+    deltas_np = np.array([d["post"]["reward"] - d["pre"]["reward"] for d in pairs.values()], dtype=np.float64)
+    n = len(deltas_np)
+    mean_np = float(deltas_np.mean())
+    se_np = float(deltas_np.std(ddof=1) / math.sqrt(n))
     t_np = mean_np / se_np
+    _check(checks, "naive.mean", mean_np, estimators["naive"]["mean"])
+    _check(checks, "naive.t", t_np, estimators["naive"]["t"])
 
-    ok = True
-    msgs = []
-    if abs(mean_np - estimators["naive"]["mean"]) > 1e-9:
-        ok = False
-        msgs.append("naive mean 不一致")
-    if abs(t_np - estimators["naive"]["t"]) > 1e-6:
-        ok = False
-        msgs.append("naive t 不一致")
+    # --- cluster-mean (クラスタ key は build_clusters と同じ定義を numpy 側でも独立に組む) ---
+    cluster_map = defaultdict(list)
+    for pid, d in pairs.items():
+        ck = (d["pre"]["prompt"], d["post"]["prompt"])
+        cluster_map[ck].append(d["post"]["reward"] - d["pre"]["reward"])
+    cluster_arrays = [np.asarray(v, dtype=np.float64) for v in cluster_map.values()]
+    cluster_means_np = np.array([a.mean() for a in cluster_arrays])
+    G = len(cluster_means_np)
+    cm_mean_np = float(cluster_means_np.mean())
+    cm_se_np = float(cluster_means_np.std(ddof=1) / math.sqrt(G))
+    cm_t_np = cm_mean_np / cm_se_np
+    _check(checks, "cluster_mean.mean", cm_mean_np, estimators["cluster_mean"]["mean"])
+    _check(checks, "cluster_mean.t", cm_t_np, estimators["cluster_mean"]["t"])
 
-    return {"ok": ok, "messages": msgs, "naive_mean_numpy": mean_np, "naive_t_numpy": t_np}
+    # --- CR0 / CR1 sandwich ---
+    u_np = deltas_np - mean_np
+    cluster_u_sums_np = []
+    idx = 0
+    # cluster_map の反復順は insertion 順で pairs.values() の反復順と対応しないので、
+    # 別途 (残差) 総和をクラスタごとに集計し直す (naive の mean を使う点は元実装と同一)。
+    cluster_resid_sums = defaultdict(float)
+    for pid, d in pairs.items():
+        ck = (d["pre"]["prompt"], d["post"]["prompt"])
+        cluster_resid_sums[ck] += (d["post"]["reward"] - d["pre"]["reward"]) - mean_np
+    resid_sums_np = np.array(list(cluster_resid_sums.values()), dtype=np.float64)
+    cr0_var_np = float((resid_sums_np ** 2).sum() / (n ** 2))
+    G_cr = len(cluster_resid_sums)
+    cr1_factor_np = (G_cr / (G_cr - 1)) * ((n - 1) / (n - 1))
+    cr1_var_np = cr0_var_np * cr1_factor_np
+    t_cr0_np = mean_np / (cr0_var_np ** 0.5)
+    t_cr1_np = mean_np / (cr1_var_np ** 0.5)
+    _check(checks, "cr_sandwich.CR0.t", t_cr0_np, estimators["cr_sandwich"]["CR0"]["t"])
+    _check(checks, "cr_sandwich.CR1.t", t_cr1_np, estimators["cr_sandwich"]["CR1"]["t"])
+
+    # --- en46 のみ ---
+    en_vals_np = np.array([d["post"]["reward"] - d["pre"]["reward"] for d in pairs.values()
+                            if d["pre"]["lang"] != "ja"], dtype=np.float64)
+    en_n = len(en_vals_np)
+    en_mean_np = float(en_vals_np.mean())
+    en_se_np = float(en_vals_np.std(ddof=1) / math.sqrt(en_n))
+    en_t_np = en_mean_np / en_se_np
+    _check(checks, "en_only.mean", en_mean_np, estimators["en_only"]["mean"])
+    _check(checks, "en_only.t", en_t_np, estimators["en_only"]["t"])
+
+    # --- σ_seed: pre/post/pooled を reward・quality_contribution・anatomy_contribution の 3 成分で ---
+    for field in ("reward", "quality_contribution", "anatomy_contribution"):
+        pre_np = np.array([r[field] for r in rows if r["lang"] == "ja" and r["model"] == "pre"], dtype=np.float64)
+        post_np = np.array([r[field] for r in rows if r["lang"] == "ja" and r["model"] == "post"], dtype=np.float64)
+        sd_pre_np = float(pre_np.std(ddof=1))
+        sd_post_np = float(post_np.std(ddof=1))
+        n_pre, n_post = len(pre_np), len(post_np)
+        df = (n_pre - 1) + (n_post - 1)
+        pooled_var_np = float(((n_pre - 1) * pre_np.var(ddof=1) + (n_post - 1) * post_np.var(ddof=1)) / df)
+        pooled_sd_np = pooled_var_np ** 0.5
+        _check(checks, "sigma_seed.%s.pre.sd" % field, sd_pre_np, sigma_seed["per_arm"][field]["pre"]["sd"])
+        _check(checks, "sigma_seed.%s.post.sd" % field, sd_post_np, sigma_seed["per_arm"][field]["post"]["sd"])
+        _check(checks, "sigma_seed.%s.pooled.sd" % field, pooled_sd_np, sigma_seed["pooled"][field]["pooled_sd"])
+
+    # --- τ² ---
+    sigma_seed_pooled_reward_np = sigma_seed["pooled"]["reward"]["pooled_sd"]  # 既に上で照合済みの値を利用
+    en_delta_var_np = float(en_vals_np.var(ddof=1))
+    tau2_np = max(0.0, en_delta_var_np - 2 * (sigma_seed_pooled_reward_np ** 2))
+    _check(checks, "required_n.tau2_used", tau2_np, required_n["tau2_used"])
+    _check(checks, "required_n.en_delta_var_observed", en_delta_var_np, required_n["en_delta_var_observed"])
+
+    # --- 必要プロンプト数テーブル (design a の全 k・delta 組み合わせ) ---
+    z_a2_np = float(stats.norm.ppf(1 - ALPHA / 2))
+    z_b_np = float(stats.norm.ppf(POWER))
+    k_const_np = (z_a2_np + z_b_np) ** 2
+    sigma_seed2_np = sigma_seed_pooled_reward_np ** 2
+    for delta_name, design in required_n["designs"].items():
+        delta_val = design["delta"]
+        for row in design["design_a_seed_varies_pre_post"]:
+            k = row["k_seeds_per_prompt"]
+            var_a_np = tau2_np + 2 * sigma_seed2_np / k
+            n_a_np = k_const_np * var_a_np / (delta_val ** 2)
+            _check(checks, "required_n.%s.design_a.k=%d.n_prompts_required_raw" % (delta_name, k),
+                   n_a_np, row["n_prompts_required_raw"])
+        for row in design["design_b_seed_fixed_optimistic_rho1"]:
+            k = row["k_seeds_per_prompt"]
+            var_b_np = tau2_np
+            n_b_np = (k_const_np * var_b_np / (delta_val ** 2)) if var_b_np > 0 else None
+            _check(checks, "required_n.%s.design_b.k=%d.n_prompts_required_raw" % (delta_name, k),
+                   n_b_np, row["n_prompts_required_raw"])
+
+    ok = all(c["ok"] for c in checks)
+    n_fail = sum(1 for c in checks if not c["ok"])
+    return {
+        "ok": ok, "n_checks": len(checks), "n_fail": n_fail,
+        "messages": [c["name"] for c in checks if not c["ok"]],
+        "checks": checks,
+        "naive_mean_numpy": mean_np, "naive_t_numpy": t_np,
+    }
 
 
 def selftest():
@@ -494,17 +634,22 @@ def selftest():
         print("[selftest FAIL] cluster mean G", est["cluster_mean"]["G"])
         ok = False
 
-    xc = cross_check(pairs, est)
-    if not xc["ok"]:
-        print("[selftest FAIL] cross_check", xc)
-        ok = False
-
     # σ_seed pooled: ja pre=[0.0,0.02] var=((0.0-0.01)^2+(0.02-0.01)^2)/1=0.0002, ja post=[0.2,0.18] var=0.0002
     sig = compute_sigma_seed(synth_rows)
     exp_pooled_var = 0.0002  # pre var=post var=0.0002 (n=2 each, ddof=1) -> pooled = same
     got_pooled_var = sig["pooled"]["reward"]["pooled_var"]
     if abs(got_pooled_var - exp_pooled_var) > 1e-8:
         print("[selftest FAIL] pooled var", got_pooled_var, exp_pooled_var)
+        ok = False
+
+    en_delta_var = est["en_only"]["sd"] ** 2
+    sigma_seed_pooled_reward = sig["pooled"]["reward"]["pooled_sd"]
+    req_n = compute_required_n(sigma_seed_pooled_reward, en_delta_var,
+                                {"d1": est["naive"]["mean"], "d2": est["en_only"]["mean"]})
+
+    xc = cross_check(synth_rows, pairs, est, sig, req_n)
+    if not xc["ok"]:
+        print("[selftest FAIL] cross_check", xc["messages"])
         ok = False
 
     if ok:
@@ -532,7 +677,6 @@ def main():
 
     estimators = compute_estimators(pairs)
     sigma_seed = compute_sigma_seed(rows)
-    xc = cross_check(pairs, estimators)
 
     en_delta_var = estimators["en_only"]["sd"] ** 2
     sigma_seed_pooled_reward = sigma_seed["pooled"]["reward"]["pooled_sd"]
@@ -541,6 +685,8 @@ def main():
         "en46_delta_0.011152": estimators["en_only"]["mean"],
     }
     required_n = compute_required_n(sigma_seed_pooled_reward, en_delta_var, deltas_to_detect)
+
+    xc = cross_check(rows, pairs, estimators, sigma_seed, required_n)
 
     result = {
         "stage": "F-0b 再検証 Z-2 (クラスタ補正の再解析 + σ_seed の直接推定)",
@@ -576,8 +722,15 @@ def main():
     print("en_only:", estimators["en_only"]["t"], "df", estimators["en_only"]["df"])
     print("== summary: exit2 sigma_seed pooled (reward) ==")
     print(sigma_seed["pooled"]["reward"])
+    print("== cluster bootstrap CI seed sweep (lo/hi range) ==")
+    sw = estimators["cluster_mean"]["bootstrap_percentile_ci95_seed_sweep"]
+    print("seeds:", sw["seeds"])
+    print("lo_min=%.6f lo_max=%.6f lo_mean=%.6f" % (sw["lo_min"], sw["lo_max"], sw["lo_mean"]))
+    print("hi_min=%.6f hi_max=%.6f hi_mean=%.6f" % (sw["hi_min"], sw["hi_max"], sw["hi_mean"]))
     print("== cross_check ==")
-    print(xc)
+    print("ok=%s n_checks=%d n_fail=%d" % (xc["ok"], xc["n_checks"], xc["n_fail"]))
+    if not xc["ok"]:
+        print("failed:", xc["messages"])
 
 
 if __name__ == "__main__":
