@@ -147,7 +147,7 @@ sandwich (CR0/CR1・G=47) では t=2.76/2.73 と逆に出る**。**最も反論�
 知見: 「reward(解剖+美的) と gold タグ set-F1 は非整合」は仮説 / anatomy ほぼ死 (argmax は Limbs/Hands/Head の
 3 軸だけ = 8軸中5軸は非 argmax・**軸別 max 値で見ると Limbs 0.093 以外の 7 軸が <0.01 で死**) /
 SDXL seed 非再現(SAC)が比較ノイズ源 / 日本語空条件。パイプライン再利用可。
-次レバー = reward設計 / 日本語条件付け改修 / seed制御。再検証台帳 = `docs/f0b-reverification-plan.md` (Z-1〜Z-5 未実施)。
+次レバー = reward設計 / 日本語条件付け改修 / seed制御。再検証台帳 = `docs/f0b-reverification-plan.md` (Z-1 算出済・判定なし = 同「### Z-1」節 / Z-2〜Z-5 未実施)。
 
 ---
 
