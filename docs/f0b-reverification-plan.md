@@ -324,7 +324,12 @@
 - 入口: Z-3 と同じ資産 + `--seed` 切り替え。
 - 出口: 4 seed の diverse set-F1 (canon/SFT paired)・across 平均 ± sd・判定 3 軸の充足表。
 - 意味: B 系の核。ここが揃うまで「退行は構造的」とは書けない (`docs/measurements-log.md` の施策 A/D と同じ作法)。
-- ★注意 (2026-10-05・Z-3 監査 中1 由来): 判定軸「各 seed の paired CI」には、**ケース単位 iid ではなく post_id 単位 (G=500) の CI** を使うこと。diverse-val は 500 post × 3 variant で、iid の CI は約 14〜16% 狭く出る (「Z-3 結果」参照)。
+- ★**Z-5 起票時に PL が決める論点** (2026-10-05・Z-3 監査 中1 由来。旧記載「post_id 単位の CI を使うこと」は決定の書き方で行き過ぎだったため格下げした):
+  判定軸「各 seed の paired CI」の推定量を、ケース単位 iid と post_id 単位 (G=500) のどちらにするか。**推奨は post_id 単位** (diverse-val は 500 post × 3 variant で iid ではない)。決める際の材料は次の 2 点。
+  - 先例の施策 A/D の判定軸 (c)「各 seed の paired bootstrap 95%CI」は、**ケース単位 iid** の paired bootstrap だった
+    (`scripts/dollma_a_seedsweep_analyze.py` / `scripts/dollma_d_seedsweep_analyze.py` の `paired_bootstrap_ci` がケースを再標本している)。
+    推定量を混ぜて並べると、条件違いの比較になる。
+  - 「iid の CI は約 14〜16% 狭い」は Z-3 の 1 組 (canon vs SFT) での値で、**固定の補正係数ではない**。
 
 ## 現在地 (最終更新: 2026-10-05・Z-3 反映)
 - ✅ 監査 BLOCK (2026-09-27) の指摘を記録側で是正 (元台帳 / roadmap / measurements-log / CLAUDE.md / model-trainer.md) = commit `351648d` / `951148b`。
@@ -347,7 +352,7 @@
   評価セットは 500 post × 3 variant (iid ではない)。
   post_id 単位 (G=500) の cluster bootstrap 95%CI は diverse_a [−0.023037, −0.011711]、diverse_b [−0.030437, −0.017966] (design effect 1.40)。
   ケース単位 iid (n=1500) の paired bootstrap 95%CI は diverse_a [−0.022167, −0.012620]、diverse_b [−0.029525, −0.018794] で、約 14〜16% 狭い。どちらも 0 を含まない (2026-10-05 監査 中1 で post_id 単位を併記)。
-  **数値のみで、判定はしていない**。★これは同一の訓練 seed・同一評価の中の識別力だけで、**B 系 (訓練 seed 間の分散) は解消しない** (Z-5)。原因の切り分けもしていない (Z-4)。詳細は「### Z-3」節の「Z-3 結果」。
+  **数値のみで、判定はしていない**。★これは 1 回の SFT 訓練 (seed 20260620) と 1 回の評価の中の識別力だけで、**B 系 (訓練 seed 間の分散) は解消しない** (Z-5)。原因の切り分けもしていない (Z-4)。詳細は「### Z-3」節の「Z-3 結果」。
 - 🔲 **Z-4・Z-5 は未実施**。
 - ~~⏸ GPU 実走は **Z-2 の σ_seed 待ちで未起票**。~~ (2026-09-29 Z-2 算出により取り消す)
 - ⏸ GPU 実走は **σ_seed 算出済・起票は未**。設計 (a)/(b)・k・枚数は決めていない。起票時に扱いが要る論点 (本 doc では決めない):

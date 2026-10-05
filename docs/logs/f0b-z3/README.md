@@ -8,7 +8,7 @@ F-0b 再検証の Z-3 (set-F1 の per-case paired bootstrap CI) を算出した�
 
 | ファイル | 何 |
 |---|---|
-| `z3_result.json` | 本計算の出力 (UTF-8)。`datasets.{diverse_a,diverse_b}` 配下に `reproduction_check` (元台帳/measurements-log 値との再現確認)・`diff_summary` (paired t・分布要約)・`bootstrap_ci95` (B=20000)・`bootstrap_ci95_seed_sweep` (10 seed)・`cross_check` (以上は 1500 件を iid と見た値)・`cluster_by_post_id` (post_id クラスタ推定量・2026-10-05 追加) |
+| `z3_result.json` | 本計算の出力 (UTF-8)。`datasets.{diverse_a,diverse_b}` 配下に `reproduction_check` (元台帳/measurements-log 値との再現確認)・`diff_summary` (paired t・分布要約)・`bootstrap_ci95` (B=20000)・`bootstrap_ci95_seed_sweep` (10 seed)・`cross_check` (以上は 1500 件を iid と見た値)・`cluster_by_post_id` (post_id クラスタ推定量・2026-10-05 追加) ★`cluster_by_post_id` は 2026-10-05 に既定引数で再実行して生成した (commit `b834fb4`)。iid 側の数値は不変 (同 commit の JSON 差分で書き換わったのは注記文字列 2 行だけ) |
 | `z3_run_log.txt` | 実行記録。日時・環境・実行したコマンド 4 本 (canon 評価 / SFT 評価 / Z-3 本計算 / selftest)・入力の sha256・標準出力の要約 |
 | `_scratch_data/` | eval に使った入力 (vocab.json / pairs.val.jsonl / pairs.eval_diverse_{a,b}.jsonl の worktree 内コピー) と出力 (eval_report_{canon,sft}_z3.json / eval_persample_{canon,sft}_z3.npz)。gitignore 対象 (`.gitignore` の `docs/logs/*/_scratch_data/`・2026-10-05 追加。それ以前は未追跡なだけで ignore されていなかった)・repo には入らない |
 
@@ -73,8 +73,11 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   これらは git 管理下で worktree に既に存在する小ファイルなので、コピーは正典の複製ではない。
 - ★Z-3 本計算の `--pairs-a` / `--pairs-b` (post_id クラスタの読み出し元) は、既定値が
   `docs/logs/f0b-z3/_scratch_data/pairs.eval_diverse_{a,b}.jsonl` である。このディレクトリは gitignore 済みの scratch なので、
-  worktree を消した後や別の checkout では存在しない。その場合は `data/bitnet/_g2a_eval/pairs.eval_diverse_{a,b}.jsonl`
+  worktree を消した後や別の checkout では存在しない。
+  **上のコピー手順 (`--data-dir` の箇条) を済ませていれば、既定値のままで足りる**。
+  コピーせずに直接指すなら、git 管理下の `data/bitnet/pairs.eval_diverse_{a,b}.jsonl`
   (scratch のコピーと同一バイト・sha256 は上の入力表) を `--pairs-a` / `--pairs-b` で明示して渡すこと。
+  (`data/bitnet/_g2a_eval/` も同一バイトだが gitignore 対象で別の checkout には無いので、代替パスにはならない。2026-10-05 訂正)
   npz と eval レポートも同じ scratch にあるので、無ければ上の 2 本の評価コマンドで作り直す。
 - bootstrap は `numpy.random.default_rng(seed)` で決定的 (既定 seed=20260620・B=20000。
   同一環境・同一 numpy バージョンなら再実行しても同じ値になる想定。厳密なビット一致は保証しない)。
