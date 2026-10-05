@@ -52,7 +52,7 @@
 |---|---|---|---|---|---|
 | **Z-1** | **quality 抜き勝者一致率・寄与率の再計算**: best-of-N の勝者選抜が quality 単独でどれだけ決まるか (quality を除いた reward での勝者と一致する率) と、reward Δ への anatomy/quality 寄与率を**定義を明文化した上で**既存データから算出 (**監査引用値 7.5% は Δ 基準 9.29%/水準基準 1.13% のどちらでも再現しないため再現目標にしない** — 2026-09-28 是正) | model-trainer | 本機 | なし (既存データのみ・生成ゼロ) | ✅ 算出済 (2026-09-29・数値と定義のみ・**判定なし**。結果は下記 Z-1 節) |
 | **Z-2** | **g2b クラスタ補正の再解析 + σ_seed の直接推定**: `g2b_prepost.jsonl` をクラスタ (同一プロンプト) 単位で再解析し t / 95%CI を独立再現。加えて ja 54 件 (= 同一プロンプト × SDXL seed 変動) から **SDXL seed 由来の reward 分散 σ_seed** を直接推定する (GPU 実走の必要枚数を逆算するための入力) | model-trainer | 本機 | なし (既存データのみ・生成ゼロ) | ✅ 算出済 (2026-09-29・**判定なし**。出口①の「どれを結論の根拠に採るか」の選択も未了。結果は下記 Z-2 節) |
-| **Z-3** | **set-F1 の per-case paired bootstrap CI**: `train_bitnet.py --eval-only --dump-persample` (CLI 実在・`scripts/train_bitnet.py`) で canon / SFT の per-case F1 を出し、対応付き bootstrap で退行 (−0.0174/−0.0241) の CI を出す。同一 seed 内での「退行が 0 と識別できるか」を明示 | model-trainer | 本機 | なし (隔離重み `bitnet_dense_sft*` 既存・再走は eval のみ) | 🔲 未 |
+| **Z-3** | **set-F1 の per-case paired bootstrap CI**: `train_bitnet.py --eval-only --dump-persample` (CLI 実在・`scripts/train_bitnet.py`) で canon / SFT の per-case F1 を出し、対応付き bootstrap で退行 (−0.0174/−0.0241) の CI を出す。同一 seed 内での「退行が 0 と識別できるか」を明示 | model-trainer | 本機 | なし (隔離重み `bitnet_dense_sft*` 既存・再走は eval のみ) | ✅ 算出済 (2026-09-29〜30・**判定なし**。同一 seed 内の識別力のみ。B 系の seed 間分散は Z-5・原因の切り分けは Z-4。結果は下記 Z-3 節) |
 | **Z-4** | **プラセボ対照 SFT**: 勝者ペアを reward と無関係な選抜 (例: N 候補からランダム 1 本) に差し替えて同レシピで SFT し、set-F1 退行が **RAFT 固有か「低 LR 追加 SFT を掛けたこと」の副作用か**を切り分ける。訓練あり・SDXL 生成ゼロ | model-trainer | 本機 | Z-3 (物差しの CI が先) | 🔲 未 |
 | **Z-5** | **SFT seed sweep 4 seed**: SFT アームを 4 seed (既存慣行 20260620/20260621/42/7) で焼き、diverse set-F1 の **seed 間分散**を測る → 退行幅 −0.0174/−0.0241 が seed noise 帯の内か外かを判定 (施策 A/D と同じ判定 3 軸: 符号一貫性 / 分散帯比 / 各 seed の paired CI)。訓練あり・SDXL 生成ゼロ | model-trainer | 本機 | Z-3 | 🔲 未 |
 | **(保留)** | **GPU 実走 (seed 固定 pre/post reward 再測)**: SDXL seed を固定して疑似反復と seed 交絡を除いた reward 前後比を測り直す。**未起票** — 必要枚数を **Z-2 の σ_seed から逆算してから**起票する (逆算前に走らせると再び検出力不足になる) | 未定 (gpu-benchmarker 想定) | 研究機 (GPU) | Z-2 | ⏸ 保留 (σ_seed 算出済・起票は未。枚数は未決定) |
@@ -255,6 +255,66 @@
 - 入口: 隔離重み `data/bitnet/bitnet_dense_sft_fp32.safetensors` + 正典 + 凍結 diverse-val (`data/bitnet/_g2a_eval/pairs.eval_diverse_{a,b}.jsonl`)。
 - 出口: canon vs SFT の per-case F1 差の 95%CI (diverse_a / diverse_b)。seed は既存と同じ 20260620 に固定し **同一 seed 内の識別力**だけを見る (seed 間は Z-5)。
 
+#### Z-3 結果 (2026-09-29〜30 算出・**数値のみ。採否・有意の断定はしていない**)
+- **一次成果物** (commit `939ae8c` + `0ca05ca` = np.load の allow_pickle 除去のみ + `b834fb4` = post_id クラスタ推定量 `cluster_by_post_id` の追加): スクリプト `scripts/dollma_f0b_z3_setf1_bootstrap.py` /
+  出力 `docs/logs/f0b-z3/z3_result.json` / 実行記録 `docs/logs/f0b-z3/z3_run_log.txt` / 出自と再現手順 `docs/logs/f0b-z3/README.md`。
+  per-case F1 配列は `scripts/train_bitnet.py --eval-only --dump-persample` (既存 CLI) で canon / SFT を再評価して作った。
+  配列 (npz) と eval レポートは worktree の `docs/logs/f0b-z3/_scratch_data/` にあり、**commit されていない** (sha256 は JSON `inputs.*.sha256`)。
+- **入力**:
+  - 重み: canon = `data/bitnet/bitnet_dense_fp32.safetensors` (sha256 `5043772d…0b61`)、SFT = `data/bitnet/bitnet_dense_sft_fp32.safetensors` (`3b2e2181…8e15`)。
+    JSON `datasets.*.npz_provenance` の値で、G-2a の `data/bitnet/_g2a_eval/eval_report_{canon,sft}_g2a.json` provenance の weights_sha256 と一致する (record-writer 確認)。
+  - 評価セット: 本節「入口」に書いた `_g2a_eval/pairs.eval_diverse_{a,b}.jsonl` ではなく、`data/bitnet/pairs.eval_diverse_{a,b}.jsonl` のコピーを使った。
+    record-writer が `sha256sum` で両者 (と scratch のコピー) を比べ、a・b とも同一バイトだった。pairs.val.jsonl・vocab.json も `_g2a_eval/` の物と同一。
+  - seed: 評価 seed は canon・SFT とも 20260620 (npz の `_seed`)。SFT の訓練 seed は 20260620 (`data/bitnet/train_stats_sft.json`)。canon の訓練 seed は本節では確認していない。
+- **再現確認** (JSON `datasets.*.reproduction_check`): 再評価の macro F1 は元台帳 (`docs/f0b-rejection-sft-plan.md`「現在地」節の Package G-2a 完了の項の「set-F1 前後」行) の記録値と丸めの範囲で一致した。
+
+  | セット | canon | SFT | Δ (SFT − canon) | 記録値 |
+  |---|---|---|---|---|
+  | diverse_a | 0.333250 | 0.315838 | **−0.017412** | 0.3332 → 0.3158 (−0.0174) |
+  | diverse_b | 0.380411 | 0.356268 | **−0.024143** | 0.3804 → 0.3563 (−0.0241) |
+
+- **評価セットのクラスタ構造** (2026-10-05 追記・監査 中1): diverse_a・diverse_b とも 1500 件は **unique post_id 500 件 × variant 0/1/2 の 3 件組** (G=500・各クラスタ size 3) で、**iid ではない**
+  (JSON `datasets.*.cluster_by_post_id.structure`。record-writer が `_g2a_eval/pairs.eval_diverse_{a,b}.jsonl` の `meta.post_id` を数えて確認)。
+  そのため以下では、**ケース単位 iid の推定量 (n=1500・df=1499)** と **post_id 単位の推定量 (G=500・df=499)** を並べる。
+- **per-case 対応付きの差・ケース単位 iid 推定量** (SFT − canon・n=1500 ペアを iid とみなした値。スキップ・NaN 不一致はどちらも 0 件。JSON `datasets.*.{pairing,diff_summary,bootstrap_ci95}`):
+
+  | セット | 差の平均 | sd | paired t (ケース単位 iid・df=1499) | paired t の 95%CI (ケース単位 iid) | bootstrap percentile 95%CI (ケース単位 iid・B=20000・seed 20260620) | 退行 / 改善 / 同値 |
+  |---|---|---|---|---|---|---|
+  | diverse_a | −0.017412 | 0.09542 | **−7.07** | [−0.022244, −0.012579] | **[−0.022167, −0.012620]** | 559 / 416 / 525 件 = 37.3 / 27.7 / 35.0% |
+  | diverse_b | −0.024143 | 0.10520 | **−8.89** | [−0.029471, −0.018815] | **[−0.029525, −0.018794]** | 614 / 415 / 471 件 = 40.9 / 27.7 / 31.4% |
+
+  - bootstrap の乱数 seed 依存: 10 seed (20260620, 0〜7, 42) で CI 端が動く幅は、diverse_a で下端 0.000091・上端 0.000123、diverse_b で下端 0.000138・上端 0.000095
+    (JSON `datasets.*.bootstrap_ci95_seed_sweep.{lo,hi}_range_width`)。
+  - 2 経路検算: 各セット 14 項目で `ok=true`・`n_fail=0` (JSON `datasets.*.cross_check`)。
+    ただし bootstrap CI の 2 項目は同じ乱数列を共有しており、独立なのは分位点の取り方だけである (スクリプト docstring「検算」)。
+- **post_id 単位の推定量** (G=500・df=499。commit `b834fb4` で追加。JSON `datasets.*.cluster_by_post_id`):
+
+  | セット | cluster-mean t (df=499) | cluster-mean の 95%CI t(499) | cluster bootstrap 95%CI (B=20000・seed 20260620) | CR0 t / CR1 t | design effect |
+  |---|---|---|---|---|---|
+  | diverse_a | **−5.97** | [−0.023138, −0.011685] | [−0.023037, −0.011711] | −5.98 / −5.97 | 1.40 (1.3996) |
+  | diverse_b | **−7.51** | [−0.030457, −0.017829] | [−0.030437, −0.017966] | −7.52 / −7.51 | 1.40 (1.3999) |
+
+  - クラスタ size が一定 (3) なので、cluster-mean の点推定は iid の平均と同じ値になる。CR1 の CI は cluster-mean の t CI と一致する。
+  - cluster bootstrap の乱数 seed 依存 (10 seed): CI 端が動く幅は diverse_a で下端 0.000206・上端 0.000153、diverse_b で下端 0.000138・上端 0.000191 (JSON `cluster_bootstrap_ci95_seed_sweep.{lo,hi}_range_width`)。
+  - 2 経路検算: クラスタ推定量は各セット 13 項目で `ok=true`・`n_fail=0` (JSON `cluster_by_post_id.cross_check`)。
+- **iid と post_id 単位の比較** (事実のみ): ケース単位 iid の CI は post_id 単位の CI より狭い。幅の比 (iid ÷ post_id 単位) は、
+  t CI で diverse_a 0.844・diverse_b 0.844、bootstrap CI で 0.843・0.860 だった (record-writer が JSON の CI 端から計算)。
+  つまり **iid の CI は約 14〜16% 狭い = post_id 単位の CI は約 16〜19% 広い** (se の比は 1/√1.40 ≈ 0.845)。
+  ★どちらの推定量でも、CI は 0 を含まない (JSON `datasets.*.regression_excludes_zero_{bootstrap,t}` と `datasets.*.cluster_by_post_id.regression_excludes_zero_{cluster_bootstrap,cluster_t,cr1}` がすべて true)。
+- **record-writer による独立検算** (2026-10-05): scratch の npz から numpy / scipy で直接計算した。
+  macro F1 4 値・差の平均・t・paired t の CI・退行 / 改善 / 同値の割合・bootstrap CI (seed 20260620) がすべて JSON と一致した。
+- **★範囲の限定** (★ここが最も誤読されやすい):
+  - Z-3 が示すのは、**1 回の SFT 訓練 (訓練 seed 20260620)・1 回の評価 (評価 seed 20260620)・この凍結評価セット (500 post × 3 variant = 1500 件) の中で、canon と SFT の per-case F1 差の平均が 0 から離れているか**、だけである。
+  - **是正対象 B 系の論点 (退行幅が施策 D の seed ノイズ最大幅 −0.0240 と識別できない) は、訓練 seed を変えたときの分散の話で、別の軸である**。
+    Z-3 の CI は per-case のばらつきだけを反映し、訓練 seed 間の分散を含まない。**Z-3 で B 系は解消しない** (Z-5 の宿題)。
+  - プラセボ対照がないので、退行が RAFT の選抜方針によるのか、低 LR の追加 SFT 一般の副作用なのかは切り分けていない (Z-4 の宿題)。
+  - 判定 (採否・「構造的に退行」等の断定) はしていない。
+- **読み方の注意**:
+  - 同値 (差 = 0) のうち、両モデルとも F1=0 のケースは少数である (diverse_a 42/525・diverse_b 26/471。JSON `datasets.*.cluster_by_post_id.{n_both_models_f1_zero,n_diff_zero_total}`。
+    record-writer が npz から数えた値とも一致する)。
+    残りは F1>0 で値が一致したケースで、生成タグ集合が同じだったのか、別の集合で F1 だけ一致したのかは確かめていない。
+  - diverse_b の `p_two_sided` は JSON で 0.0 になっているが、これはスクリプトが `2·(1 − t.cdf(|t|))` で計算しているための桁落ちで、p が厳密に 0 という意味ではない。引用するなら t と CI を使うこと。
+
 ### Z-4 — プラセボ対照 SFT
 - 入口: `data/rollouts/candidates_bestofn*.jsonl` (N=8 候補) + `train_bitnet.py --sft-rejection`。
 - 出口: ランダム選抜 SFT の set-F1 4 指標。**RAFT 版と同幅で退行するなら退行は選抜方針ではなく追加 SFT の副作用**、有意に浅いなら reward 起因。
@@ -264,8 +324,14 @@
 - 入口: Z-3 と同じ資産 + `--seed` 切り替え。
 - 出口: 4 seed の diverse set-F1 (canon/SFT paired)・across 平均 ± sd・判定 3 軸の充足表。
 - 意味: B 系の核。ここが揃うまで「退行は構造的」とは書けない (`docs/measurements-log.md` の施策 A/D と同じ作法)。
+- ★**Z-5 起票時に PL が決める論点** (2026-10-05・Z-3 監査 中1 由来。旧記載「post_id 単位の CI を使うこと」は決定の書き方で行き過ぎだったため格下げした):
+  判定軸「各 seed の paired CI」の推定量を、ケース単位 iid と post_id 単位 (G=500) のどちらにするか。**推奨は post_id 単位** (diverse-val は 500 post × 3 variant で iid ではない)。決める際の材料は次の 2 点。
+  - 先例の施策 A/D の判定軸 (c)「各 seed の paired bootstrap 95%CI」は、**ケース単位 iid** の paired bootstrap だった
+    (`scripts/dollma_a_seedsweep_analyze.py` / `scripts/dollma_d_seedsweep_analyze.py` の `paired_bootstrap_ci` がケースを再標本している)。
+    推定量を混ぜて並べると、条件違いの比較になる。
+  - 「iid の CI は約 14〜16% 狭い」は Z-3 の 1 組 (canon vs SFT) での値で、**固定の補正係数ではない**。
 
-## 現在地 (最終更新: 2026-09-29・Z-2 反映)
+## 現在地 (最終更新: 2026-10-05・Z-3 反映)
 - ✅ 監査 BLOCK (2026-09-27) の指摘を記録側で是正 (元台帳 / roadmap / measurements-log / CLAUDE.md / model-trainer.md) = commit `351648d` / `951148b`。
 - ✅ **その是正への 2 巡目監査 BLOCK (2026-09-28・重大1/中3/軽微2) を是正**: ① `docs/superpowers/plans/2026-08-05-subagent-refresh.md` に残っていた撤回済み断定 (「set-F1 が構造的に退行」) をポインタ化 (**同 plan は 36 チェックボックス全未チェック = 再実行可能体裁なので、agent 定義へ旧断定が復活する経路だった**) ② t=0.955 の**推定量を全該当 doc に明記** + en46 独立系列を併記 ③ 「anatomy 8 軸中 5 軸が死軸」を F-0a と同じ物差し (軸別 max) へ統一 ④ 「anatomy 寄与率 7.5%」を格下げ ⑤ 訓練 seed の一次証拠に `train_stats_sft.json` を追加 ⑥ 下記のバイト数訂正。
 - ⚠️ **commit `351648d` 本文の自己申告「+1.5KB 増」は不正確 (2026-09-28 訂正)**。commit 本文は書き換えないので、ここに実測を残す:
@@ -281,7 +347,13 @@
 - ✅ **Z-2 算出済 (2026-09-29)**: 推定量 5 系列の t は記録値と一致した。記録値 CI の下端 −0.0115 は解析的 CI では再現せず、出自は未確定のまま。
   σ_seed (reward・pooled) は 0.04663。必要プロンプト数の逆算表も出した。
   **数値のみで、判定はしていない** (出口①の推定量の選択も未了)。数値・読み方の注意・限界 (σ_seed は ja 1 プロンプト由来で en への一般化は未検証 / ρ の実測なし / CR の df は G−1 のみ) は「### Z-2」節の「Z-2 結果」にある。
-- 🔲 **Z-3〜Z-5 は未実施**。
+- ~~🔲 **Z-3〜Z-5 は未実施**。~~ (Z-2 反映時点の記載。Z-3 を算出したため取り消す)
+- ✅ **Z-3 算出済 (2026-09-29〜30)**: 再評価で記録値 (diverse_a −0.0174 / diverse_b −0.0241) を再現した。
+  評価セットは 500 post × 3 variant (iid ではない)。
+  post_id 単位 (G=500) の cluster bootstrap 95%CI は diverse_a [−0.023037, −0.011711]、diverse_b [−0.030437, −0.017966] (design effect 1.40)。
+  ケース単位 iid (n=1500) の paired bootstrap 95%CI は diverse_a [−0.022167, −0.012620]、diverse_b [−0.029525, −0.018794] で、約 14〜16% 狭い。どちらも 0 を含まない (2026-10-05 監査 中1 で post_id 単位を併記)。
+  **数値のみで、判定はしていない**。★これは 1 回の SFT 訓練 (seed 20260620) と 1 回の評価の中の識別力だけで、**B 系 (訓練 seed 間の分散) は解消しない** (Z-5)。原因の切り分けもしていない (Z-4)。詳細は「### Z-3」節の「Z-3 結果」。
+- 🔲 **Z-4・Z-5 は未実施**。
 - ~~⏸ GPU 実走は **Z-2 の σ_seed 待ちで未起票**。~~ (2026-09-29 Z-2 算出により取り消す)
 - ⏸ GPU 実走は **σ_seed 算出済・起票は未**。設計 (a)/(b)・k・枚数は決めていない。起票時に扱いが要る論点 (本 doc では決めない):
   「Z-2 結果」の限界 1・2 (σ_seed の en 一般化、ρ) と、出口①の推定量の選択。
