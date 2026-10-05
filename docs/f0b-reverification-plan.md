@@ -256,7 +256,7 @@
 - 出口: canon vs SFT の per-case F1 差の 95%CI (diverse_a / diverse_b)。seed は既存と同じ 20260620 に固定し **同一 seed 内の識別力**だけを見る (seed 間は Z-5)。
 
 #### Z-3 結果 (2026-09-29〜30 算出・**数値のみ。採否・有意の断定はしていない**)
-- **一次成果物** (commit `939ae8c` + `0ca05ca` = np.load の allow_pickle 除去のみ): スクリプト `scripts/dollma_f0b_z3_setf1_bootstrap.py` /
+- **一次成果物** (commit `939ae8c` + `0ca05ca` = np.load の allow_pickle 除去のみ + `b834fb4` = post_id クラスタ推定量 `cluster_by_post_id` の追加): スクリプト `scripts/dollma_f0b_z3_setf1_bootstrap.py` /
   出力 `docs/logs/f0b-z3/z3_result.json` / 実行記録 `docs/logs/f0b-z3/z3_run_log.txt` / 出自と再現手順 `docs/logs/f0b-z3/README.md`。
   per-case F1 配列は `scripts/train_bitnet.py --eval-only --dump-persample` (既存 CLI) で canon / SFT を再評価して作った。
   配列 (npz) と eval レポートは worktree の `docs/logs/f0b-z3/_scratch_data/` にあり、**commit されていない** (sha256 は JSON `inputs.*.sha256`)。
@@ -273,9 +273,12 @@
   | diverse_a | 0.333250 | 0.315838 | **−0.017412** | 0.3332 → 0.3158 (−0.0174) |
   | diverse_b | 0.380411 | 0.356268 | **−0.024143** | 0.3804 → 0.3563 (−0.0241) |
 
-- **per-case 対応付きの差** (SFT − canon・n=1500 ペア。スキップ・NaN 不一致はどちらも 0 件。JSON `datasets.*.{pairing,diff_summary,bootstrap_ci95}`):
+- **評価セットのクラスタ構造** (2026-10-05 追記・監査 中1): diverse_a・diverse_b とも 1500 件は **unique post_id 500 件 × variant 0/1/2 の 3 件組** (G=500・各クラスタ size 3) で、**iid ではない**
+  (JSON `datasets.*.cluster_by_post_id.structure`。record-writer が `_g2a_eval/pairs.eval_diverse_{a,b}.jsonl` の `meta.post_id` を数えて確認)。
+  そのため以下では、**ケース単位 iid の推定量 (n=1500・df=1499)** と **post_id 単位の推定量 (G=500・df=499)** を並べる。
+- **per-case 対応付きの差・ケース単位 iid 推定量** (SFT − canon・n=1500 ペアを iid とみなした値。スキップ・NaN 不一致はどちらも 0 件。JSON `datasets.*.{pairing,diff_summary,bootstrap_ci95}`):
 
-  | セット | 差の平均 | sd | paired t (df=1499) | paired t の 95%CI | bootstrap percentile 95%CI (B=20000・seed 20260620) | 退行 / 改善 / 同値 |
+  | セット | 差の平均 | sd | paired t (ケース単位 iid・df=1499) | paired t の 95%CI (ケース単位 iid) | bootstrap percentile 95%CI (ケース単位 iid・B=20000・seed 20260620) | 退行 / 改善 / 同値 |
   |---|---|---|---|---|---|---|
   | diverse_a | −0.017412 | 0.09542 | **−7.07** | [−0.022244, −0.012579] | **[−0.022167, −0.012620]** | 559 / 416 / 525 件 = 37.3 / 27.7 / 35.0% |
   | diverse_b | −0.024143 | 0.10520 | **−8.89** | [−0.029471, −0.018815] | **[−0.029525, −0.018794]** | 614 / 415 / 471 件 = 40.9 / 27.7 / 31.4% |
@@ -284,16 +287,31 @@
     (JSON `datasets.*.bootstrap_ci95_seed_sweep.{lo,hi}_range_width`)。
   - 2 経路検算: 各セット 14 項目で `ok=true`・`n_fail=0` (JSON `datasets.*.cross_check`)。
     ただし bootstrap CI の 2 項目は同じ乱数列を共有しており、独立なのは分位点の取り方だけである (スクリプト docstring「検算」)。
+- **post_id 単位の推定量** (G=500・df=499。commit `b834fb4` で追加。JSON `datasets.*.cluster_by_post_id`):
+
+  | セット | cluster-mean t (df=499) | cluster-mean の 95%CI t(499) | cluster bootstrap 95%CI (B=20000・seed 20260620) | CR0 t / CR1 t | design effect |
+  |---|---|---|---|---|---|
+  | diverse_a | **−5.97** | [−0.023138, −0.011685] | [−0.023037, −0.011711] | −5.98 / −5.97 | 1.40 (1.3996) |
+  | diverse_b | **−7.51** | [−0.030457, −0.017829] | [−0.030437, −0.017966] | −7.52 / −7.51 | 1.40 (1.3999) |
+
+  - クラスタ size が一定 (3) なので、cluster-mean の点推定は iid の平均と同じ値になる。CR1 の CI は cluster-mean の t CI と一致する。
+  - cluster bootstrap の乱数 seed 依存 (10 seed): CI 端が動く幅は diverse_a で下端 0.000206・上端 0.000153、diverse_b で下端 0.000138・上端 0.000191 (JSON `cluster_bootstrap_ci95_seed_sweep.{lo,hi}_range_width`)。
+  - 2 経路検算: クラスタ推定量は各セット 13 項目で `ok=true`・`n_fail=0` (JSON `cluster_by_post_id.cross_check`)。
+- **iid と post_id 単位の比較** (事実のみ): ケース単位 iid の CI は post_id 単位の CI より狭い。幅の比 (iid ÷ post_id 単位) は、
+  t CI で diverse_a 0.844・diverse_b 0.844、bootstrap CI で 0.843・0.860 だった (record-writer が JSON の CI 端から計算)。
+  つまり **iid の CI は約 14〜16% 狭い = post_id 単位の CI は約 16〜19% 広い** (se の比は 1/√1.40 ≈ 0.845)。
+  ★どちらの推定量でも、CI は 0 を含まない (JSON `datasets.*.regression_excludes_zero_{bootstrap,t}` と `datasets.*.cluster_by_post_id.regression_excludes_zero_{cluster_bootstrap,cluster_t,cr1}` がすべて true)。
 - **record-writer による独立検算** (2026-10-05): scratch の npz から numpy / scipy で直接計算した。
   macro F1 4 値・差の平均・t・paired t の CI・退行 / 改善 / 同値の割合・bootstrap CI (seed 20260620) がすべて JSON と一致した。
 - **★範囲の限定** (★ここが最も誤読されやすい):
-  - Z-3 が示すのは、**1 回の SFT 訓練 (訓練 seed 20260620)・1 回の評価 (評価 seed 20260620)・この 1500 件の凍結評価セットの中で、canon と SFT の per-case F1 差の平均が 0 から離れているか**、だけである。
+  - Z-3 が示すのは、**1 回の SFT 訓練 (訓練 seed 20260620)・1 回の評価 (評価 seed 20260620)・この凍結評価セット (500 post × 3 variant = 1500 件) の中で、canon と SFT の per-case F1 差の平均が 0 から離れているか**、だけである。
   - **是正対象 B 系の論点 (退行幅が施策 D の seed ノイズ最大幅 −0.0240 と識別できない) は、訓練 seed を変えたときの分散の話で、別の軸である**。
     Z-3 の CI は per-case のばらつきだけを反映し、訓練 seed 間の分散を含まない。**Z-3 で B 系は解消しない** (Z-5 の宿題)。
   - プラセボ対照がないので、退行が RAFT の選抜方針によるのか、低 LR の追加 SFT 一般の副作用なのかは切り分けていない (Z-4 の宿題)。
   - 判定 (採否・「構造的に退行」等の断定) はしていない。
 - **読み方の注意**:
-  - 同値 (差 = 0) のうち、両モデルとも F1=0 のケースは少数である (diverse_a 42/525・diverse_b 26/471。record-writer が npz から数えた。JSON には無い)。
+  - 同値 (差 = 0) のうち、両モデルとも F1=0 のケースは少数である (diverse_a 42/525・diverse_b 26/471。JSON `datasets.*.cluster_by_post_id.{n_both_models_f1_zero,n_diff_zero_total}`。
+    record-writer が npz から数えた値とも一致する)。
     残りは F1>0 で値が一致したケースで、生成タグ集合が同じだったのか、別の集合で F1 だけ一致したのかは確かめていない。
   - diverse_b の `p_two_sided` は JSON で 0.0 になっているが、これはスクリプトが `2·(1 − t.cdf(|t|))` で計算しているための桁落ちで、p が厳密に 0 という意味ではない。引用するなら t と CI を使うこと。
 
@@ -306,6 +324,7 @@
 - 入口: Z-3 と同じ資産 + `--seed` 切り替え。
 - 出口: 4 seed の diverse set-F1 (canon/SFT paired)・across 平均 ± sd・判定 3 軸の充足表。
 - 意味: B 系の核。ここが揃うまで「退行は構造的」とは書けない (`docs/measurements-log.md` の施策 A/D と同じ作法)。
+- ★注意 (2026-10-05・Z-3 監査 中1 由来): 判定軸「各 seed の paired CI」には、**ケース単位 iid ではなく post_id 単位 (G=500) の CI** を使うこと。diverse-val は 500 post × 3 variant で、iid の CI は約 14〜16% 狭く出る (「Z-3 結果」参照)。
 
 ## 現在地 (最終更新: 2026-10-05・Z-3 反映)
 - ✅ 監査 BLOCK (2026-09-27) の指摘を記録側で是正 (元台帳 / roadmap / measurements-log / CLAUDE.md / model-trainer.md) = commit `351648d` / `951148b`。
@@ -325,7 +344,9 @@
   **数値のみで、判定はしていない** (出口①の推定量の選択も未了)。数値・読み方の注意・限界 (σ_seed は ja 1 プロンプト由来で en への一般化は未検証 / ρ の実測なし / CR の df は G−1 のみ) は「### Z-2」節の「Z-2 結果」にある。
 - ~~🔲 **Z-3〜Z-5 は未実施**。~~ (Z-2 反映時点の記載。Z-3 を算出したため取り消す)
 - ✅ **Z-3 算出済 (2026-09-29〜30)**: 再評価で記録値 (diverse_a −0.0174 / diverse_b −0.0241) を再現した。
-  n=1500 ペアの paired bootstrap 95%CI は diverse_a [−0.022167, −0.012620]、diverse_b [−0.029525, −0.018794]。
+  評価セットは 500 post × 3 variant (iid ではない)。
+  post_id 単位 (G=500) の cluster bootstrap 95%CI は diverse_a [−0.023037, −0.011711]、diverse_b [−0.030437, −0.017966] (design effect 1.40)。
+  ケース単位 iid (n=1500) の paired bootstrap 95%CI は diverse_a [−0.022167, −0.012620]、diverse_b [−0.029525, −0.018794] で、約 14〜16% 狭い。どちらも 0 を含まない (2026-10-05 監査 中1 で post_id 単位を併記)。
   **数値のみで、判定はしていない**。★これは同一の訓練 seed・同一評価の中の識別力だけで、**B 系 (訓練 seed 間の分散) は解消しない** (Z-5)。原因の切り分けもしていない (Z-4)。詳細は「### Z-3」節の「Z-3 結果」。
 - 🔲 **Z-4・Z-5 は未実施**。
 - ~~⏸ GPU 実走は **Z-2 の σ_seed 待ちで未起票**。~~ (2026-09-29 Z-2 算出により取り消す)

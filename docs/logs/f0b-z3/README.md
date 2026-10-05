@@ -71,6 +71,11 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   pairs.eval_diverse_a.jsonl,pairs.eval_diverse_b.jsonl}` をコピーしておく必要がある
   (train_bitnet.py --eval-only は data_dir 直下からこれらを読む)。
   これらは git 管理下で worktree に既に存在する小ファイルなので、コピーは正典の複製ではない。
+- ★Z-3 本計算の `--pairs-a` / `--pairs-b` (post_id クラスタの読み出し元) は、既定値が
+  `docs/logs/f0b-z3/_scratch_data/pairs.eval_diverse_{a,b}.jsonl` である。このディレクトリは gitignore 済みの scratch なので、
+  worktree を消した後や別の checkout では存在しない。その場合は `data/bitnet/_g2a_eval/pairs.eval_diverse_{a,b}.jsonl`
+  (scratch のコピーと同一バイト・sha256 は上の入力表) を `--pairs-a` / `--pairs-b` で明示して渡すこと。
+  npz と eval レポートも同じ scratch にあるので、無ければ上の 2 本の評価コマンドで作り直す。
 - bootstrap は `numpy.random.default_rng(seed)` で決定的 (既定 seed=20260620・B=20000。
   同一環境・同一 numpy バージョンなら再実行しても同じ値になる想定。厳密なビット一致は保証しない)。
 
@@ -130,7 +135,7 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   「退行が RAFT の選抜方針に起因するのか、低 LR 追加 SFT 一般の副作用なのか」は切り分けていない。
 - F1 の差分布の同値 (diff=0) は diverse_a 525 件・diverse_b 471 件ある (JSON `diff_summary.n_zero`)。
   そのうち両モデルとも F1=0 のケースは **diverse_a 42/525・diverse_b 26/471** にとどまる
-  (record-writer が npz から数えた値で、JSON には無い)。**大半は F1>0 で値が一致したケース**である。
+  (出典は JSON `datasets.*.cluster_by_post_id.{n_both_models_f1_zero,n_diff_zero_total}` (`b834fb4` で追加)。record-writer が npz から数えた値とも一致する)。**大半は F1>0 で値が一致したケース**である。
   それが同じタグ集合を出したため (= そのケースではモデル差がない) なのか、別の集合で F1 だけ一致したのかは**未検証**。
   「同値は F1 の解像度の限界でモデル差の限界ではない」とは言えない。ここは判定材料として使っていない。
   (2026-10-05 訂正。旧記載は「交わり 0 件で両モデルとも F1=0」を例に、同値は解像度の限界だと断定していた)
