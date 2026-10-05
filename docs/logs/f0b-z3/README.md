@@ -8,7 +8,7 @@ F-0b 再検証の Z-3 (set-F1 の per-case paired bootstrap CI) を算出した�
 
 | ファイル | 何 |
 |---|---|
-| `z3_result.json` | 本計算の出力 (UTF-8)。`datasets.{diverse_a,diverse_b}` 配下に `reproduction_check` (元台帳/measurements-log 値との再現確認)・`diff_summary` (paired t・分布要約)・`bootstrap_ci95` (B=20000)・`bootstrap_ci95_seed_sweep` (10 seed)・`cross_check` |
+| `z3_result.json` | 本計算の出力 (UTF-8)。`datasets.{diverse_a,diverse_b}` 配下に `reproduction_check` (元台帳/measurements-log 値との再現確認)・`diff_summary` (paired t・分布要約)・`bootstrap_ci95` (B=20000)・`bootstrap_ci95_seed_sweep` (10 seed)・`cross_check` (以上は 1500 件を iid と見た値)・`cluster_by_post_id` (post_id クラスタ推定量・2026-10-05 追加) |
 | `z3_run_log.txt` | 実行記録。日時・環境・実行したコマンド 4 本 (canon 評価 / SFT 評価 / Z-3 本計算 / selftest)・入力の sha256・標準出力の要約 |
 | `_scratch_data/` | eval に使った入力 (vocab.json / pairs.val.jsonl / pairs.eval_diverse_{a,b}.jsonl の worktree 内コピー) と出力 (eval_report_{canon,sft}_z3.json / eval_persample_{canon,sft}_z3.npz)。gitignore 対象 (`.gitignore` の `docs/logs/*/_scratch_data/`・2026-10-05 追加。それ以前は未追跡なだけで ignore されていなかった)・repo には入らない |
 
@@ -82,7 +82,23 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   原因調査 (再現しない場合の代替手順) は不要だった。
 - **per-case pairing**: diverse_a/diverse_b とも 1500 件全てが有効ペア (`n_valid_paired=1500`)。
   スキップ (prompt 長超過) は 0 件、canon/SFT 間の NaN 不一致も 0 件。
-- **同一 seed 内の paired bootstrap CI (95%・B=20000・seed=20260620)**:
+- **★クラスタ構造 (2026-10-05 追加)**: `pairs.eval_diverse_{a,b}.jsonl` は unique post_id 500 件 × variant 0/1/2 の 3 件組
+  (G=500・各クラスタ size 3)。1500 件は iid ではないので、以下の iid 値 (paired bootstrap / paired t) は
+  **post_id クラスタ推定量 (JSON `cluster_by_post_id`) と並べて読むこと**。post_id 単位の推定量 (cluster-mean は t(499) 基準):
+
+  | | diverse_a | diverse_b |
+  |---|---|---|
+  | cluster-mean t / 95%CI | −5.9738 / [−0.023138, −0.011685] | −7.5122 / [−0.030457, −0.017829] |
+  | cluster bootstrap 95%CI (B=20000・seed 20260620) | [−0.023037, −0.011711] | [−0.030437, −0.017966] |
+  | cluster bootstrap seed sweep (10 seed) 下端 / 上端の範囲 | [−0.023235, −0.023029] / [−0.011784, −0.011630] | [−0.030542, −0.030404] / [−0.018046, −0.017854] |
+  | CR0 t / CR1 t (df=499) | −5.9798 / −5.9738 | −7.5198 / −7.5122 |
+  | design effect (cluster-mean se / iid se の 2 乗) | 1.3996 | 1.3999 |
+
+  どの推定量でも CI は 0 を含まない。size 一定のため cluster-mean の推定値は iid の平均と同じで、CI 幅だけが広がる。
+  CR1 の CI は cluster-mean の t CI と一致する (size 一定のため)。
+  両モデルとも F1=0 の件数は a 42・b 26 (JSON `n_both_models_f1_zero`)。
+  このクラスタ推定量の cross_check は各 13 項目全一致 (`ok=true`)。
+- **同一 seed 内の paired bootstrap CI (iid 扱い) (95%・B=20000・seed=20260620)**:
   diverse_a `[-0.022167, -0.012620]`、diverse_b `[-0.029525, -0.018794]`。
   どちらも 0 を含まない。参考の paired t による CI (t(1499) 基準) もほぼ同じ区間
   (diverse_a `[-0.022244, -0.012579]`・diverse_b `[-0.029471, -0.018815]`)。
@@ -93,7 +109,7 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
 - **差の分布**: diverse_a は退行ケース 37.3%・改善 27.7%・同値 35.0% (同値の内訳と理由は下の「読み方の注意」)。
   diverse_b は退行 40.9%・改善 27.7%・同値 31.4%。平均は負だが、個々のケースでは改善も一定割合ある
   (退行が全ケース一様に起きているわけではない)。
-- **cross_check**: 両データセットとも 14 項目 (mean/sd/se/t/CI 上下/正負ゼロ件数/中央値/四分位/
+- **cross_check (iid 側)**: 両データセットとも 14 項目 (mean/sd/se/t/CI 上下/正負ゼロ件数/中央値/四分位/
   bootstrap CI 上下) 全一致 (`ok=true`・`n_fail=0`)。
 
 ## ★読み方の注意 (誤読しやすい点)
@@ -102,7 +118,7 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   訓練 seed が一次証拠で確認できるのは **SFT だけ** (`data/bitnet/train_stats_sft.json` の `"seed": 20260620`)。
   **canon の訓練 seed は未確認**である。下の「訓練 20260620」は SFT の訓練を指す。
 - **本節がカバーするのは「同一 seed (SFT 訓練 20260620・評価 20260620) 内で、この 1500 件の
-  凍結 diverse-val に対して canon と SFT の F1 差が 0 か」という識別力だけ**である。
+  凍結 diverse-val (500 post × 3 variant) に対して canon と SFT の F1 差が 0 か」という識別力だけ**である。
   CI が 0 を除外することは、**この 1 回の SFT 訓練・この 1 回の凍結評価セットの中では
   差が安定して観測できる**ことを示すが、**SFT を別の訓練 seed で焼き直したときに同じ幅で
   退行するか (= seed 間分散) は測っていない** (Z-5 の範囲)。plan の是正対象表が指摘した

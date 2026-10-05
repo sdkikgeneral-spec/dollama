@@ -21,19 +21,32 @@
     ④ 退行 (diff<0) の割合・diff==0 の件数・差の分布要約 (mean/median/sd/quartile)
     を出す。★判定 (採否・有意の断定) はしない。
 
-  検算: 主要な数値 (mean diff・paired t・se・1本目の bootstrap CI) を
-    python ループ経路 (compute_diff_summary) と numpy ベクトル経路 (cross_check 内) の
-    2 経路で計算し照合する。bootstrap 自体は乱数を伴うため「2 経路検算」の対象は
-    percentile 計算ロジック (ソート済み配列からの分位点抽出) のみで、乱数生成そのものは
-    同一 RNG (numpy Generator) を両経路で共有する (=リサンプルの中身は同一・分位点の取り方だけ
-    ループ実装と numpy 実装で独立に書いて比べる)。
+  追加 (監査指摘): pairs.eval_diverse_{a,b}.jsonl は unique post_id 500 件 × variant 0/1/2 の
+    3 件組 (G=500・各クラスタ size 3) で、1500 件は iid ではない。そこで上記 iid 推定量
+    (paired bootstrap / paired t) は**削除せず**、post_id 単位のクラスタ推定量を並置する:
+    ⑤ cluster-mean (unweighted・G=500) の t / CI (t(G-1))
+    ⑥ cluster bootstrap percentile CI (post を復元抽出・B=20000・10 seed sweep)
+    ⑦ CR sandwich (CR0 / CR1・df=G-1)
+    ⑧ design effect = (cluster-mean se / iid se)^2 (参考)。
+    あわせて「両モデルとも F1=0」の件数 (差が 0 になる件の内訳) を出す。
+
+  検算 (cross_check・python ループ経路 vs numpy ベクトル経路の 2 経路):
+    iid: mean / sd / se / t / paired t CI 上下 / 負・正・ゼロ件数 / 中央値 / 四分位 /
+         iid bootstrap CI 上下 (1 本目 seed のみ)。
+    cluster: cluster-mean の mean / se / t / CI 上下 / G / CR0・CR1 の se / CR0 の t /
+         design effect / cluster bootstrap CI 上下 (1 本目 seed のみ) / 両モデル F1=0 の件数。
+    bootstrap は乱数を伴うため 2 経路は同一 RNG のリサンプル結果を共有し、検算対象は
+    「分位点の取り出しとクラスタ平均の組み立て」に限る (リサンプルの乱数列そのものは検算していない)。
+    seed sweep 10 本のうち 1 本目以外の CI 端、CR1 の t・CI、p 値は cross_check 対象外。
 
 禁止事項:
   - 採否・有意/非有意の断定はしない (数値・限界の提示のみ)。
   - 正典 (`bitnet_dense{,_fp32}`/identity/golden) は不改変。本スクリプトは npz を読むだけで
     train_bitnet.py を呼ばない (呼び出しは別コマンド・README 参照)。
   - seed 間分散 (訓練 seed を変えた SFT の再学習) は扱わない (Z-5 の範囲)。本スクリプトは
-    既存の隔離重み (訓練 seed 20260620 固定) 1 本のみを対象にする。
+    既存の隔離重み 1 本ずつ (canon / SFT) のみを対象にする。seed の一次証拠: 評価 seed は
+    両 npz の `_seed` = 20260620。訓練 seed が確認できるのは SFT だけ
+    (data/bitnet/train_stats_sft.json の "seed": 20260620)。canon の訓練 seed は未確認。
 """
 
 import argparse
@@ -209,6 +222,139 @@ def compute_bootstrap_ci_seed_sweep(diffs, n_boot, seeds):
 
 
 # ============================================================
+# post_id クラスタ推定量 (監査指摘: 1500 件 = 500 post x 3 variant は iid でない)
+# ============================================================
+def load_post_ids(jsonl_path):
+    ids = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                ids.append(int(json.loads(line)["meta"]["post_id"]))
+    return ids
+
+
+def _cluster_means_loop(diffs, cids):
+    sums, cnts = {}, {}
+    for d, c in zip(diffs, cids):
+        sums[c] = sums.get(c, 0.0) + d
+        cnts[c] = cnts.get(c, 0) + 1
+    keys = sorted(sums)
+    return keys, [sums[k] / cnts[k] for k in keys], [sums[k] for k in keys], [cnts[k] for k in keys]
+
+
+def _pct_loop(vals_sorted, q):
+    pos = q * (len(vals_sorted) - 1)
+    lo, hi = int(math.floor(pos)), int(math.ceil(pos))
+    if lo == hi:
+        return vals_sorted[lo]
+    frac = pos - lo
+    return vals_sorted[lo] * (1 - frac) + vals_sorted[hi] * frac
+
+
+def compute_cluster_estimators(diffs, cids, iid_se):
+    """cluster-mean (unweighted)・CR0/CR1 sandwich・design effect (python ループ経路)。"""
+    keys, cm, sums, cnts = _cluster_means_loop(diffs, cids)
+    G = len(keys)
+    n = len(diffs)
+    mean_cm = sum(cm) / G
+    var_cm = sum((x - mean_cm) ** 2 for x in cm) / (G - 1)
+    se_cm = (var_cm / G) ** 0.5
+    df = G - 1
+    t_crit = stats.t.ppf(1 - ALPHA / 2, df)
+    mean_all = sum(diffs) / n
+    # CR sandwich: 全体平均 (n 個の平均) に対するクラスタ頑健分散
+    cr0_var = sum((S - m * mean_all) ** 2 for S, m in zip(sums, cnts)) / (n ** 2)
+    cr1_var = cr0_var * G / (G - 1)
+    out = {
+        "G": G, "n": n, "cluster_sizes_distinct": sorted(set(cnts)),
+        "cluster_mean": {
+            "mean": mean_cm, "se": se_cm, "t_stat": mean_cm / se_cm, "df": df,
+            "p_two_sided": 2.0 * (1.0 - stats.t.cdf(abs(mean_cm / se_cm), df)),
+            "ci95_t": {"lo": mean_cm - t_crit * se_cm, "hi": mean_cm + t_crit * se_cm},
+            "note": "unweighted mean of cluster means。size 一定ならば全体平均と一致する。",
+        },
+        "cr_sandwich": {},
+        "iid_se": iid_se,
+        "design_effect": (se_cm / iid_se) ** 2,
+    }
+    for name, var in (("CR0", cr0_var), ("CR1", cr1_var)):
+        se = var ** 0.5
+        out["cr_sandwich"][name] = {
+            "mean": mean_all, "se": se, "t_stat": mean_all / se, "df": df,
+            "ci95_t": {"lo": mean_all - t_crit * se, "hi": mean_all + t_crit * se}}
+    if len(set(cnts)) == 1:
+        m = cnts[0]
+        out["implied_icc_if_balanced"] = (out["design_effect"] - 1.0) / (m - 1) if m > 1 else None
+        out["implied_icc_note"] = "deff = 1 + (m-1)*rho の逆算 (balanced 前提・参考値)"
+    return out
+
+
+def cluster_bootstrap_ci_loop(diffs, cids, n_boot, seed):
+    """post をリサンプルする cluster bootstrap (統計量 = cluster means の平均)。"""
+    _, cm, _, _ = _cluster_means_loop(diffs, cids)
+    G = len(cm)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, G, size=(n_boot, G))
+    boot = np.asarray(cm, dtype=np.float64)[idx].mean(axis=1).tolist()
+    srt = sorted(boot)
+    return {"lo": _pct_loop(srt, 0.025), "hi": _pct_loop(srt, 0.975),
+            "n_boot": n_boot, "seed": seed, "G": G}
+
+
+def cluster_bootstrap_seed_sweep(diffs, cids, n_boot, seeds):
+    per, lo_v, hi_v = {}, [], []
+    for sd in seeds:
+        ci = cluster_bootstrap_ci_loop(diffs, cids, n_boot, sd)
+        per[str(sd)] = ci
+        lo_v.append(ci["lo"])
+        hi_v.append(ci["hi"])
+    return {"per_seed": per, "seeds": seeds,
+            "lo_min": min(lo_v), "lo_max": max(lo_v), "hi_min": min(hi_v), "hi_max": max(hi_v),
+            "lo_range_width": max(lo_v) - min(lo_v), "hi_range_width": max(hi_v) - min(hi_v)}
+
+
+def cluster_cross_check(diffs, cids, cl, cboot_first, first_seed, f1_canon_valid, f1_sft_valid,
+                        both_zero):
+    """numpy ベクトル経路 (np.unique + bincount) でクラスタ推定量を独立に組み直して照合。"""
+    checks = []
+    d = np.asarray(diffs, dtype=np.float64)
+    _, inv = np.unique(np.asarray(cids), return_inverse=True)
+    cnt = np.bincount(inv).astype(np.float64)
+    sm = np.bincount(inv, weights=d)
+    cm = sm / cnt
+    G = len(cm)
+    n = len(d)
+    mean_cm = float(cm.mean())
+    se_cm = float(cm.std(ddof=1) / math.sqrt(G))
+    tc = float(stats.t.ppf(1 - ALPHA / 2, G - 1))
+    _check(checks, "cluster.G", G, cl["G"])
+    _check(checks, "cluster_mean.mean", mean_cm, cl["cluster_mean"]["mean"])
+    _check(checks, "cluster_mean.se", se_cm, cl["cluster_mean"]["se"])
+    _check(checks, "cluster_mean.t", mean_cm / se_cm, cl["cluster_mean"]["t_stat"])
+    _check(checks, "cluster_mean.ci95_t.lo", mean_cm - tc * se_cm, cl["cluster_mean"]["ci95_t"]["lo"])
+    _check(checks, "cluster_mean.ci95_t.hi", mean_cm + tc * se_cm, cl["cluster_mean"]["ci95_t"]["hi"])
+    mean_all = float(d.mean())
+    cr0 = float(np.sqrt(((sm - cnt * mean_all) ** 2).sum() / n ** 2))
+    cr1 = cr0 * math.sqrt(G / (G - 1))
+    _check(checks, "cr0.se", cr0, cl["cr_sandwich"]["CR0"]["se"])
+    _check(checks, "cr1.se", cr1, cl["cr_sandwich"]["CR1"]["se"])
+    _check(checks, "cr0.t", mean_all / cr0, cl["cr_sandwich"]["CR0"]["t_stat"])
+    iid_se = float(d.std(ddof=1) / math.sqrt(n))
+    _check(checks, "design_effect", (se_cm / iid_se) ** 2, cl["design_effect"])
+    rng = np.random.default_rng(first_seed)
+    idx = rng.integers(0, G, size=(N_BOOTSTRAP, G))
+    bm = cm[idx].mean(axis=1)
+    _check(checks, f"cluster_bootstrap.seed={first_seed}.lo", float(np.percentile(bm, 2.5)), cboot_first["lo"])
+    _check(checks, f"cluster_bootstrap.seed={first_seed}.hi", float(np.percentile(bm, 97.5)), cboot_first["hi"])
+    bz = int(((np.asarray(f1_canon_valid) == 0) & (np.asarray(f1_sft_valid) == 0)).sum())
+    _check(checks, "n_both_f1_zero", bz, both_zero)
+    ok = all(c["ok"] for c in checks)
+    return {"ok": ok, "n_checks": len(checks), "n_fail": sum(1 for c in checks if not c["ok"]),
+            "messages": [c["name"] for c in checks if not c["ok"]], "checks": checks}
+
+
+# ============================================================
 # 検算 (numpy ベクトル経路での独立再計算)
 # ============================================================
 def _check(checks, name, recomputed, original, rel_tol=1e-6, abs_tol=1e-9):
@@ -269,7 +415,7 @@ def cross_check(diffs, summary, bootstrap_first_seed_ci, first_seed):
 # ============================================================
 # 1 データセット (diverse_a / diverse_b) 分の解析まとめ
 # ============================================================
-def analyze_dataset(tag, f1_canon, f1_sft, recorded):
+def analyze_dataset(tag, f1_canon, f1_sft, recorded, post_ids=None):
     paired = build_paired(f1_canon, f1_sft)
     diffs = paired["diffs"]
 
@@ -299,8 +445,37 @@ def analyze_dataset(tag, f1_canon, f1_sft, recorded):
                                         abs(macro_sft - recorded["sft_f1"]) < 5e-5),
     }
 
+    cluster_block = None
+    if post_ids is not None:
+        if len(post_ids) != paired["n_rows"]:
+            raise ValueError(f"post_id 行数不一致: {len(post_ids)} vs {paired['n_rows']}")
+        cids = [post_ids[i] for i in paired["valid_index"]]
+        cl = compute_cluster_estimators(diffs.tolist(), cids, summary["se"])
+        cboot = cluster_bootstrap_ci_loop(diffs.tolist(), cids, N_BOOTSTRAP, BOOTSTRAP_SEED)
+        csweep = cluster_bootstrap_seed_sweep(diffs.tolist(), cids, N_BOOTSTRAP, BOOTSTRAP_SEED_SWEEP)
+        both_zero = int(((paired["f1_canon_valid"] == 0) & (paired["f1_sft_valid"] == 0)).sum())
+        cxc = cluster_cross_check(diffs.tolist(), cids, cl, cboot, BOOTSTRAP_SEED,
+                                  paired["f1_canon_valid"], paired["f1_sft_valid"], both_zero)
+        cluster_block = {
+            "structure": {"cluster_key": "meta.post_id", "G": cl["G"],
+                          "cluster_sizes_distinct": cl["cluster_sizes_distinct"],
+                          "n_variants_per_post_expected": 3,
+                          "note": "unique post_id x variant 0/1/2 の 3 件組。1500 件は iid でない。"},
+            "estimators": cl,
+            "cluster_bootstrap_ci95": cboot,
+            "cluster_bootstrap_ci95_seed_sweep": csweep,
+            "regression_excludes_zero_cluster_bootstrap": bool(cboot["hi"] < 0.0),
+            "regression_excludes_zero_cluster_t": bool(cl["cluster_mean"]["ci95_t"]["hi"] < 0.0),
+            "regression_excludes_zero_cr1": bool(cl["cr_sandwich"]["CR1"]["ci95_t"]["hi"] < 0.0),
+            "n_both_models_f1_zero": both_zero,
+            "n_both_models_f1_zero_frac": both_zero / len(diffs),
+            "n_diff_zero_total": summary["n_zero"],
+            "cross_check": cxc,
+        }
+
     return {
         "tag": tag,
+        "cluster_by_post_id": cluster_block,
         "pairing": {k: v for k, v in paired.items()
                     if k not in ("valid_index", "diffs", "f1_canon_valid", "f1_sft_valid")},
         "reproduction_check": reproduction,
@@ -330,7 +505,11 @@ def selftest():
 
     recorded = {"canon_f1": float(np.nanmean(f1_canon)), "sft_f1": float(np.nanmean(f1_sft)),
                 "delta": float(np.nanmean(f1_sft) - np.nanmean(f1_canon))}
-    res = analyze_dataset("selftest", f1_canon, f1_sft, recorded)
+    post_ids = [i // 3 for i in range(n)]  # 3 件組クラスタ (最後は size 1)
+    res = analyze_dataset("selftest", f1_canon, f1_sft, recorded, post_ids)
+    if not res["cluster_by_post_id"]["cross_check"]["ok"]:
+        print("[selftest FAIL] cluster cross_check", res["cluster_by_post_id"]["cross_check"]["messages"])
+        ok = False
 
     if res["pairing"]["n_valid_paired"] != n - 3:
         print("[selftest FAIL] n_valid_paired", res["pairing"]["n_valid_paired"])
@@ -368,6 +547,10 @@ def main():
                      help="eval_persample_<sft>.npz")
     ap.add_argument("--canon-report", default=None, help="eval_report_<canon>.json (再現確認・provenance 用)")
     ap.add_argument("--sft-report", default=None, help="eval_report_<sft>.json")
+    ap.add_argument("--pairs-a", default=os.path.join(ROOT, "docs", "logs", "f0b-z3", "_scratch_data",
+                                                       "pairs.eval_diverse_a.jsonl"))
+    ap.add_argument("--pairs-b", default=os.path.join(ROOT, "docs", "logs", "f0b-z3", "_scratch_data",
+                                                       "pairs.eval_diverse_b.jsonl"))
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "logs", "f0b-z3", "z3_result.json"))
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -392,7 +575,12 @@ def main():
         f1_canon, prov_c = load_persample_f1(args.canon_npz, tag)
         f1_sft, prov_s = load_persample_f1(args.sft_npz, tag)
         short = "diverse_a" if tag == "eval_diverse_a" else "diverse_b"
-        res = analyze_dataset(tag, f1_canon, f1_sft, RECORDED[short])
+        pj = args.pairs_a if short == "diverse_a" else args.pairs_b
+        if not os.path.isfile(pj):
+            print(f"[error] pairs jsonl が見つかりません: {pj}")
+            sys.exit(1)
+        res = analyze_dataset(tag, f1_canon, f1_sft, RECORDED[short], load_post_ids(pj))
+        res["pairs_file"] = {"path": os.path.abspath(pj), "sha256": sha256_of(pj)}
         res["npz_provenance"] = {"canon": prov_c, "sft": prov_s}
         datasets[short] = res
 
@@ -413,14 +601,16 @@ def main():
                 "numpy": np.__version__, "scipy": __import__("scipy").__version__},
         "config": {"alpha": ALPHA, "n_bootstrap": N_BOOTSTRAP, "bootstrap_seed": BOOTSTRAP_SEED,
                    "bootstrap_seed_sweep": BOOTSTRAP_SEED_SWEEP,
-                   "seed_scope_note": "評価は既存の凍結隔離重み (訓練 seed 20260620 固定) に対して"
-                                      "行っており、本スクリプトの bootstrap seed sweep は"
-                                      "『bootstrap 乱数の再現性チェック』であって『SFT 訓練 seed を"
-                                      "振った seed sweep (Z-5)』ではない。"},
+                   "seed_scope_note": "評価 seed は canon/SFT とも 20260620 (npz の _seed)。訓練 seed が"
+                                      "一次証拠 (data/bitnet/train_stats_sft.json) で確認できるのは SFT"
+                                      "だけ (20260620)。canon の訓練 seed は未確認。本スクリプトの"
+                                      "bootstrap seed sweep は bootstrap 乱数の再現性チェックであって、"
+                                      "訓練 seed を振った seed sweep (Z-5) ではない。"},
         "datasets": datasets,
         "notes": [
             "採否・有意性の断定はしていない (数値・分位点の提示のみ)。",
-            "同一 seed (訓練 20260620・評価 20260620) 内の識別力のみを見ている。seed 間分散は Z-5 の範囲。",
+            "評価 seed 20260620 固定・既存の隔離重み 1 本ずつ (SFT の訓練 seed 20260620 は train_stats_sft.json で確認、canon の訓練 seed は未確認) の中の識別力のみを見ている。訓練 seed 間分散は Z-5 の範囲。",
+            "diverse_{a,b} は 500 post_id x variant 3 件の構造 (G=500)。iid 推定量 (diff_summary / bootstrap_ci95) は残し、cluster_by_post_id に post_id クラスタ推定量を並置した。",
             "per-case F1 の NaN (prompt が max_len 超過でスキップ) は canon/SFT で行 index が一致する前提。"
             "本スクリプトは build_paired で両側 NaN 一致を検査し、不一致があれば "
             "n_mismatch_only_{canon,sft}_nan に計上する (0 でなければ前提が崩れている)。",
@@ -452,6 +642,18 @@ def main():
               f"frac_zero={ds['frac_zero']:.4f}")
         xc = res["cross_check"]
         print(f"  cross_check ok={xc['ok']} n_checks={xc['n_checks']} n_fail={xc['n_fail']}")
+        cb = res["cluster_by_post_id"]
+        ce = cb["estimators"]
+        sw2 = cb["cluster_bootstrap_ci95_seed_sweep"]
+        print(f"  [cluster G={ce['G']}] cluster-mean t={ce['cluster_mean']['t_stat']:.4f} "
+              f"ci_t=[{ce['cluster_mean']['ci95_t']['lo']:.6f}, {ce['cluster_mean']['ci95_t']['hi']:.6f}] "
+              f"deff={ce['design_effect']:.4f}")
+        print(f"  [cluster] CR0 t={ce['cr_sandwich']['CR0']['t_stat']:.4f} CR1 t={ce['cr_sandwich']['CR1']['t_stat']:.4f} "
+              f"CR1 ci=[{ce['cr_sandwich']['CR1']['ci95_t']['lo']:.6f}, {ce['cr_sandwich']['CR1']['ci95_t']['hi']:.6f}]")
+        print(f"  [cluster] boot ci=[{cb['cluster_bootstrap_ci95']['lo']:.6f}, {cb['cluster_bootstrap_ci95']['hi']:.6f}] "
+              f"sweep lo[{sw2['lo_min']:.6f},{sw2['lo_max']:.6f}] hi[{sw2['hi_min']:.6f},{sw2['hi_max']:.6f}]")
+        print(f"  [cluster] both_f1_zero={cb['n_both_models_f1_zero']} diff_zero={cb['n_diff_zero_total']} "
+              f"cluster_cross_check ok={cb['cross_check']['ok']} n={cb['cross_check']['n_checks']} fail={cb['cross_check']['n_fail']}")
 
 
 if __name__ == "__main__":
