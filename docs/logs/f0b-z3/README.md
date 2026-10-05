@@ -10,7 +10,7 @@ F-0b 再検証の Z-3 (set-F1 の per-case paired bootstrap CI) を算出した�
 |---|---|
 | `z3_result.json` | 本計算の出力 (UTF-8)。`datasets.{diverse_a,diverse_b}` 配下に `reproduction_check` (元台帳/measurements-log 値との再現確認)・`diff_summary` (paired t・分布要約)・`bootstrap_ci95` (B=20000)・`bootstrap_ci95_seed_sweep` (10 seed)・`cross_check` |
 | `z3_run_log.txt` | 実行記録。日時・環境・実行したコマンド 4 本 (canon 評価 / SFT 評価 / Z-3 本計算 / selftest)・入力の sha256・標準出力の要約 |
-| `_scratch_data/` | eval に使った入力 (vocab.json / pairs.val.jsonl / pairs.eval_diverse_{a,b}.jsonl の worktree 内コピー) と出力 (eval_report_{canon,sft}_z3.json / eval_persample_{canon,sft}_z3.npz)。gitignore 対象・repo には入らない |
+| `_scratch_data/` | eval に使った入力 (vocab.json / pairs.val.jsonl / pairs.eval_diverse_{a,b}.jsonl の worktree 内コピー) と出力 (eval_report_{canon,sft}_z3.json / eval_persample_{canon,sft}_z3.npz)。gitignore 対象 (`.gitignore` の `docs/logs/*/_scratch_data/`・2026-10-05 追加。それ以前は未追跡なだけで ignore されていなかった)・repo には入らない |
 
 生成元のスクリプト: `scripts/dollma_f0b_z3_setf1_bootstrap.py`
 (入力の生成には `scripts/train_bitnet.py --eval-only --dump-persample` を使用。既存 CLI・新規追加なし)
@@ -34,8 +34,12 @@ F-0b 再検証の Z-3 (set-F1 の per-case paired bootstrap CI) を算出した�
 | `data/bitnet/pairs.val.jsonl` | `8548b250c6b65cf40cea45936a23705409cb939566395f46079d1fb1e7d2cb4c` |
 | `data/bitnet/vocab.json` | `af520585b4414e82f21aadfff37a12d0e97c5f362ba7e7ea1f307bfe4b1e7d51` |
 
-いずれも既存の `eval_report_{canon_g2a,sft_g2a}.json` (`data/bitnet/_g2a_eval/`) の provenance に
-記載の sha256 と一致する (同一ファイル)。
+いずれも G-2a の評価 (`data/bitnet/_g2a_eval/`) で使ったものと同一ファイルである。根拠は 2 種類で、裏付けの範囲が違う。
+- **重み 2 本と `pairs.val.jsonl`**: 既存の `eval_report_{canon_g2a,sft_g2a}.json` の provenance
+  (`weights_sha256` / `val_sha256`) に記載された sha256 と一致する。
+- **`pairs.eval_diverse_{a,b}.jsonl` と `vocab.json`**: provenance には sha256 が載っていない。
+  record-writer が `data/bitnet/_g2a_eval/` の同名ファイルと `sha256sum` で直接比較し、同一バイトだと確認した (2026-10-05)。
+(2026-10-05 訂正。旧記載は「いずれも provenance に記載の sha256 と一致する」で、provenance で裏付けられるのは重みと val だけだった)
 
 ## 再現コマンド
 
@@ -74,7 +78,7 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
 
 - **再現確認 = 成功**: canon/SFT を同一評価スクリプトで再走した結果、macro F1 は
   diverse_a 0.3332→0.3158・diverse_b 0.3804→0.3563 (Δ −0.0174 / −0.0241) と、
-  元台帳 (`docs/f0b-rejection-sft-plan.md` l.101) の記録値に小数4桁まで一致した。
+  元台帳 (`docs/f0b-rejection-sft-plan.md`「現在地」節の Package G-2a 完了の項の「set-F1 前後」行) の記録値に小数4桁まで一致した。
   原因調査 (再現しない場合の代替手順) は不要だった。
 - **per-case pairing**: diverse_a/diverse_b とも 1500 件全てが有効ペア (`n_valid_paired=1500`)。
   スキップ (prompt 長超過) は 0 件、canon/SFT 間の NaN 不一致も 0 件。
@@ -86,7 +90,7 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   diverse_a 下端 `[-0.022258, -0.022167]` (幅 0.000091)・上端 `[-0.012647, -0.012524]` (幅 0.000123)、
   diverse_b 下端 `[-0.029572, -0.029435]` (幅 0.000138)・上端 `[-0.018869, -0.018774]` (幅 0.000095) と、
   乱数 seed による揺れは CI の桁 (10^-2) に対して非常に小さい (n=1500 の恩恵)。
-- **差の分布**: diverse_a は退行ケース 37.3%・改善 27.7%・同値 35.0% (F1 が整数比の分数なのでタイが多い)。
+- **差の分布**: diverse_a は退行ケース 37.3%・改善 27.7%・同値 35.0% (同値の内訳と理由は下の「読み方の注意」)。
   diverse_b は退行 40.9%・改善 27.7%・同値 31.4%。平均は負だが、個々のケースでは改善も一定割合ある
   (退行が全ケース一様に起きているわけではない)。
 - **cross_check**: 両データセットとも 14 項目 (mean/sd/se/t/CI 上下/正負ゼロ件数/中央値/四分位/
@@ -94,7 +98,10 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
 
 ## ★読み方の注意 (誤読しやすい点)
 
-- **本節がカバーするのは「同一 seed (訓練 20260620・評価 20260620) 内で、この 1500 件の
+- seed の一次証拠: 評価 seed は canon・SFT とも 20260620 (npz の `_seed`)。
+  訓練 seed が一次証拠で確認できるのは **SFT だけ** (`data/bitnet/train_stats_sft.json` の `"seed": 20260620`)。
+  **canon の訓練 seed は未確認**である。下の「訓練 20260620」は SFT の訓練を指す。
+- **本節がカバーするのは「同一 seed (SFT 訓練 20260620・評価 20260620) 内で、この 1500 件の
   凍結 diverse-val に対して canon と SFT の F1 差が 0 か」という識別力だけ**である。
   CI が 0 を除外することは、**この 1 回の SFT 訓練・この 1 回の凍結評価セットの中では
   差が安定して観測できる**ことを示すが、**SFT を別の訓練 seed で焼き直したときに同じ幅で
@@ -105,9 +112,12 @@ python scripts/dollma_f0b_z3_setf1_bootstrap.py \
   測定は Z-5 が担当する。
 - **プラセボ対照 (Z-4) もまだ無い**: 本節は「退行が 0 と識別できるか」までで、
   「退行が RAFT の選抜方針に起因するのか、低 LR 追加 SFT 一般の副作用なのか」は切り分けていない。
-- F1 の差分布に同値 (diff=0) が 3〜4 割ある理由は、gen_set/gold_set が小さい離散集合で F1 が
-  取りうる値が疎 (例: 交わり0件で両モデルとも F1=0) なため。分布の要約 (frac_zero 等) は
-  「F1 という指標の解像度」の限界であり、モデル差の限界ではない — ここは判定材料として使っていない。
+- F1 の差分布の同値 (diff=0) は diverse_a 525 件・diverse_b 471 件ある (JSON `diff_summary.n_zero`)。
+  そのうち両モデルとも F1=0 のケースは **diverse_a 42/525・diverse_b 26/471** にとどまる
+  (record-writer が npz から数えた値で、JSON には無い)。**大半は F1>0 で値が一致したケース**である。
+  それが同じタグ集合を出したため (= そのケースではモデル差がない) なのか、別の集合で F1 だけ一致したのかは**未検証**。
+  「同値は F1 の解像度の限界でモデル差の限界ではない」とは言えない。ここは判定材料として使っていない。
+  (2026-10-05 訂正。旧記載は「交わり 0 件で両モデルとも F1=0」を例に、同値は解像度の限界だと断定していた)
 - **判定 (採否・有意の断定) はしていない**。CI が 0 を除外するという事実の提示のみで、
   「よって構造的に退行する」と結論づけるのは本節の外 (それを言うには Z-4/Z-5 が要る、というのが
   plan の設計)。
