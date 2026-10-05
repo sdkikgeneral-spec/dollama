@@ -73,12 +73,10 @@ def sha256_of(path):
 def load_persample_f1(npz_path, tag):
     """npz から <tag>__f1 (rows と同順・NaN=skip) を取り出す。
 
-    allow_pickle=True について: 読む npz は本スクリプトの直前の手順
-    (`scripts/train_bitnet.py --eval-only --dump-persample`) が同一マシン上で自己生成した
-    ファイルであり、外部/未信頼ソースではない。文字列プロヴェナンス (_weights 等) が
-    object dtype で保存されているため pickle 復元が要る。
+    allow_pickle は使わない (既定 False)。provenance の文字列は固定長 Unicode 配列
+    (dtype <U*) で保存されており pickle 不要。細工 npz による任意コード実行を避ける。
     """
-    with np.load(npz_path, allow_pickle=True) as z:
+    with np.load(npz_path) as z:
         key = f"{tag}__f1"
         if key not in z:
             raise KeyError(f"{npz_path} に {key} が無い (keys={list(z.keys())})")
