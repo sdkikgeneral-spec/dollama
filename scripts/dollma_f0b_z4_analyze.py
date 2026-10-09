@@ -36,7 +36,11 @@ SEEDS = [20260620, 20260621, 42, 7, 20260622, 20260623, 1, 2]   # 8 seed (台帳
 M_FRAC = 0.5          # margin M = M_FRAC * |mean Delta_R'| (事前選択値)
 ALPHA_CI = 0.05       # 95% 両側 CI (one-sample t df=n-1 / D の Welch CI)
 ALPHA_TOST = 0.05     # TOST: 片側 0.05 x2 = 両側 90% CI が [-M, +M] 内
-SD_PRIOR = 0.0114     # base 33M 参照アームの seed sd (measurements-log.md:73「c33 帯 sd」)・事前検出力用
+# base 33M 参照アーム (c33) の 4 seed macro set-F1 標本 sd・set 別。出典 = docs/training-spec.md §16.2 表。
+# 一次ログ data/bitnet/_seedsweep_d80m/_results/ は本機に無く、ここでは表の値を引用しているだけ (未照合)。
+# 事前検出力 (--power-only) と Z-5 分散帯比の分母の両方に使う。
+SD_PRIOR = {"diverse_a": 0.0114, "diverse_b": 0.0131}
+EXPECTED_EVAL_SEED = 20260620   # 評価 seed (Z-3 と同条件・全アーム同値を assert)
 N_POWER = 8           # 事前検出力の 1 アームあたり seed 数
 M_PRIOR = {"diverse_a": 0.5 * 0.0174, "diverse_b": 0.5 * 0.0241}   # 記録値からの仮置き (事前検出力のみ)
 CLASSES = ["①退行再現せず", "②選抜方針(reward)起因", "③両方寄与", "④追加SFTの副作用", "⑤判定不能"]
@@ -115,8 +119,6 @@ def classify_dataset(d_r, d_p):
     # ④ 追加 SFT の副作用 (TOST: D の両側 90%CI 全体が [-M, +M] 内)
     if (w90["ci_lo"] > -M) and (w90["ci_hi"] < M):
         out["cls"] = CLASSES[3]
-        if d_pos_sig and not d_ge_m:
-            notes.append("D は有意に正だが D<M (TOST 内)")
         return out
     # ⑤ 判定不能
     out["cls"] = CLASSES[4]
@@ -171,9 +173,10 @@ def tost_power_analytic_pooled(sd, n, M):
 def power_table():
     rows = {}
     for k, M in M_PRIOR.items():
-        rows[k] = {"M": M, "sd": SD_PRIOR, "n_per_arm": N_POWER,
-                   "power_welch_mc": tost_power_mc(SD_PRIOR, N_POWER, M),
-                   "power_pooled_analytic": tost_power_analytic_pooled(SD_PRIOR, N_POWER, M)}
+        sdp = SD_PRIOR[k]
+        rows[k] = {"M": M, "sd": sdp, "n_per_arm": N_POWER,
+                   "power_welch_mc": tost_power_mc(sdp, N_POWER, M),
+                   "power_pooled_analytic": tost_power_analytic_pooled(sdp, N_POWER, M)}
     return rows
 
 
@@ -224,11 +227,17 @@ def _load_rows(path):
 # ============================================================
 def seed_delta_and_pair(f1_canon, f1_arm, post_ids):
     """canon 比 Delta (macro, 有効行の平均差) と Z-3 推定量 (post_id 単位 / iid) を返す。"""
-    z3.BOOTSTRAP_SEED_SWEEP = [z3.BOOTSTRAP_SEED]   # per-seed では sweep を 1 本に (速度・記述のみ)
     macro_arm = float(np.nanmean(f1_arm))
     macro_canon_all = float(np.nanmean(f1_canon))
     rec = {"canon_f1": macro_canon_all, "sft_f1": macro_arm, "delta": macro_arm - macro_canon_all}  # RECORDED 無効化
-    res = z3.analyze_dataset("z4", f1_canon, f1_arm, rec, post_ids)
+    saved_sweep = z3.BOOTSTRAP_SEED_SWEEP
+    z3.BOOTSTRAP_SEED_SWEEP = [z3.BOOTSTRAP_SEED]   # per-seed では sweep を 1 本に (速度・記述のみ)
+    try:
+        res = z3.analyze_dataset("z4", f1_canon, f1_arm, rec, post_ids)
+    finally:
+        z3.BOOTSTRAP_SEED_SWEEP = saved_sweep       # 書き換えを必ず復元
+    pg = res["pairing"]
+    assert pg["n_mismatch_only_canon_nan"] == 0 and pg["n_mismatch_only_sft_nan"] == 0,         f"片側 NaN 不一致 (skip 判定食い違い): {pg}"
     cb = res["cluster_by_post_id"]
     ds = res["diff_summary"]
     return {
@@ -247,6 +256,67 @@ def seed_delta_and_pair(f1_canon, f1_arm, post_ids):
     }
 
 
+def check_provenance(npz_dir, seeds, expected_seed=EXPECTED_EVAL_SEED):
+    """来歴照合: 全 npz の評価 seed 同値・16 本の重み sha256 が全て異なる・重みパスに arm/seed を含む。"""
+    prov = {}
+    names = ["canon"] + [f"{a}_s{s}" for a in ("r", "p") for s in seeds]
+    ref = os.path.join(npz_dir, "eval_persample_r_ref.npz")
+    if os.path.isfile(ref):
+        names.append("r_ref")
+    for nm in names:
+        _, pv = z3.load_persample_f1(os.path.join(npz_dir, f"eval_persample_{nm}.npz"), "eval_diverse_a")
+        prov[nm] = pv
+        assert pv["seed"] == expected_seed, f"{nm}: 評価 seed {pv['seed']} != {expected_seed}"
+    arm_names = [f"{a}_s{s}" for a in ("r", "p") for s in seeds]
+    shas = [prov[n]["weights_sha256"] for n in arm_names]
+    assert all(shas) and len(set(shas)) == len(shas), "訓練アームの重み sha256 に欠落/重複あり"
+    for a in ("r", "p"):
+        for s in seeds:
+            bn = os.path.basename(prov[f"{a}_s{s}"]["weights"])
+            assert f"_{a}_s{s}_fp32" in bn, f"重みパスに arm/seed 無し: {bn} (期待 _{a}_s{s}_fp32)"
+    return {"eval_seed": expected_seed, "n_arm_weights_distinct": len(set(shas)),
+            "weights": {n: {"path": v["weights"], "sha256": v["weights_sha256"]} for n, v in prov.items()}}
+
+
+def retention_summary(report_dir, winners_path, seeds, n_all=500, n_excl=35, n_kept=465):
+    """identity retention の全件 / 訓練 post 重複除外後の併記 (記述のみ・判定不使用)。
+    除外集合 = 勝者 sft_bestofn の post_id ∩ details の post_id (int 照合)。paired 比較は diverse のみ。"""
+    win_pids = {int(r["meta"]["post_id"]) for r in _load_rows(winners_path)}
+    names = ["canon"] + [f"{a}_s{s}" for a in ("r", "p") for s in seeds]
+    if os.path.isfile(os.path.join(report_dir, "eval_report_r_ref.json")):
+        names.append("r_ref")
+    per_arm, ref_pids = {}, None
+    for nm in names:
+        with open(os.path.join(report_dir, f"eval_report_{nm}.json"), encoding="utf-8") as f:
+            ir = json.load(f)["identity_retention"]
+        if "details" not in ir:
+            raise SystemExit(f"[停止] {nm}: details 無し (--dump-retention-detail 付きで評価すること)")
+        det = ir["details"]
+        if len(det) != n_all or ir["n_cases"] != n_all:
+            raise SystemExit(f"[停止] {nm}: details 件数 {len(det)} / n_cases {ir['n_cases']} (期待 {n_all}・欠落行あり)")
+        pids = [int(d["post_id"]) for d in det]
+        assert len(set(pids)) == n_all, f"{nm}: details の post_id が重複"
+        if ref_pids is None:
+            ref_pids = pids
+            excl = win_pids & set(pids)
+            assert len(excl) == n_excl, f"除外集合 {len(excl)} != {n_excl}"
+        assert pids == ref_pids, f"{nm}: details の post_id 並びが他アームと不一致"
+        rets_all = [d["retention"] for d in det]
+        rets_kept = [d["retention"] for d in det if int(d["post_id"]) not in excl]
+        assert len(rets_kept) == n_kept
+        per_arm[nm] = {"mean_all": float(np.mean(rets_all)), "n_all": len(rets_all),
+                       "mean_excluding_train_posts": float(np.mean(rets_kept)), "n_kept": len(rets_kept)}
+    def agg(prefix):
+        out = {}
+        for key in ("mean_all", "mean_excluding_train_posts"):
+            v = [per_arm[f"{prefix}_s{s}"][key] for s in seeds]
+            out[key] = {"mean": float(np.mean(v)), "sd": float(np.std(v, ddof=1))}
+        return out
+    return {"per_arm": per_arm, "R_prime_seed_mean_sd": agg("r"), "P_seed_mean_sd": agg("p"),
+            "n_all": n_all, "n_excluded": n_excl, "n_kept": n_kept,
+            "note": "記述のみ・判定には使わない。paired 比較 (Delta/CI) は diverse_a/b のみ。retention は paired 検定をしていない。"}
+
+
 def analyze_all(npz_dir, pairs, seeds, with_paired=True):
     out = {"datasets": {}}
     tags = {"diverse_a": "eval_diverse_a", "diverse_b": "eval_diverse_b"}
@@ -262,6 +332,7 @@ def analyze_all(npz_dir, pairs, seeds, with_paired=True):
                     info = seed_delta_and_pair(f1c, f1x, pid)
                 else:
                     pr = z3.build_paired(f1c, f1x)
+                    assert pr["n_mismatch_only_canon_nan"] == 0 and pr["n_mismatch_only_sft_nan"] == 0,                         f"片側 NaN 不一致: {pr['n_mismatch_only_canon_nan']}/{pr['n_mismatch_only_sft_nan']}"
                     info = {"delta": float(np.mean(pr["diffs"]))}
                 per_seed[arm][str(s)] = info
                 arms[arm][s] = info["delta"]
@@ -277,13 +348,19 @@ def analyze_all(npz_dir, pairs, seeds, with_paired=True):
                  "sign_consistency_R_prime": f"{sum(1 for x in d_r if x < 0)}/{len(d_r)} 負"}
         if with_paired:
             # Z-5 判定軸 (c): 各 seed の paired CI は post_id 単位を主・iid は併記のみ
+            entry["z5_variance_band"] = {
+                "denominator_sd_prior": SD_PRIOR[short],
+                "ratio_abs_mean_delta_R_prime_over_sd_prior": abs(entry["mean_delta_R_prime"]) / SD_PRIOR[short],
+                "observed_sd_delta_R_prime": entry["sd_delta_R_prime"],
+                "note": "分母 = c33 アームの seed sd (引用値)。R' の seed sd は別量として並記 (固定 canon からの SFT seed sd)。"}
             entry["z5_axis_c"] = {
                 "primary_estimator": "post_id cluster bootstrap (G=500)",
-                "n_seeds_ci_excludes_zero_post_id": sum(
+                "n_seeds_regression_ci_below_zero_post_id": sum(
                     1 for s in seeds if per_seed["r"][str(s)]["post_id_cluster"]["ci95_cluster_bootstrap"][1] < 0),
-                "n_seeds_ci_excludes_zero_iid_reference": sum(
+                "n_seeds_regression_ci_below_zero_iid_reference": sum(
                     1 for s in seeds if per_seed["r"][str(s)]["iid"]["ci95_bootstrap"][1] < 0),
-                "n_seeds": len(seeds)}
+                "n_seeds": len(seeds),
+                "G": per_seed["r"][str(seeds[0])]["post_id_cluster"]["G"]}
         # 参考: R (既存重み) - R'_20260620 (ノイズ床ではなく参考差)
         rp = os.path.join(npz_dir, "eval_persample_r_ref.npz")
         if os.path.isfile(rp):
@@ -334,7 +411,7 @@ def selftest():
     # ② 注記: P 有意改善
     c2b = classify_dataset(dR, _synth_deltas(0.01, sd, seed=3))
     chk("cls② P改善注記", c2b["cls"] == CLASSES[1] and any("P 改善" in n for n in c2b["notes"]))
-    # ③ P=-0.005 (D=0.015>=0.01 かつ P 上限<0)
+    # ③ P=-0.007 (D=0.013>=M=0.01 かつ P の 95%CI 上限<0)
     c3 = classify_dataset(dR, _synth_deltas(-0.007, sd, seed=4))
     chk(f"cls③ {c3['cls']} D={c3['D_point']:.4f} Phi={c3['P']['ci_hi']:.4f}", c3["cls"] == CLASSES[2])
     # ④ P ≈ R' (D≈0, 小 sd)
@@ -409,6 +486,56 @@ def selftest():
         r = analyze_all(td, {"diverse_a": pj, "diverse_b": pj}, seeds)
         chk("e2e keys", "combined" in r and "z5_axis_c" in r["datasets"]["diverse_a"])
 
+    # --- 来歴照合・retention (合成) ---
+    with tempfile.TemporaryDirectory() as td2:
+        seeds = [1, 2]
+        arr = np.array([0.3, 0.4])
+        def sv(nm, w, sha, seed=EXPECTED_EVAL_SEED):
+            np.savez_compressed(os.path.join(td2, f"eval_persample_{nm}.npz"), eval_diverse_a__f1=arr,
+                                _weights=np.asarray(w), _weights_sha256=np.asarray(sha), _seed=np.asarray(seed))
+        sv("canon", "x/bitnet_dense_fp32.safetensors", "c")
+        for a_ in ("r", "p"):
+            for s_ in seeds:
+                sv(f"{a_}_s{s_}", f"x/bitnet_dense_sft_{a_}_s{s_}_fp32.safetensors", f"{a_}{s_}")
+        pv = check_provenance(td2, seeds)
+        chk("prov ok", pv["n_arm_weights_distinct"] == 4)
+        sv("p_s2", "x/bitnet_dense_sft_p_s2_fp32.safetensors", "r1")   # sha 重複
+        try:
+            check_provenance(td2, seeds)
+            chk("prov sha 重複検出", False)
+        except AssertionError:
+            pass
+        sv("p_s2", "x/bitnet_dense_sft_p_s2_fp32.safetensors", "p2", seed=7)   # seed 不一致
+        try:
+            check_provenance(td2, seeds)
+            chk("prov seed 不一致検出", False)
+        except AssertionError:
+            pass
+        sv("p_s2", "x/bitnet_dense_sft_p_s9_fp32.safetensors", "p2")   # パスに seed 無し
+        try:
+            check_provenance(td2, seeds)
+            chk("prov パス検出", False)
+        except AssertionError:
+            pass
+        # retention: 20 件・うち 5 件が訓練 post
+        wp = os.path.join(td2, "win.jsonl")
+        with open(wp, "w", encoding="utf-8") as f:
+            for pid in list(range(100, 105)) + [999]:
+                f.write(json.dumps({"meta": {"post_id": pid}}) + "\n")
+        def rep(nm, base, drop=0):
+            det = [{"post_id": 100 + i, "retention": base + 0.01 * (i % 3)} for i in range(20 - drop)]
+            with open(os.path.join(td2, f"eval_report_{nm}.json"), "w", encoding="utf-8") as f:
+                json.dump({"identity_retention": {"n_cases": 20 - drop, "details": det}}, f)
+        for nm in ["canon", "r_s1", "r_s2", "p_s1", "p_s2"]:
+            rep(nm, 0.97)
+        rs = retention_summary(td2, wp, seeds, n_all=20, n_excl=5, n_kept=15)
+        chk("retention 件数", rs["n_kept"] == 15 and rs["per_arm"]["canon"]["n_kept"] == 15)
+        rep("p_s2", 0.97, drop=1)
+        try:
+            retention_summary(td2, wp, seeds, n_all=20, n_excl=5, n_kept=15)
+            chk("retention 欠落停止", False)
+        except SystemExit:
+            pass
     if ok:
         print("[selftest] OK (z4 analyze)")
     return ok
@@ -424,6 +551,8 @@ def main():
     ap.add_argument("--winners", default=None, help="勝者 SFT ペア (sft_bestofn.jsonl・交絡統計用)")
     ap.add_argument("--placebo-dir", default=None, help="placebo_s<seed>.jsonl のあるディレクトリ (交絡統計用)")
     ap.add_argument("--vocab", default=None, help="交絡統計の seq 構築用 vocab.json")
+    ap.add_argument("--report-dir", default=None,
+                    help="--dump-retention-detail 付き eval_report_<arm>.json のディレクトリ (既定 = --npz-dir)")
     ap.add_argument("--out", default=None, help="結果 JSON (必須・既定出力先なし)")
     args = ap.parse_args()
 
@@ -438,10 +567,14 @@ def main():
         if not getattr(args, k):
             ap.error(f"--{k.replace('_', '-')} は必須")
 
+    if not args.winners:
+        ap.error("--winners は必須 (retention の除外集合・来歴)")
     res = analyze_all(args.npz_dir, {"diverse_a": args.pairs_a, "diverse_b": args.pairs_b}, SEEDS)
+    res["provenance"] = check_provenance(args.npz_dir, SEEDS)
+    res["retention"] = retention_summary(args.report_dir or args.npz_dir, args.winners, SEEDS)
     res["power_prior"] = power_table()
     res["constants"] = {"SEEDS": SEEDS, "M_FRAC": M_FRAC, "ALPHA_CI": ALPHA_CI, "ALPHA_TOST": ALPHA_TOST,
-                        "SD_PRIOR": SD_PRIOR, "classes": CLASSES}
+                        "SD_PRIOR": SD_PRIOR, "EXPECTED_EVAL_SEED": EXPECTED_EVAL_SEED, "classes": CLASSES}
     # 実測 sd の MDE (記述のみ・判定は変えない): TOST 90% で M を超えない最小 |D| ではなく、
     # 実測 sd で検出力 0.8 になる M を二分探索
     for k, e in res["datasets"].items():

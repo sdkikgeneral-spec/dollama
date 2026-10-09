@@ -139,7 +139,7 @@ def main():
     before_dd = sorted(os.listdir(dd_new))
     rc4, o4, t4 = run(TRAIN, ["--data-dir", dd_new, "--eval-only", "--weights", smoke_w,
                               "--eval-name", "smoke_eval", "--out-dir", od4, "--out-tag", "_zz",
-                              "--dump-persample", "--dump-retention-detail"])
+                              "--dump-persample", "--dump-retention-detail", "--device", "cuda"])
     names4 = sorted(os.listdir(od4)) if os.path.isdir(od4) else []
     exp4 = ["eval_persample_smoke_eval_zz.npz", "eval_report_smoke_eval_zz.json"]
     t4_ok = rc4 == 0 and names4 == exp4 and sorted(os.listdir(dd_new)) == before_dd
@@ -151,6 +151,19 @@ def main():
     if not t4_ok:
         print(o4[-1200:])
     ok &= t4_ok
+    # T5 フラグ未指定の eval-only (HEAD 版と同じ出力名・場所・report 内容: details 無し)
+    dd5 = os.path.join(work, "data_eval_default")
+    shutil.copytree(dd_new, dd5, ignore=shutil.ignore_patterns("bitnet_dense_sft*", "train_stats*"))
+    rc5, o5, t5 = run(TRAIN, ["--data-dir", dd5, "--eval-only", "--weights", smoke_w, "--eval-name", "smoke_eval",
+                              "--dump-persample", "--device", "cuda"])
+    new5 = sorted(f for f in os.listdir(dd5) if f.startswith("eval_"))
+    t5_ok = rc5 == 0 and new5 == ["eval_persample_smoke_eval.npz", "eval_report_smoke_eval.json"]
+    if t5_ok:
+        import json
+        rep5 = json.load(open(os.path.join(dd5, "eval_report_smoke_eval.json"), encoding="utf-8"))
+        t5_ok = "details" not in rep5["identity_retention"]
+    print(f"[T5] default eval-only out={new5} ok={t5_ok} ({t5:.1f}s)")
+    ok &= t5_ok
     print(f"[selftest] {'OK' if ok else 'FAIL'} (total {time.time() - t0:.1f}s)")
     sys.exit(0 if ok else 1)
 

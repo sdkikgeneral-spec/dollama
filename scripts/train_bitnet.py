@@ -2964,6 +2964,15 @@ def main():
         "tensor_keys": keys,
         "history": history,
     }
+    # Z-4 来歴: SFT の入力 (勝者ペア・warm-start 元) と決定論設定。非 SFT / 非決定論の stats は不変。
+    if args.sft_rejection:
+        stats["sft_provenance"] = {
+            "sft_data": {"path": os.path.abspath(sft_path), "sha256": _file_sha256(sft_path)},
+            "sft_init": {"path": os.path.abspath(init_path), "sha256": _file_sha256(init_path)},
+        }
+    if args.deterministic:
+        stats["deterministic"] = {"enabled": True, "warn_only": bool(args.deterministic_warn_only),
+                                  "CUBLAS_WORKSPACE_CONFIG": os.environ.get("CUBLAS_WORKSPACE_CONFIG")}
     stats_path = os.path.join(out_dir, stats_filename)
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)

@@ -65,6 +65,8 @@ def build_placebo(cand_rows, win_rows, seed, n_expected=N_EXPECTED):
         assert o["source"] == w["source"] == "rejection_sft", "source 不一致"
         assert set(o.keys()) == set(w.keys()), "schema(top keys) 不一致"
         assert len(o["tags"]) > 0, "empty タグ"
+        if o["meta"]["coincides_with_winner"]:
+            assert o["tags"] == w["tags"], f"post {o['meta']['post_id']}: 勝者一致行なのに tags が勝者と不一致"
     return out
 
 
@@ -137,6 +139,16 @@ def selftest():
     try:
         build_placebo(cands, wins[:n - 1], 7, n_expected=n)
         print("[selftest FAIL] 件数 assert 不発")
+        ok = False
+    except AssertionError:
+        pass
+    # 勝者一致行の tags 一致 assert が効くこと (勝者 tags を改竄 -> 一致行で不一致)
+    tam = json.loads(json.dumps(wins))
+    for w_ in tam:
+        w_["tags"] = ["tampered"]
+    try:
+        build_placebo(cands, tam, 7, n_expected=n)
+        print("[selftest FAIL] 勝者一致 tags assert 不発")
         ok = False
     except AssertionError:
         pass
