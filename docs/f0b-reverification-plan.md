@@ -404,7 +404,7 @@
 
 **5. Z-5 との関係 (PL 決裁・2026-10-10 依頼者経由で伝達)**
 - Z-5 判定軸 (c)「各 seed の paired CI」は **post_id 単位 (G=500)** の推定量で出す。
-  ケース単位 iid は施策 A/D 比較用の**併記列**で、判定には使わない (analyze.py は `primary_estimator = "post_id cluster bootstrap (G=500)"` を出し、iid 側は `n_seeds_ci_excludes_zero_iid_reference` 等の参照列として出す)。
+  ケース単位 iid は施策 A/D 比較用の**併記列**で、判定には使わない (analyze.py は `primary_estimator = "post_id cluster bootstrap (G=500)"` を出し、iid 側は `n_seeds_regression_ci_below_zero_iid_reference` 等の参照列として出す)。
   これで「### Z-5」節の「Z-5 起票時に PL が決める論点」は決定済みになる。
 - Z-4 の R'_s 系列で、Z-5 の判定 3 軸のうち **符号一貫性** と **各 seed の paired CI** は算出できる。
 - **分散帯比は定義を変えて出す**: 分母は c33 帯 sd を **set 別** (diverse_a 0.0114 / diverse_b 0.0131・上記 4・Phase 4-D の c33 = base 33M 参照アームの seed sd) で使い、
@@ -417,7 +417,7 @@
   - 先例 = `scripts/dollma_d_seedsweep_analyze.py` の判定部 (4 seed・(a) 符号一貫 / (b) |delta 平均| > c33 band sd / (c) 全 seed の paired CI が 0 を除外、の 3 軸 AND)。
     本規則は退行の向きを問うので (a)(c) を負側で書いている。
   - 前 4 seed (20260620/20260621/42/7 = 台帳 Z-5 の慣行) だけで同じ判定をした結果は**参考列**として出し、合否には使わない。
-  - analyze.py への実装は model-trainer が並行で入れる。定数名と本規則の照合は実装後に行う (本節固定時点では未照合)。
+  - analyze.py の実装 (commit `f74c4af`) の `z5_judge`・`Z5_REFERENCE_SEEDS`・`z5_pass` と本規則を照合済 (record-auditor)。
 - ★**分散帯比は元定義 (現正典の seed 違い再訓練 sd を分母とするもの) が未算出なので、元の Z-5 の 3 軸 AND は成立しえない。**
   Z-5 のクローズは「元定義の 3 軸が揃った」という意味ではなく、**上記の定義変更付き判定で置き換えた**ことを指す。
 - Z-4 完了と同時に、Z-5 は「**Z-4 に統合 (定義変更付き)**」でクローズする予定。
