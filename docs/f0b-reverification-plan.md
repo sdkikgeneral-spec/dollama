@@ -342,8 +342,13 @@
 
 - 抽選乱数は訓練シャッフルと別系列: `random.Random(f"z4sel-{s}")` (`scripts/dollma_f0b_z4_placebo_pairs.py`)。
 - 決定論設定: R'・P の全訓練に `train_bitnet.py --deterministic` (= `CUBLAS_WORKSPACE_CONFIG=:4096:8` + `torch.use_deterministic_algorithms(True)`)。
-  例外が出る演算があった場合のみ `--deterministic-warn-only` (warn_only=True) に落とし、その旨を記録する。どちらで走ったかは本走時に記録する (本節固定時点では未確定)。
+  例外が出る演算があった場合のみ `--deterministic-warn-only` (warn_only=True) に落とし、その旨を記録する。~~どちらで走ったかは本走時に記録する (本節固定時点では未確定)。~~
+  → **warn_only は不要と確認 (2026-10-10 追記・本走前)**: `scripts/dollma_f0b_z4_selftest.py` T3 (`--deterministic` のみ・warn_only なし・cuda smoke を 2 回) が例外なく完走し、
+  出力 `docs/logs/f0b-z4/_scratch_data/selftest/det{0,1}/` の重み sha256 が一致した (fp16 `75a738c0…` / fp32 `f684232f…`。本セッションで sha256sum を再計算して確認)。
+  本走ランナーも `--deterministic` のみを渡し、train stats の `deterministic.enabled` かつ `not warn_only` を assert する (`scripts/dollma_f0b_z4_run.py`)。smoke 規模での確認であり、本走規模での sha 一致は本走時に R'_20260620 の 2 回訓練で見る。
   決定論の確認は R'_20260620 を 2 回訓練して sha256 一致を見る。
+- 本走ランナー = `scripts/dollma_f0b_z4_run.py` (commit `6fa7b46`)。評価は**全アーム (canon / R / R'_s / P_s の 18 本) を `--device cuda --seed 20260620`** で行い、
+  analyze.py が npz の来歴で評価 seed 20260620 を assert する (`EXPECTED_EVAL_SEED`・`check_provenance`)。
 
 **2. 判定規則 (5 区分・判定順は上から)**
 - 一次指標: seed ごとの diverse macro set-F1 の canon 比 Δ (Δ_R'(s), Δ_P(s))。**diverse_a と diverse_b の両方**で判定する。
@@ -363,34 +368,40 @@
 
 **3. 事前検出力 (本走前に算出)**
 - 再現: `python scripts/dollma_f0b_z4_analyze.py --power-only` (2026-10-10 に本 worktree で実行した出力をそのまま転記)。
-  条件 = TOST・両アーム sd 0.0114 (analyze.py `SD_PRIOR`)・n = 8 vs 8・真の D = 0。Welch は Monte Carlo (n_sim 400,000・乱数 seed 20261009)、pooled は df=14 の解析積分。
+  条件 = TOST・両アーム同一 sd = **set 別** (diverse_a 0.0114 / diverse_b 0.0131・analyze.py `SD_PRIOR`・commit `6fa7b46`)・n = 8 vs 8・真の D = 0。Welch は Monte Carlo (n_sim 400,000・乱数 seed 20261009)、pooled は df=14 の解析積分。
 
-  | set | M (仮置き) | 検出力 Welch MC | 検出力 pooled 解析 |
-  |---|---|---|---|
-  | diverse_a | 0.0087 | 0.03855 | 0.04056 |
-  | diverse_b | 0.01205 | 0.29367 | 0.30268 |
+  | set | M (仮置き) | sd | 検出力 Welch MC | 検出力 pooled 解析 |
+  |---|---|---|---|---|
+  | diverse_a | 0.0087 | 0.0114 | 0.03855 | 0.04056 |
+  | diverse_b | 0.01205 | 0.0131 | 0.14342 | 0.14968 |
+
+  (diverse_b の旧値 = sd 0.0114 で計算した ~~0.29367 / 0.30268~~。`48828ca` で記録・`6fa7b46` の set 別 sd 化に伴い差し替え。
+  差し替えは本走前・結果未見。2026-10-10 に本 worktree で `--power-only` を再実行して上表の値を得た。)
 
 - いずれも 0.8 未満。**seed は追加しない** (結果を見ながらの逐次追加は optional stopping になるため)。
   **「④ 追加 SFT の副作用 は出にくい設計である」と本走前に宣言する。** ④ は a・b の両方で TOST が通る必要がある (上記 a/b 合成)。
 - 上表は set ごとの値で、a・b 両方で ④ が出る確率は計算していない。
 
-**4. sd 0.0114 の出典**
+**4. sd の出典 (set 別: diverse_a 0.0114 / diverse_b 0.0131)**
 - 引用元 = `docs/measurements-log.md` Phase 4-D 行 (容量増 seed sweep) の「c33 帯 sd 0.0114」。
 - この値の定義はスクリプト側で確認できる: `scripts/dollma_d_seedsweep_analyze.py` の「across-seed 集計」部 (`control_band`) が、
   **c33 アーム自身の 4 seed (20260620/20260621/42/7) の macro 値の標本 sd (ddof=1)** を set × metric ごとに出す。
 - **どの set の値かは一次ログでは確定できなかった**: 生ログ `data/bitnet/_seedsweep_d80m/_results/` (analyze の入力 eval_report / npz) は本機に存在しない (2026-10-10 確認)。
   二次記録としては、commit `3209bff` で追加された `docs/training-spec.md` §16.2 の表が **diverse_a / F1 の c33 band sd = 0.0114**、
   **diverse_b / F1 = 0.0131** (Jaccard は a 0.0079 / b 0.0098) と書いている。
-- ★したがって事前検出力の diverse_b 行は、二次記録上の diverse_b の c33 band sd (0.0131) ではなく diverse_a の値 (0.0114) で計算している。
+- ~~★したがって事前検出力の diverse_b 行は、二次記録上の diverse_b の c33 band sd (0.0131) ではなく diverse_a の値 (0.0114) で計算している。
   計画は 0.0114 を「保守的上限」として使うとしたが、diverse_b についてはこの位置づけを一次証拠で裏付けられていない。
-  0.0131 での再計算は本節では行っていない (判定定数・本節の固定値は変えない)。
+  0.0131 での再計算は本節では行っていない (判定定数・本節の固定値は変えない)。~~
+- → **set 別 sd に変更 (2026-10-10・本走前・結果未見)**: `SD_PRIOR = {"diverse_a": 0.0114, "diverse_b": 0.0131}` (analyze.py 定数ブロック・commit `6fa7b46`)。
+  上記 3 の事前検出力と下記 5 の分散帯比の分母の両方にこの set 別値を使う。
+  ★両値とも training-spec §16.2 表 (二次記録) からの引用で、一次ログとの照合はしていない (analyze.py のコメントにも「未照合」と明記)。
 
 **5. Z-5 との関係 (PL 決裁・2026-10-10 依頼者経由で伝達)**
 - Z-5 判定軸 (c)「各 seed の paired CI」は **post_id 単位 (G=500)** の推定量で出す。
   ケース単位 iid は施策 A/D 比較用の**併記列**で、判定には使わない (analyze.py は `primary_estimator = "post_id cluster bootstrap (G=500)"` を出し、iid 側は `n_seeds_ci_excludes_zero_iid_reference` 等の参照列として出す)。
   これで「### Z-5」節の「Z-5 起票時に PL が決める論点」は決定済みになる。
 - Z-4 の R'_s 系列で、Z-5 の判定 3 軸のうち **符号一貫性** と **各 seed の paired CI** は充足できる。
-- **分散帯比は定義を変えて出す**: 分母は c33 帯 sd 0.0114 (上記 4・Phase 4-D の c33 = base 33M 参照アームの seed sd) で、
+- **分散帯比は定義を変えて出す**: 分母は c33 帯 sd を **set 別** (diverse_a 0.0114 / diverse_b 0.0131・上記 4・Phase 4-D の c33 = base 33M 参照アームの seed sd) で使い、
   **現正典 (merged B∧A) を seed 違いで再訓練したときの sd ではない**。分子 (R' の seed sd) は「固定 canon からの SFT seed sd」で、施策 A/D の分母とは別の量。
   **元定義の分散帯比は未算出**であり、定義変更版の分散帯比を「退行は構造的」の根拠に使わない。
 - Z-4 完了と同時に、Z-5 は「**Z-4 に統合 (定義変更付き)**」でクローズする予定。
@@ -434,8 +445,9 @@
 - 🔲 **Z-4・Z-5 は事前固定済・本走前 (2026-10-10)**: 実装 commit `fd47bcc` (`train_bitnet.py` の出力先/決定論フラグ・プラセボ生成・5 区分判定の解析・selftest)。
   設計・判定規則・事前検出力・Z-5 との関係は「### Z-4」節の「Z-4 事前固定」に**本走前に固定**した (結果を見て変えない)。
   R'_s / P_s の本アームは**未実行**で、結果はまだ無い。
-  事前検出力は TOST で a 0.039〜0.041 / b 0.29〜0.30 (いずれも 0.8 未満) → seed は追加せず、「④ は出にくい設計」と宣言済み。
-  sd 0.0114 がどの set の値かは一次ログで確定できていない (同節 4)。
+  事前検出力は TOST・set 別 sd で a 0.039〜0.041 / b 0.143〜0.150 (いずれも 0.8 未満) → seed は追加せず、「④ は出にくい設計」と宣言済み。
+  set 別 sd (a 0.0114 / b 0.0131) は二次記録からの引用で、一次ログとは未照合 (同節 4)。
+  本走ランナー `scripts/dollma_f0b_z4_run.py`・評価は全アーム cuda / seed 20260620・決定論は warn_only 不要 (smoke で sha 一致) (同節 1)。
   Z-5 は Z-4 完了と同時に「Z-4 に統合 (定義変更付き)」でクローズ予定。
 - ~~⏸ GPU 実走は **Z-2 の σ_seed 待ちで未起票**。~~ (2026-09-29 Z-2 算出により取り消す)
 - ⏸ GPU 実走は **σ_seed 算出済・起票は未**。設計 (a)/(b)・k・枚数は決めていない。起票時に扱いが要る論点 (本 doc では決めない):
