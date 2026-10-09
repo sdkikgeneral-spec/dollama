@@ -41,7 +41,14 @@ ALPHA_TOST = 0.05     # TOST: 片側 0.05 x2 = 両側 90% CI が [-M, +M] 内
 # 事前検出力 (--power-only) と Z-5 分散帯比の分母の両方に使う。
 SD_PRIOR = {"diverse_a": 0.0114, "diverse_b": 0.0131}
 EXPECTED_EVAL_SEED = 20260620   # 評価 seed (Z-3 と同条件・全アーム同値を assert)
-N_POWER = 8           # 事前検出力の 1 アームあたり seed 数
+# Z-5 合否規則 (実走前固定・ここ 1 か所): 対象 = R' の 8 seed 全部。set ごとに (a)∧(b)∧(c)、
+# diverse_a と diverse_b の両方成立で z5_pass=True。符号は退行側 (先例 dollma_d_seedsweep_analyze.py:288-294 と同型)。
+#   (a) 全 seed で Delta_R' < 0   (b) |mean Delta_R'| > SD_PRIOR[set] (定義変更付き分散帯比)
+#   (c) 全 seed で post_id 単位 paired CI (cluster bootstrap 95%) の上限 < 0
+Z5_REFERENCE_SEEDS = [20260620, 20260621, 42, 7]   # 参考列 (z5_pass に不使用)
+Z5_FIXED_NOTE = ("分散帯比は元定義 (現正典の seed 違い再訓練 sd) 未算出。"
+                 "z5_pass は定義変更付き 3 軸 (分母 = c33 アームの seed sd 引用値) の判定")
+N_POWER = 8          # 事前検出力の 1 アームあたり seed 数
 M_PRIOR = {"diverse_a": 0.5 * 0.0174, "diverse_b": 0.5 * 0.0241}   # 記録値からの仮置き (事前検出力のみ)
 CLASSES = ["①退行再現せず", "②選抜方針(reward)起因", "③両方寄与", "④追加SFTの副作用", "⑤判定不能"]
 # 判定順: ① -> ② -> ③ -> ④ -> ⑤ (classify_dataset 内の記述順が判定順)
@@ -127,6 +134,17 @@ def classify_dataset(d_r, d_p):
     if w95["ci_hi"] < 0:
         notes.append("D<0 有意 (プラセボの方が悪い)")
     return out
+
+
+def z5_judge(d_r, ci_hi, sd_prior):
+    """1 set の Z-5 3 軸。d_r = seed ごとの Delta_R'、ci_hi = 各 seed の post_id 単位 paired CI 上限。"""
+    if len(d_r) == 0:
+        return {"pass": None, "n_seeds": 0}
+    a = all(x < 0 for x in d_r)
+    b = abs(float(np.mean(d_r))) > sd_prior
+    c = all(x < 0 for x in ci_hi)
+    return {"a_sign_all_negative": a, "b_abs_mean_gt_sd_prior": b, "c_all_ci_upper_below_zero": c,
+            "pass": bool(a and b and c), "n_seeds": len(d_r)}
 
 
 def combine_ab(res_a, res_b):
@@ -353,6 +371,13 @@ def analyze_all(npz_dir, pairs, seeds, with_paired=True):
                 "ratio_abs_mean_delta_R_prime_over_sd_prior": abs(entry["mean_delta_R_prime"]) / SD_PRIOR[short],
                 "observed_sd_delta_R_prime": entry["sd_delta_R_prime"],
                 "note": "分母 = c33 アームの seed sd (引用値)。R' の seed sd は別量として並記 (固定 canon からの SFT seed sd)。"}
+            hi = {sd_: per_seed["r"][str(sd_)]["post_id_cluster"]["ci95_cluster_bootstrap"][1] for sd_ in seeds}
+            ref4 = [sd_ for sd_ in Z5_REFERENCE_SEEDS if sd_ in seeds]
+            entry["z5"] = {
+                "all_seeds": z5_judge([arms["r"][sd_] for sd_ in seeds], [hi[sd_] for sd_ in seeds], SD_PRIOR[short]),
+                "reference_first4_not_used_for_pass": z5_judge(
+                    [arms["r"][sd_] for sd_ in ref4], [hi[sd_] for sd_ in ref4], SD_PRIOR[short]),
+                "note": Z5_FIXED_NOTE}
             entry["z5_axis_c"] = {
                 "primary_estimator": "post_id cluster bootstrap (G=500)",
                 "n_seeds_regression_ci_below_zero_post_id": sum(
@@ -376,6 +401,9 @@ def analyze_all(npz_dir, pairs, seeds, with_paired=True):
                 "match": bool(abs(np.nanmean(f1c) - rec["canon"]) < RECORDED_TOL
                               and abs(np.nanmean(f1r) - rec["r_ref"]) < RECORDED_TOL)}
         out["datasets"][short] = entry
+    if with_paired:
+        out["z5_pass"] = bool(all(out["datasets"][k]["z5"]["all_seeds"]["pass"] for k in out["datasets"]))
+        out["z5_note"] = Z5_FIXED_NOTE
     out["combined"] = combine_ab(out["datasets"]["diverse_a"]["classification"],
                                  out["datasets"]["diverse_b"]["classification"])
     return out
@@ -484,8 +512,19 @@ def selftest():
             save(f"eval_persample_r_s{s}.npz", base - 0.02 + rng.normal(0, 0.002, n))
             save(f"eval_persample_p_s{s}.npz", base + rng.normal(0, 0.002, n))
         r = analyze_all(td, {"diverse_a": pj, "diverse_b": pj}, seeds)
-        chk("e2e keys", "combined" in r and "z5_axis_c" in r["datasets"]["diverse_a"])
+        chk("e2e keys", "combined" in r and "z5_axis_c" in r["datasets"]["diverse_a"]
+            and isinstance(r["z5_pass"], bool))
 
+    # --- Z-5 合否 (合成) ---
+    neg = [-0.02] * 8
+    hi_ok = [-0.005] * 8
+    chk("z5 全成立", z5_judge(neg, hi_ok, 0.0114)["pass"])
+    chk("z5 (a)不成立", not z5_judge(neg[:7] + [0.001], hi_ok, 0.0114)["pass"])
+    chk("z5 (b)不成立", not z5_judge([-0.008] * 8, hi_ok, 0.0114)["pass"])
+    chk("z5 (c)不成立", not z5_judge(neg, hi_ok[:7] + [0.001], 0.0114)["pass"])
+    za = z5_judge(neg, hi_ok, SD_PRIOR["diverse_a"])
+    zb = z5_judge([-0.012] * 8, hi_ok, SD_PRIOR["diverse_b"])   # |0.012| < 0.0131 で (b) 不成立
+    chk("z5 a/b 不一致 -> 両方成立でなく pass 偽", za["pass"] and not zb["pass"])
     # --- 来歴照合・retention (合成) ---
     with tempfile.TemporaryDirectory() as td2:
         seeds = [1, 2]

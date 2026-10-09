@@ -154,7 +154,12 @@ def train(a):
         h2 = sha(os.path.join(wdir, f"bitnet_dense_sft_detchk_r_s{SEEDS[0]}_fp32.safetensors"))
         print(f"[決定論確認] R'_{SEEDS[0]} 2 回訓練 sha256 一致 = {h1 == h2} ({h1[:16]} / {h2[:16]})")
         if h1 != h2:
-            raise SystemExit("[停止] 決定論確認 不一致")
+            msg = (f"[停止] 決定論確認 不一致: r_s{SEEDS[0]}={h1} detchk={h2} "
+                   f"(--deterministic 下で同一入力の 2 回訓練が bit 一致しない。後続 eval に進まない)")
+            os.makedirs(os.path.join(SCR, "logs"), exist_ok=True)
+            with open(os.path.join(SCR, "logs", "STOP_determinism.log"), "w", encoding="utf-8") as f:
+                f.write(msg + "\n")
+            raise SystemExit(msg)
 
 
 def eval_(a):
