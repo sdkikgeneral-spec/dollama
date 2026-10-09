@@ -345,8 +345,9 @@
   例外が出る演算があった場合のみ `--deterministic-warn-only` (warn_only=True) に落とし、その旨を記録する。~~どちらで走ったかは本走時に記録する (本節固定時点では未確定)。~~
   → **warn_only は不要と確認 (2026-10-10 追記・本走前)**: `scripts/dollma_f0b_z4_selftest.py` T3 (`--deterministic` のみ・warn_only なし・cuda smoke を 2 回) が例外なく完走し、
   出力 `docs/logs/f0b-z4/_scratch_data/selftest/det{0,1}/` の重み sha256 が一致した (fp16 `75a738c0…` / fp32 `f684232f…`。本セッションで sha256sum を再計算して確認)。
-  本走ランナーも `--deterministic` のみを渡し、train stats の `deterministic.enabled` かつ `not warn_only` を assert する (`scripts/dollma_f0b_z4_run.py`)。smoke 規模での確認であり、本走規模での sha 一致は本走時に R'_20260620 の 2 回訓練で見る。
-  決定論の確認は R'_20260620 を 2 回訓練して sha256 一致を見る。
+  本走ランナーも `--deterministic` のみを渡し、train stats の `deterministic.enabled` かつ `not warn_only` を assert する (`scripts/dollma_f0b_z4_run.py`)。smoke 規模での確認であり、本走規模での sha 一致は本走時に確認する。
+  決定論の確認は R'_20260620 を 2 回訓練 (2 回目 = `_detchk`) して重み sha256 を比べる。**不一致なら本走を停止し、原因を記録してから再計画する**
+  (ランナーは不一致で `[停止] 決定論確認 不一致` を出して終了する = `scripts/dollma_f0b_z4_run.py` の train 段末尾)。
 - 本走ランナー = `scripts/dollma_f0b_z4_run.py` (commit `6fa7b46`)。評価は**全アーム (canon / R / R'_s / P_s の 18 本) を `--device cuda --seed 20260620`** で行い、
   analyze.py が npz の来歴で評価 seed 20260620 を assert する (`EXPECTED_EVAL_SEED`・`check_provenance`)。
 
@@ -365,6 +366,8 @@
 - 副次 (判定には使わない): seed ごとの paired 比較 (Z-3 推定量・post_id 単位と iid を併記)。
   R'_s と P_s は同じシャッフル順を共有し Welch の独立仮定が崩れるので、seed 対応の paired 差 (Δ_P(s) − Δ_R'(s) の one-sample t) も参考として併記する。
 - 実走後は実測 sd で TOST 検出力 0.8 になる M (MDE) を併記する。記述のみで、判定は変えない。
+- **記述専用 (判定にもガードレールにも使わない)**: identity retention の全 500 件 / 訓練 post 重複 35 件を除いた 465 件の併記 (analyze.py `retention_summary`・paired 検定はしていない)、
+  およびアーム別の交絡統計 (タグ数分布・目的トークン総数・max_len 切り詰め率・lang 内訳・勝者一致率・ユニーク候補数。analyze.py `confound_stats`)。
 
 **3. 事前検出力 (本走前に算出)**
 - 再現: `python scripts/dollma_f0b_z4_analyze.py --power-only` (2026-10-10 に本 worktree で実行した出力をそのまま転記)。
@@ -378,6 +381,8 @@
   (diverse_b の旧値 = sd 0.0114 で計算した ~~0.29367 / 0.30268~~。`48828ca` で記録・`6fa7b46` の set 別 sd 化に伴い差し替え。
   差し替えは本走前・結果未見。2026-10-10 に本 worktree で `--power-only` を再実行して上表の値を得た。)
 
+- ★ここで使う sd は **c33 (ゼロからの全訓練) の seed sd の代理量**で、R'/P の canon 比 Δ の sd (固定 canon からの追加 SFT の seed sd) とは別の量である。
+  さらに P 側には抽選の分散も加わる。上表の検出力はこの代理量の下での値で、実測 sd での値は本走後に MDE として併記する (上記 2)。
 - いずれも 0.8 未満。**seed は追加しない** (結果を見ながらの逐次追加は optional stopping になるため)。
   **「④ 追加 SFT の副作用 は出にくい設計である」と本走前に宣言する。** ④ は a・b の両方で TOST が通る必要がある (上記 a/b 合成)。
 - 上表は set ごとの値で、a・b 両方で ④ が出る確率は計算していない。
@@ -395,15 +400,26 @@
 - → **set 別 sd に変更 (2026-10-10・本走前・結果未見)**: `SD_PRIOR = {"diverse_a": 0.0114, "diverse_b": 0.0131}` (analyze.py 定数ブロック・commit `6fa7b46`)。
   上記 3 の事前検出力と下記 5 の分散帯比の分母の両方にこの set 別値を使う。
   ★両値とも training-spec §16.2 表 (二次記録) からの引用で、一次ログとの照合はしていない (analyze.py のコメントにも「未照合」と明記)。
+- ★量の違い: c33 帯 sd は「ゼロからの全訓練を seed 違いで繰り返したときの macro 値の sd」の代理量であり、R'/P の Δ の sd とは別量。P 側には抽選分散も加わる (上記 3)。
 
 **5. Z-5 との関係 (PL 決裁・2026-10-10 依頼者経由で伝達)**
 - Z-5 判定軸 (c)「各 seed の paired CI」は **post_id 単位 (G=500)** の推定量で出す。
   ケース単位 iid は施策 A/D 比較用の**併記列**で、判定には使わない (analyze.py は `primary_estimator = "post_id cluster bootstrap (G=500)"` を出し、iid 側は `n_seeds_ci_excludes_zero_iid_reference` 等の参照列として出す)。
   これで「### Z-5」節の「Z-5 起票時に PL が決める論点」は決定済みになる。
-- Z-4 の R'_s 系列で、Z-5 の判定 3 軸のうち **符号一貫性** と **各 seed の paired CI** は充足できる。
+- Z-4 の R'_s 系列で、Z-5 の判定 3 軸のうち **符号一貫性** と **各 seed の paired CI** は算出できる。
 - **分散帯比は定義を変えて出す**: 分母は c33 帯 sd を **set 別** (diverse_a 0.0114 / diverse_b 0.0131・上記 4・Phase 4-D の c33 = base 33M 参照アームの seed sd) で使い、
   **現正典 (merged B∧A) を seed 違いで再訓練したときの sd ではない**。分子 (R' の seed sd) は「固定 canon からの SFT seed sd」で、施策 A/D の分母とは別の量。
   **元定義の分散帯比は未算出**であり、定義変更版の分散帯比を「退行は構造的」の根拠に使わない。
+- **Z-5 の合否規則 (定義変更付き・本走前固定 2026-10-10)**: 対象は **R' の 8 seed 全部** (S の 8 本)。set ごとに次の 3 軸の AND をとり、**diverse_a・diverse_b の両方で成立したら合格**。
+  - (a) 8/8 seed で Δ_R'(s) < 0
+  - (b) |mean Δ_R'| > set 別 sd (diverse_a 0.0114 / diverse_b 0.0131) = 定義変更付き分散帯比 > 1
+  - (c) 8/8 seed で post_id 単位 (G=500) の paired CI 上限 < 0
+  - 先例 = `scripts/dollma_d_seedsweep_analyze.py` の判定部 (4 seed・(a) 符号一貫 / (b) |delta 平均| > c33 band sd / (c) 全 seed の paired CI が 0 を除外、の 3 軸 AND)。
+    本規則は退行の向きを問うので (a)(c) を負側で書いている。
+  - 前 4 seed (20260620/20260621/42/7 = 台帳 Z-5 の慣行) だけで同じ判定をした結果は**参考列**として出し、合否には使わない。
+  - analyze.py への実装は model-trainer が並行で入れる。定数名と本規則の照合は実装後に行う (本節固定時点では未照合)。
+- ★**分散帯比は元定義 (現正典の seed 違い再訓練 sd を分母とするもの) が未算出なので、元の Z-5 の 3 軸 AND は成立しえない。**
+  Z-5 のクローズは「元定義の 3 軸が揃った」という意味ではなく、**上記の定義変更付き判定で置き換えた**ことを指す。
 - Z-4 完了と同時に、Z-5 は「**Z-4 に統合 (定義変更付き)**」でクローズする予定。
 
 ### Z-5 — SFT seed sweep (4 seed)
