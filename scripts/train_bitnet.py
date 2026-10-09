@@ -1563,10 +1563,13 @@ def eval_only(args):
     retention_report = None
     if os.path.exists(id_val_path):
         id_rows = load_pairs(id_val_path)
-        mean_ret, n_ret, _ = eval_identity_retention(
+        mean_ret, n_ret, ret_details = eval_identity_retention(
             model, tok, id_rows, device, args.max_len)
         retention_report = {"mean_retention": mean_ret, "n_cases": n_ret,
                             "file": "pairs.identity.val.jsonl"}
+        if getattr(args, "dump_retention_detail", False):
+            # Z-4: post_id 別 retention (訓練 post 重複除外の 465 件再集計用)。既定では出さない。
+            retention_report["details"] = ret_details
         if n_ret > 0:
             print(f"[eval-only] identity retention (pairs.identity.val)= "
                   f"{mean_ret:.4f} (n={n_ret})")
@@ -1606,7 +1609,11 @@ def eval_only(args):
         "generation_diversity": diversity,
         "identity_retention": retention_report,
     }
-    out_path = os.path.join(data_dir, f"eval_report_{name}.json")
+    out_dir_eval = getattr(args, "out_dir", None) or data_dir
+    if getattr(args, "out_tag", None):
+        name = f"{name}{args.out_tag}"
+    os.makedirs(out_dir_eval, exist_ok=True)
+    out_path = os.path.join(out_dir_eval, f"eval_report_{name}.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
     print(f"[eval-only] saved {out_path}")
@@ -1614,7 +1621,7 @@ def eval_only(args):
     # --- per-sample 配列 npz (paired bootstrap/t 用・--dump-persample 時のみ) ---
     if args.dump_persample and persample_dump:
         import numpy as _np
-        npz_path = os.path.join(data_dir, f"eval_persample_{name}.npz")
+        npz_path = os.path.join(out_dir_eval, f"eval_persample_{name}.npz")
         save_kw = {}
         for tag, ps in persample_dump.items():
             save_kw[f"{tag}__f1"] = _np.asarray(ps["f1"], dtype=_np.float64)
@@ -2408,7 +2415,30 @@ def main():
     ap.add_argument("--sft-init", default=None,
                     help="F-0b: SFT 層状 warm-start 元の export 命名 FP32 safetensors "
                          "(既定 <data-dir>/bitnet_dense_fp32.safetensors = 正典)。")
+    # F-0b Z-4: 出力先・名前の上書き (既定 None = 従来挙動 完全不変)。
+    ap.add_argument("--out-dir", default=None,
+                    help="Z-4: 訓練 (重み/stats/smoke)・--eval-only (eval_report/npz) の出力先。"
+                         "既定 None = --data-dir (従来挙動)。入力 (vocab/pairs 等) は --data-dir のまま。")
+    ap.add_argument("--out-tag", default=None,
+                    help="Z-4: 出力ファイル名 (重み base/stats base/eval 名) の末尾に付ける識別子。"
+                         "既定 None = 付けない (従来挙動)。")
+    ap.add_argument("--dump-retention-detail", action="store_true",
+                    help="Z-4: --eval-only の eval_report に identity retention の post_id 別 details を"
+                         "含める (既定 off = 従来の report と同一)。")
+    ap.add_argument("--deterministic", action="store_true",
+                    help="Z-4: 決定論 opt-in。CUBLAS_WORKSPACE_CONFIG=:4096:8 + "
+                         "torch.use_deterministic_algorithms(True)。例外が出る演算があれば "
+                         "--deterministic-warn-only で warn_only=True に落とす。")
+    ap.add_argument("--deterministic-warn-only", action="store_true",
+                    help="Z-4: --deterministic と併用時 warn_only=True (非決定論演算は警告のみ)。")
     args = ap.parse_args()
+
+    if args.deterministic:
+        # cuBLAS ハンドル生成前 (最初の CUDA 演算より前) に環境変数を立てる必要がある。
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.use_deterministic_algorithms(True, warn_only=bool(args.deterministic_warn_only))
+        print(f"[deterministic] CUBLAS_WORKSPACE_CONFIG=:4096:8 "
+              f"use_deterministic_algorithms(True, warn_only={bool(args.deterministic_warn_only)})")
 
     # --- 施策 D: アーキ次元を config 駆動で確定 (全サブモードより前・1 回だけ) ---
     #   引数なしなら base 維持 (= 現行と bitwise 非回帰)。golden/eval/train 全経路が
@@ -2782,15 +2812,20 @@ def main():
     else:
         base = "bitnet_dense"
         stats_base = "train_stats"
+    out_dir = args.out_dir or data_dir
+    if args.out_tag:
+        base += args.out_tag
+        stats_base += args.out_tag
+    os.makedirs(out_dir, exist_ok=True)
     if args.smoke:
-        fp16_path = os.path.join(data_dir, base + "_smoke.safetensors")
-        fp32_path = os.path.join(data_dir, base + "_smoke_fp32.safetensors")
+        fp16_path = os.path.join(out_dir, base + "_smoke.safetensors")
+        fp32_path = os.path.join(out_dir, base + "_smoke_fp32.safetensors")
         stats_filename = stats_base + "_smoke.json"
         print(f"[smoke] 出力は smoke 別名へ ({base}*.safetensors / "
               f"{stats_base}.json は上書きしない)")
     else:
-        fp16_path = os.path.join(data_dir, base + ".safetensors")
-        fp32_path = os.path.join(data_dir, base + "_fp32.safetensors")
+        fp16_path = os.path.join(out_dir, base + ".safetensors")
+        fp32_path = os.path.join(out_dir, base + "_fp32.safetensors")
         stats_filename = stats_base + ".json"
     keys = export_safetensors(model, fp16_path, torch.float16)
     export_safetensors(model, fp32_path, torch.float32)
@@ -2929,7 +2964,7 @@ def main():
         "tensor_keys": keys,
         "history": history,
     }
-    stats_path = os.path.join(data_dir, stats_filename)
+    stats_path = os.path.join(out_dir, stats_filename)
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
     print(f"[save] {stats_path}")
