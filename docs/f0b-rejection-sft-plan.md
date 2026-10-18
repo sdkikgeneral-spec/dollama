@@ -129,9 +129,11 @@
   - 一次証拠 (anatomy の分解能): `data/rollouts/g2b_prepost.jsonl` 200 行の `axes` argmax は Limbs 148 / Hands 35 / Head 17 = **8 軸のうち 5 軸は一度も argmax にならない**。★**F-0a の「7 死軸」と同じ物差し (軸別 max 値 < 0.012) を当てると死軸は 7 本** (2026-09-28 追記・監査 中②): Limbs **0.09347** のみ生存で Hands 0.00141 / Head 0.00993 / Eyes 0.00154 / Ears 0.00173 / Mouth 0.00117 / Digits 0.00164 / GlobalAnatomy 0.00150。**Hands は argmax を 35 回取るが max 0.00141 = 他軸がさらに小さいだけで死んでいる**。argmax 分布 (3 軸が立つ) と dynamic range (1 軸だけ生存) は別の物差しなので混ぜて数えないこと。
   - **処置面は変更なし**: 正典無改変・SFT 重み隔離は不採用判定下で妥当。
 - G-1 400ペア収集 (best-of-8 で spread ~0.2)・G-2a SFT (正典から層状・破滅的忘却なし)・G-2b reward 前後比 (+0.017・有意性未確立)・G-3 不採用。
-- **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
-- **再検証 (Z-1〜Z-3 のみ算出済)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
-  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。Z-1〜Z-3 は算出済・判定なし (同「### Z-1」〜「### Z-3」節)、Z-4・Z-5 は 🔲 未。再検証の結果が
+- **確定した知見** (2026-09-28 に ①② の主張を証拠の範囲へ引き下げ): ① SFT 後に diverse set-F1 が下がる方向は**同一 seed 内の全レシピで一致した** (−0.0174/−0.0241)。ただし **seed 間分散は未測定**で (★2026-10-18 追記: SFT シャッフル seed 8 本の分散は Z-4/Z-5 で測定済で、退行はそれでは説明できない。ゼロからの再訓練の seed 分散は依然未測定)、施策 D が seed ノイズと断じた最大幅 −0.0240 とほぼ同値ゆえ **seed noise 帯と識別できていない**。「reward と gold タグ set-F1 が非整合」は依然**仮説**。② reward シフトは**ほぼ全量 quality 由来** (anatomy は F-0a 同様ほぼ死・上記 argmax 参照)。③ SDXL seed 非再現 (SAC で再ビルド不可) が per-input reward 比較のノイズ源。④ 日本語184/400 が空条件化 ([[project_expression_fidelity_gap]]) → G-2b の held-out 100 件でも ja 54 件が**単一プロンプトへ収束**し疑似反復を生んだ (有意性主張が崩れた直接原因)。
+- **再検証 (~~Z-1〜Z-3 のみ算出済~~ → Z-1〜Z-4 算出済・Z-5 は Z-4 に統合でクローズ・2026-10-18)**: 監査指摘の手続き不備 (anatomy 軸の分解能不足・seed 未制御・プラセボ対照の欠如) の是正は
+  **`docs/f0b-reverification-plan.md` の Z-1〜Z-5** に台帳化済み。Z-1〜Z-3 は算出済・判定なし (同「### Z-1」〜「### Z-3」節)、~~Z-4・Z-5 は 🔲 未~~ →
+  **Z-4 ✅ 判定 ② 選抜方針 (reward) 起因 / Z-5 ✅ Z-4 に統合 (定義変更付き)** (同「### Z-4」節の「Z-4 結果」)。
+  ★②/③ 境界は僅差 (「P は退行しない」とは言えない)・reward の中身とタグ長分布の違いは未分離・R' の seed はシャッフル順のみ。**Z-4 は本台帳の不採用判断を覆さない**。再検証の結果が
   **依然「不採用」になることも十分あり得る** (採用へ仕向ける作業ではない)。
 - **次レバー (F-0b とは別軸・優先度順の仮説)**: (a) **reward 設計**の見直し (anatomy が死んでいる → quality 主体でよいか/新軸) (b) **日本語条件付けトークナイザ改修** (空条件を実条件に・[[project_expression_fidelity_gap]]) (c) SDXL seed 制御 (HTTP に seed 引数・SAC 制約下の実現方法) で reward 比較のノイズ除去 (d) 教師枚数増 M拡大 (効果量 +0.017 自体は seed 交絡で伸びにくい公算・優先度低)。
   ※ これらは F-0b の**再検証**とは別物。再検証 (手続き不備の是正) は `docs/f0b-reverification-plan.md` Z-1〜Z-5。
@@ -153,5 +155,5 @@
 - quality 枝: `docs/q2-quality-branch-plan.md` / QualityMLP `data/scorer/quality_mlp*.safetensors` / CLIP image IR `models/clip-image/`
 - 評価: diverse set-F1 = `scripts/dollma_make_eval_diverse.py` / `scripts/test_dollma_eval_diverse.py` (training-spec §13/§17)
 - F 全体: CLAUDE.md 計測表 Phase4 F 行 / `docs/measurements-log.md` / [[project_phase4_F_status]] / roadmap F-0b 行
-- 再検証台帳 (Z-1〜Z-3 算出済・判定なし / Z-4・Z-5 未実施): `docs/f0b-reverification-plan.md`
+- 再検証台帳 (Z-1〜Z-3 算出済・判定なし / ~~Z-4・Z-5 未実施~~ Z-4 ✅ ② (射程限定・不採用不変) / Z-5 ✅ Z-4 に統合 (定義変更付き・シャッフル seed のみ)): `docs/f0b-reverification-plan.md`
 - G-2b 生データ: `data/rollouts/g2b_prepost.jsonl` (200 行 = pre/post × 100 入力) / G-2a 評価 provenance: `data/bitnet/_g2a_eval/eval_report_*.json`
