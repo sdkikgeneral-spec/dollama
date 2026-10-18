@@ -1,0 +1,2 @@
+preset,prompt_id,seed,cfg,sec,exit,log_ok,log_reason,png,recall_matched,recall_total,recall,soft_recall,soft_recall_iv,soft_recall_logit,n_oov,oov_words,axis_Hands,axis_Limbs,axis_Head,axis_Eyes,axis_Ears,axis_Mouth,axis_Digits,axis_GlobalAnatomy,argmax_axis,worst_anatomy
+anima-base-v1.0,p1,1000,4.0,46.73,0,True,,docs\logs\e4-anima-smoke\img\anima-base-v1.0__p1__seed1000__cfg4.png,9,10,0.9,0.8036,0.8928,2.7807,1,silver hair,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,Hands,0.0

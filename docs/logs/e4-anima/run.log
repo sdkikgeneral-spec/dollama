@@ -1,0 +1,69 @@
+Multiple distributions found for package optimum. Picked distribution: optimum
+[anima] grid: 32 枚 sampler=er_sde/simple steps=30 cfg=4.0 size=1024
+[anima] anima-base-v1.0 ロード 14.4s (vram alloc 5423MB)
+[anima] anima-base-v1.0__p1__seed1000__cfg4 31.6s vram_peak=9667MB
+[anima] anima-base-v1.0__p1__seed1001__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p1__seed1002__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p1__seed1003__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p2__seed1000__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p2__seed1001__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p2__seed1002__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p2__seed1003__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p3__seed1000__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p3__seed1001__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p3__seed1002__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p3__seed1003__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p4__seed1000__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p4__seed1001__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p4__seed1002__cfg4 17.9s vram_peak=9667MB
+[anima] anima-base-v1.0__p4__seed1003__cfg4 17.9s vram_peak=9667MB
+[anima] anima-aesthetic-v1.1 ロード 12.9s (vram alloc 5433MB)
+[anima] anima-aesthetic-v1.1__p1__seed1000__cfg4 18.0s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p1__seed1001__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p1__seed1002__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p1__seed1003__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p2__seed1000__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p2__seed1001__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p2__seed1002__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p2__seed1003__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p3__seed1000__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p3__seed1001__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p3__seed1002__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p3__seed1003__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p4__seed1000__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p4__seed1001__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p4__seed1002__cfg4 17.9s vram_peak=9668MB
+[anima] anima-aesthetic-v1.1__p4__seed1003__cfg4 17.9s vram_peak=9668MB
+[anima] 採点 anima-base-v1.0__p1__seed1000__cfg4 recall=0.90 soft=0.8036 worst=0.0000(Hands)
+[anima] 採点 anima-base-v1.0__p1__seed1001__cfg4 recall=0.90 soft=0.8288 worst=0.0000(Hands)
+[anima] 採点 anima-base-v1.0__p1__seed1002__cfg4 recall=0.90 soft=0.8186 worst=0.0000(Hands)
+[anima] 採点 anima-base-v1.0__p1__seed1003__cfg4 recall=0.90 soft=0.7967 worst=0.0000(Hands)
+[anima] 採点 anima-base-v1.0__p2__seed1000__cfg4 recall=1.00 soft=0.8998 worst=0.0043(Limbs)
+[anima] 採点 anima-base-v1.0__p2__seed1001__cfg4 recall=1.00 soft=0.9104 worst=0.0107(Limbs)
+[anima] 採点 anima-base-v1.0__p2__seed1002__cfg4 recall=1.00 soft=0.8645 worst=0.0014(Limbs)
+[anima] 採点 anima-base-v1.0__p2__seed1003__cfg4 recall=1.00 soft=0.9236 worst=0.0023(Limbs)
+[anima] 採点 anima-base-v1.0__p3__seed1000__cfg4 recall=0.80 soft=0.7451 worst=0.0021(Limbs)
+[anima] 採点 anima-base-v1.0__p3__seed1001__cfg4 recall=0.90 soft=0.7576 worst=0.0016(Limbs)
+[anima] 採点 anima-base-v1.0__p3__seed1002__cfg4 recall=0.90 soft=0.7239 worst=0.0003(Limbs)
+[anima] 採点 anima-base-v1.0__p3__seed1003__cfg4 recall=0.90 soft=0.7608 worst=0.0006(Limbs)
+[anima] 採点 anima-base-v1.0__p4__seed1000__cfg4 recall=1.00 soft=0.8702 worst=0.0181(Limbs)
+[anima] 採点 anima-base-v1.0__p4__seed1001__cfg4 recall=0.90 soft=0.8616 worst=0.0062(Limbs)
+[anima] 採点 anima-base-v1.0__p4__seed1002__cfg4 recall=1.00 soft=0.8774 worst=0.0002(Limbs)
+[anima] 採点 anima-base-v1.0__p4__seed1003__cfg4 recall=0.90 soft=0.8161 worst=0.0040(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p1__seed1000__cfg4 recall=0.90 soft=0.8003 worst=0.0000(Hands)
+[anima] 採点 anima-aesthetic-v1.1__p1__seed1001__cfg4 recall=0.90 soft=0.8093 worst=0.0000(Hands)
+[anima] 採点 anima-aesthetic-v1.1__p1__seed1002__cfg4 recall=0.90 soft=0.8063 worst=0.0000(Hands)
+[anima] 採点 anima-aesthetic-v1.1__p1__seed1003__cfg4 recall=0.90 soft=0.799 worst=0.0000(Hands)
+[anima] 採点 anima-aesthetic-v1.1__p2__seed1000__cfg4 recall=1.00 soft=0.8962 worst=0.0027(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p2__seed1001__cfg4 recall=1.00 soft=0.895 worst=0.0148(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p2__seed1002__cfg4 recall=1.00 soft=0.9297 worst=0.0006(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p2__seed1003__cfg4 recall=1.00 soft=0.8724 worst=0.0020(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p3__seed1000__cfg4 recall=0.80 soft=0.7358 worst=0.0018(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p3__seed1001__cfg4 recall=0.90 soft=0.7294 worst=0.0020(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p3__seed1002__cfg4 recall=0.80 soft=0.7365 worst=0.0002(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p3__seed1003__cfg4 recall=0.90 soft=0.7774 worst=0.0004(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p4__seed1000__cfg4 recall=0.90 soft=0.8452 worst=0.0069(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p4__seed1001__cfg4 recall=0.90 soft=0.8427 worst=0.0089(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p4__seed1002__cfg4 recall=0.90 soft=0.8631 worst=0.0011(Limbs)
+[anima] 採点 anima-aesthetic-v1.1__p4__seed1003__cfg4 recall=0.90 soft=0.8476 worst=0.0044(Limbs)
+[anima] 完了: 32 枚 (無効 0) integrity_ok=True → E:\Develop\Projects\dollama\.claude\worktrees\illustrious-v2-preset\docs\logs\e4-anima

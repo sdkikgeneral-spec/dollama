@@ -1,0 +1,11 @@
+{
+ "sec": 46.73,
+ "vram_peak_mb": 9667,
+ "prompt": "masterpiece, best quality, score_7, safe, 1girl, solo, standing, full body, long silver hair, blue eyes, school uniform, looking at viewer, simple background, white background",
+ "negative": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, multiple views, multiple girls",
+ "sampler": "er_sde",
+ "sigma_schedule": "simple",
+ "steps": 30,
+ "cfg": 4.0,
+ "dtype": "bfloat16"
+}

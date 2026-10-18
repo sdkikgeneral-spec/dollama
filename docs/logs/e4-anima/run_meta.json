@@ -1,0 +1,20 @@
+{
+ "sampler": "er_sde",
+ "sigma_schedule": "simple",
+ "steps": 30,
+ "cfg": 4.0,
+ "dtype": "bfloat16",
+ "size": 1024,
+ "seeds": [
+  1000,
+  1001,
+  1002,
+  1003
+ ],
+ "n_images": 32,
+ "n_invalid": 0,
+ "integrity_ok": true,
+ "torch": "2.11.0+cu128",
+ "vram_peak_mb_max": 9668,
+ "executor": "diffusers_anima (hdae/diffusers-anima) local split_files"
+}

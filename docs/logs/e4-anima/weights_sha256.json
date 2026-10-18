@@ -1,0 +1,6 @@
+{
+ "anima-base-v1.0.safetensors": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
+ "anima-aesthetic-v1.1.safetensors": "3c1868387a3a1ff504bbb87c33678321965ead381fcf87afbd0264daa600c082",
+ "qwen_3_06b_base.safetensors": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+ "qwen_image_vae.safetensors": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+}

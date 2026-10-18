@@ -1,0 +1,2 @@
+preset,prompt_id,cfg,n,n_valid,recall_mean,recall_std,soft_recall_mean,soft_recall_std,soft_recall_iv_mean,soft_recall_iv_std,soft_recall_logit_mean,soft_recall_logit_std,worst_anatomy_mean,worst_anatomy_std,sec_mean_characterization_only,sec_std_characterization_only
+anima-base-v1.0,p1,4.0,1,1,0.9,0.0,0.8036,0.0,0.8928,0.0,2.7807,0.0,0.0,0.0,46.73,0.0
