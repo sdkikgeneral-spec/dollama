@@ -1,0 +1,94 @@
+<title>dollama 画風比較 E-4</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* layout: 生成グリッドの検版シート — prompt ごとに「モデル行 × seed 列」の版面を並べる */
+:root {
+  --paper: #f3f4f1;
+  --sheet: #ffffff;
+  --ink: #1d2124;
+  --mute: #646d72;
+  --rule: #d7dbd6;
+  --mark: #c2410c;
+  --body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --paper: #15181a; --sheet: #1e2225; --ink: #e6e9e7; --mute: #9aa3a8; --rule: #30363a; --mark: #fb8a4c; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --paper: #15181a; --sheet: #1e2225; --ink: #e6e9e7; --mute: #9aa3a8; --rule: #30363a; --mark: #fb8a4c; color-scheme: dark; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 64px; }
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; gap: 40px; }
+h1 { font-size: 1.6rem; margin: 0; text-wrap: balance; }
+.lede { color: var(--mute); max-width: 68ch; margin: 6px 0 0; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+nav a { font-family: var(--mono); font-size: .8rem; color: var(--ink); text-decoration: none; border: 1px solid var(--rule); padding: 3px 10px; border-radius: 3px; }
+nav a:hover, nav a:focus-visible { border-color: var(--mark); color: var(--mark); outline: none; }
+.tablebox { overflow-x: auto; }
+table { border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; min-width: 520px; }
+th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--rule); }
+thead th { font-family: var(--mono); font-weight: 500; font-size: .75rem; letter-spacing: .04em; color: var(--mute); }
+td { font-family: var(--mono); }
+.note { font-size: .8rem; color: var(--mute); margin: 8px 0 0; max-width: 80ch; }
+section { display: grid; gap: 14px; scroll-margin-top: 16px; }
+section header { display: flex; align-items: baseline; gap: 12px; border-top: 2px solid var(--ink); padding-top: 10px; }
+.pid { font-family: var(--mono); color: var(--mark); font-weight: 500; }
+h2 { font-size: 1.2rem; margin: 0; }
+.prompt { margin: 0; }
+.prompt code { font-family: var(--mono); font-size: .78rem; color: var(--mute); word-break: break-word; }
+.row { display: grid; grid-template-columns: 180px 1fr; gap: 14px; align-items: start; }
+.who { display: grid; gap: 2px; padding-top: 4px; }
+.who b { font-size: .95rem; }
+.who small { color: var(--mute); font-size: .75rem; }
+.cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+figure { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.shot { all: unset; cursor: zoom-in; display: block; background: var(--sheet); border: 1px solid var(--rule); aspect-ratio: 1; overflow: hidden; }
+.shot:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hole { aspect-ratio: 1; border: 1px dashed var(--rule); display: grid; place-items: center; color: var(--mute); font-size: .8rem; }
+figcaption { font-family: var(--mono); font-size: .7rem; color: var(--mute); display: flex; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .row { grid-template-columns: 1fr; }
+  .cells { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+#lb { position: fixed; inset: 0; background: rgba(0,0,0,.86); display: grid; place-items: center; z-index: 20;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); cursor: zoom-out; }
+#lb figure { max-width: min(92vw, 900px); }
+#lb img { max-height: 84vh; width: auto; margin: 0 auto; }
+#lb figcaption { color: #e6e9e7; justify-content: center; font-size: .8rem; }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>キャラ生成モデル比較 (E-4)</h1>
+    <p class="lede">同じ prompt と seed で 4 モデルを並べた検版シートです。画像を押すと拡大します。Illustrious 2 種は dollama 本体 (自作 CUDA) で生成し、Anima 2 種は Python probe (diffusers_anima) で生成しています。モデルが違うと seed の意味も違うので、同じ seed の列でも構図は対応しません。</p>
+    <nav><a href="#summary">集計</a><a href="#p1">p1 単独</a><a href="#p2">p2 手・小物</a><a href="#p3">p3 動き</a><a href="#p4">p4 複数人</a></nav>
+  </div>
+
+  <section id="summary">
+    <header><span class="pid">Σ</span><h2>自動採点の平均 (各 16 枚)</h2></header>
+    <div class="tablebox"><table>
+      <thead><tr><th>モデル</th><th>生成</th><th>WD14 recall</th><th>soft recall</th><th>崩れ (worst anatomy)</th></tr></thead>
+      <tbody>{{SUMMARY}}</tbody>
+    </table></div>
+    <p class="note">recall は prompt のタグが絵から読み取れた割合 (高いほど良い)。崩れは ScorerNet の解剖異常スコア (低いほど良い)。ScorerNet は SDXL の出力で訓練したので、Anima には偏った点を付ける可能性があります。判定は目視を主にしてください。</p>
+  </section>
+
+  {{SECTIONS}}
+</div>
+
+<div id="lb" hidden><figure><img alt=""><figcaption></figcaption></figure></div>
+<script>
+(() => {
+  const lb = document.getElementById("lb");
+  const img = lb.querySelector("img");
+  const cap = lb.querySelector("figcaption");
+  document.querySelectorAll(".shot").forEach(b => b.addEventListener("click", () => {
+    img.src = b.dataset.src; img.alt = b.dataset.cap; cap.textContent = b.dataset.cap; lb.hidden = false;
+  }));
+  lb.addEventListener("click", () => { lb.hidden = true; });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") lb.hidden = true; });
+})();
+</script>
