@@ -109,7 +109,7 @@ NPU の固定形状制約 (静的 reshape 必須) は既知。**NPU に載せて
 
 ## 3. GPU 律速を緩める前提でのオフロード戦略
 
-- **VRAM は非ボトルネック** (実測 7.9GB / 16GB・常駐概算 ~12.2GB < 16GB・CLAUDE.md)。よって
+- **VRAM は非ボトルネック** (実測 7.9GB / 16GB・常駐概算 ~12.2GB < 16GB・CLAUDE.md (★2026-10-20 注: CLAUDE.md 改訂で退避・CLIP の VRAM 計上は誤り → `docs/measurements-log.md` 「CLAUDE.md 計測表セルの全文退避」節の「第 2 次スリム化 (2026-10-20)」小節 (b)))。よって
   「VRAM が足りないから CPU/NPU へ逃がす」局面は現構成に存在しない。オフロードの根拠は
   ① 速度・並列 (拡散の裏で走らせ GPU を空ける) ② 遊休 HW の活用 ③ 研究そのもの (プロジェクトの芯)。
 - **CPU/NPU offload = 金をかけずに容量を増やす手** という設計原理は将来のモデル追加時に効く:
@@ -175,4 +175,4 @@ P-1 が本 doc 唯一の固有アクション。結果が「非 GPU 直列分は
 - `docs/fast-mode-plan.md` — GPU 側高速化台帳 (G-0〜G-13k・e2e ベースライン 20.93s/15.88s)
 - `docs/measurements-log.md` — test_multi_frame_pipeline 完全版 (GPU バウンド確定・Tier2 留保条件)
 - `docs/roadmap.md` — MoE HW 分散 / 遠隔ノード / 解剖メタ検査 / CPU LM Tier2 のバックログ原籍
-- CLAUDE.md — HW 役割分担・デバイス選定根拠 (probe2〜10)・VRAM 収支
+- CLAUDE.md — HW 役割分担・デバイス選定根拠 (probe2〜10)・VRAM 収支 (★2026-10-20 注: 「HW 役割分担」表と VRAM 概算は CLAUDE.md 改訂で退避・CLIP の VRAM 計上は誤り → `docs/measurements-log.md` 「第 2 次スリム化 (2026-10-20)」小節 (a)(b)。現行の出荷経路図と VRAM 収支は CLAUDE.md 冒頭)
