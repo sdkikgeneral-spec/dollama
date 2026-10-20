@@ -28,10 +28,10 @@ cross-GPU の再生成は bit 非一致になるので、「向こうで同じ�
 scripts/train_bitnet.py              自作 LM の訓練 (本線)
 scripts/train_scorer.py              ScorerNet (anatomy 8 軸・純 conv)
 scripts/dollma_train_quality_mlp.py  QualityMLP (CLIP image embed 上の美的スコア)
-scripts/dollma_a_seedsweep.py        施策 A (実ペア増) の seed sweep
-scripts/dollma_b2000_seedsweep.py    施策 B (入力多様化 2,000) の seed sweep
-scripts/dollma_b10k_seedsweep.py     施策 B (10,000) の seed sweep
-scripts/dollma_d_seedsweep.py        施策 D (容量増 80M) の seed sweep
+scripts/archives/dollma_a_seedsweep.py        施策 A (実ペア増) の seed sweep
+scripts/archives/dollma_b2000_seedsweep.py    施策 B (入力多様化 2,000) の seed sweep
+scripts/archives/dollma_b10k_seedsweep.py     施策 B (10,000) の seed sweep
+scripts/archives/dollma_d_seedsweep.py        施策 D (容量増 80M) の seed sweep
 scripts/dollma_make_eval_diverse.py  diverse-val の構築 (評価側)
 data/bitnet/                         重み・ペア・sweep 結果
 data/scorer/                         ScorerNet / QualityMLP の重みと統計
