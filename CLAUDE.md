@@ -47,6 +47,9 @@ S6 でも 13397MB が出ており、S4b との 252MB 差は**未説明** (measur
 CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10 (PyTorch) の 10.49GB は参考値。
 多 HW に逃がす理由は VRAM 不足ではなく速度・並列と研究そのもの (旧論考は measurements-log 第 2 次退避節 (b)・roadmap「MoE × HW 分散配置」)。
 
+**拡散トラック (2026-10-22 ユーザー決裁)**: 出荷既定は SDXL (`illustrious-xl`) のまま。**Anima** (Cosmos-Predict2 2B ベースの DiT・非 SDXL・
+非商用ライセンス・個人研究のため研究利用可 = `THIRD_PARTY_NOTICES.md`) を研究トラックとして採用し自作実装する。既定の切替は別決裁。
+
 ## 環境 (2 台運用・OS は両機 Windows 11)
 
 | | 研究機 `KIK-WIN-RTX58` (mDNS 可) | 開発機 (本 repo) |
@@ -54,9 +57,11 @@ CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10
 | HW | RTX 5080 16GB (sm_120) / Core Ultra 9 285 の NPU (AI Boost 3720) | GTX 1080 Ti / i7-10700 = **NPU なし** |
 | CUDA | Toolkit 13.3 (`meson.build` 既定・`docs/logs/g10k-baseline/env_snapshot.log`) | **未導入** (`.cu` はビルド不可) |
 | Python | 3.14。PyTorch は **cu128 ビルド必須** (Blackwell = CUDA 12.8 以上・研究機側の要件) | 3.14 既定・torch は `py -3.12` (2.5.1+cu121)・OpenVINO 2026.2.1・.NET SDK 10 |
-| 担当 | 実重み・GPU/NPU/iGPU の実走 (`.cu` ビルド・meson test・e2e)。**commit も push もしない** = 開発機の commit を同期してビルド・実走のみ・作業ツリー clean を維持 (`docs/g10k-plan.md` §10) | Phase 4 訓練・UI・純 C++・記録。**push はここから** (SSH エイリアス `github-private`) |
+| 担当 | 実重み・GPU/NPU/iGPU の実走 (`.cu` ビルド・meson test・e2e)。SDXL 系 (G-14k・E 系等) / Anima のどちらを進めてもよい。**commit も push もしない** = 開発機の commit を同期してビルド・実走のみ (コード編集も開発機で行う)・成果物 (ログ・CSV 等) は scp で開発機へ回収・作業ツリー clean を維持 (`docs/g10k-plan.md` §10) | **Anima 実装トラックが中心** (開発機発の SDXL 新規改良はしない・研究機で進めた SDXL 系成果の commit・記録はここで行う)・Phase 4 訓練・UI・純 C++・記録。**commit/push はここから** (SSH エイリアス `github-private`) |
 
 拡散重み: 既定 preset = `illustrious-xl`・素 SDXL は `--preset base` 明示。
+
+**研究機 GPU は排他** (2026-10-22 決裁・暫定運用): どちらのトラックの実走も同時に走らせない。`E:\Develop\dollama-runs\GPU_BUSY.txt` (実行者・内容・開始時刻を記載) があるあいだは別の GPU 実走を始めない・終了時に削除。(運用補足・未決裁) Strata の常駐も GPU 実走として扱う。
 
 ## 確定済みアーキテクチャ決定
 
@@ -170,6 +175,8 @@ CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10
 > 完了済みの段は `docs/roadmap.md` の各 Phase 節と上の計測表。状態の正本は各台帳。ただし `docs/image-quality-plan.md` 項目一覧の
 > E-2.5「未 commit」・E-4「未着手」は陳腐化しており、下の記述 (2026-10-20 に git で確認) のほうが新しい。
 
+- **Anima 研究トラック (2026-10-22 採用・開発機セッションの中心)**: A0 参照 golden → A1 TE を NPU → A2 DiT 部品カーネル → A3 DiT 全段+flow sampler →
+  A4 VAE decoder → A5 backend 結線 (明示選択時のみ・既定 SDXL 不変) → A6 記録。A0+A1 から着手する計画 (A2 以降は結果を見て再提示)・2026-10-22 時点で A0 スクリプト作成中 (未 commit)・A1 以降未着手。台帳 `docs/anima-plan.md` は後日新設予定 (未作成)。
 - **速度 — G-14k (attention FA2・`docs/g14k-plan.md`)**: S0 実施中・**S1〜S4 未着手** (2026-09-20 合流時点・以後 commit なし)。resnet ≤0.95s は未達。
 - **画質 — E 系 (`docs/image-quality-plan.md`)**: E-0 ✅ `2d442b3` / E-1 merge 済 (DoD 判定未実施) / E-2 ✅ `4ad8f87` / E-2.5 T1 merge 済 `2fa0c95` (レビュー記録なし・判定なし) /
   E-3・E-5 は発火条件充足 (**着手決裁ではない**) / **E-4 = 本 branch に WIP** (`3d2de2c`・`c882c22`・Illustrious v2.0 変換と Anima probe・記録/レビュー未実施)。

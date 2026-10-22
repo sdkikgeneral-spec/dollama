@@ -73,6 +73,8 @@ PRESETS = {
     },
     "illustrious-xl-v2": {
         # v2.0 (STABLE) は単一 .safetensors repo。prediction_type は --assume-epsilon が必要。
+        # ライセンス: HF model card `license: creativeml-openrail-m` (rev 69459c1f・2026-10-22 照合)。
+        # v0.1 (Fair AI) / v1.x (sdxl-license) とは版ごとに異なる。repo に LICENSE ファイルは無い。
         "source": "OnomaAIResearch/Illustrious-XL-v2.0",
         "hf_file": "Illustrious-XL-v2.0.safetensors",
         "license": "CreativeML Open RAIL-M",
