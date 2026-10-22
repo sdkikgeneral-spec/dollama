@@ -173,15 +173,17 @@ CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10
 ## 次のタスク (現在地・2026-10-20)
 
 > 完了済みの段は `docs/roadmap.md` の各 Phase 節と上の計測表。状態の正本は各台帳。ただし `docs/image-quality-plan.md` 項目一覧の
-> E-2.5「未 commit」・E-4「未着手」は陳腐化しており、下の記述 (2026-10-20 に git で確認) のほうが新しい。
+> E-2.5「未 commit」は陳腐化しており、下の記述 (2026-10-20 に git で確認) のほうが新しい (E-4 行は 2026-10-22 に台帳側を更新済)。
 
 - **Anima 研究トラック (2026-10-22 採用・開発機セッションの中心)**: A0 参照 golden → A1 TE を NPU → A2 DiT 部品カーネル → A3 DiT 全段+flow sampler →
-  A4 VAE decoder → A5 backend 結線 (明示選択時のみ・既定 SDXL 不変) → A6 記録。A0+A1 から着手する計画 (A2 以降は結果を見て再提示)・2026-10-22 時点で A0 スクリプト作成中 (未 commit)・A1 以降未着手。台帳 `docs/anima-plan.md` は後日新設予定 (未作成)。
+  A4 VAE decoder → A5 backend 結線 (明示選択時のみ・既定 SDXL 不変) → A6 記録。A0+A1 から着手する計画 (A2 以降は結果を見て再提示)・A0/A1 スクリプト `b605f2a`・**A0/A1 は 2026-10-22 23 時台に研究機で実走開始**・A2 以降未着手。台帳 `docs/anima-plan.md` は後日新設予定 (未作成)。
 - **速度 — G-14k (attention FA2・`docs/g14k-plan.md`)**: S0 実施中・**S1〜S4 未着手** (2026-09-20 合流時点・以後 commit なし)。resnet ≤0.95s は未達。
 - **画質 — E 系 (`docs/image-quality-plan.md`)**: E-0 ✅ `2d442b3` / E-1 merge 済 (DoD 判定未実施) / E-2 ✅ `4ad8f87` / E-2.5 T1 merge 済 `2fa0c95` (レビュー記録なし・判定なし) /
-  E-3・E-5 は発火条件充足 (**着手決裁ではない**) / **E-4 = 本 branch に WIP** (`3d2de2c`・`c882c22`・Illustrious v2.0 変換と Anima probe・記録/レビュー未実施)。
+  E-3・E-5 は発火条件充足 (**着手決裁ではない**) / **E-4 = 評価走行・記録済 (2026-10-22・既定変更なし)**: 旧 v1/v2 比較は VAE scaling 交絡で無効 → scaling 2 値 × SDXL 4 preset 再走。3 軸を通った preset 差 0・DoD 3 未充足・どちらの scaling が正しいかは未確定 (台帳 E-4 節「現況 (2026-10-22)」)。
   2-6 残件: HTTP API の preset フィールド / UI の preset 選択 (未着手)。
 - **Phase 4 (`docs/f0b-reverification-plan.md`)**: F-0b 再検証の残 = GPU 実走 (σ_seed 算出済・未起票) / anatomy 死軸の分解能診断 / 次レバー (reward 設計・日本語条件付け・SDXL seed 制御) / 自作 LM 段の結線。
+- **四肢崩れの切り分け (2026-10-22 ユーザー指示で計画入り・未着手・Anima A0/A1 の後に研究機で)**: 疑い = negative の重複 (評価ハーネスの `NEGATIVE_COMMON` (`scripts/dollma_eval_image_grid.py` l.75-78) と preset `negative_prefix` の重複・出荷経路の `join_preset_prefix` は単純連結・例 `docs/logs/e4-rerun/*/log/animagine-xl-4__p1__seed1000__cfg0.log` l.19) / 評価走行は全 preset で既定 CFG 7.5 (未指定時の既定・`sdxl_backend.hpp:57`)・20 step (ノブは E-2 で露出済・E-2 T2 は illustrious-xl のみ・recall 主・worst_anatomy は参考 (0.18215 下)) / sampler は Euler のみ (`scheduler.hpp`) / VAE scaling で worst_anatomy (Limbs 単軸) が 1 桁動いた / 全身も 1024² 正方形 / 自作 vs diffusers の最終画像比較が未実施。
+  切り分け方法は**案 (未承認・ユーザー指示は計画入りのみ)**: 同 seed で ① diffusers 推奨設定 ② diffusers を dollama 同条件 ③ dollama の 3 本を比べ、モデル限界・設定要因・自作実装要因を分ける。物差し = Limbs 軸 (妥当性未検証・他 7 軸は死軸) + Strata VLM 判定 or ユーザー目視ラベル。
 - バックログ: 部位構造化プロンプト (**未起票**)。
 
 台帳索引: `docs/roadmap.md` (全体) / `docs/fast-mode-plan.md` (G-0〜G-8k) / `docs/g10k-plan.md` (G-10k・陰性) / `docs/g14k-plan.md` (G-14k) /

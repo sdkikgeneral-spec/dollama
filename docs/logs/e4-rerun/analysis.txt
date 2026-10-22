@@ -1,0 +1,61 @@
+== 健全性
+013025 64 exit0 64 log_ok 64 reason空 64
+018215 64 exit0 64 log_ok 64 reason空 64
+== preset 平均 (16 枚) / ノイズ床 = prompt 別 標本 sd(n-1) の平均
+recall         illustrious-xl     013025 mean=0.8542 floor=0.0716 | 018215 mean=0.8479 floor=0.0803
+recall         illustrious-xl-v2  013025 mean=0.8750 floor=0.0623 | 018215 mean=0.8563 floor=0.0679
+recall         noobai-xl          013025 mean=0.8347 floor=0.0364 | 018215 mean=0.8347 floor=0.0364
+recall         animagine-xl-4     013025 mean=0.8153 floor=0.0851 | 018215 mean=0.8153 floor=0.0878
+soft_recall    illustrious-xl     013025 mean=0.7563 floor=0.0748 | 018215 mean=0.7444 floor=0.0742
+soft_recall    illustrious-xl-v2  013025 mean=0.7557 floor=0.0580 | 018215 mean=0.7385 floor=0.0516
+soft_recall    noobai-xl          013025 mean=0.7306 floor=0.0511 | 018215 mean=0.7168 floor=0.0588
+soft_recall    animagine-xl-4     013025 mean=0.7106 floor=0.0627 | 018215 mean=0.6971 floor=0.0631
+worst_anatomy  illustrious-xl     013025 mean=0.0156 floor=0.0220 | 018215 mean=0.0018 floor=0.0011
+worst_anatomy  illustrious-xl-v2  013025 mean=0.0078 floor=0.0136 | 018215 mean=0.0009 floor=0.0011
+worst_anatomy  noobai-xl          013025 mean=0.0175 floor=0.0104 | 018215 mean=0.0025 floor=0.0014
+worst_anatomy  animagine-xl-4     013025 mean=0.0293 floor=0.0384 | 018215 mean=0.0044 floor=0.0058
+== scaling: 0.18215 − 0.13025 (ref=0.13025 アーム)
+recall         illustrious-xl     n=16 d=-0.0062 CI=[-0.0185,+0.0060] ①=True ②=False (floor=0.0716) ③=False → 頭打ち/ノイズ支配 signs=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0]
+recall         illustrious-xl-v2  n=16 d=-0.0187 CI=[-0.0509,+0.0134] ①=False ②=False (floor=0.0623) ③=False → 頭打ち/ノイズ支配 signs=[0, 0, 1, -1, 0, 0, 0, 0, -1, 0, 0, -1, 0, 0, 0, 0]
+recall         noobai-xl          n=16 d=+0.0000 CI=[+0.0000,+0.0000] ①=True ②=False (floor=0.0364) ③=False → 頭打ち/ノイズ支配 signs=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+recall         animagine-xl-4     n=16 d=+0.0000 CI=[-0.0179,+0.0179] ①=False ②=False (floor=0.0851) ③=False → 頭打ち/ノイズ支配 signs=[1, 0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0]
+soft_recall    illustrious-xl     n=16 d=-0.0119 CI=[-0.0194,-0.0044] ①=False ②=False (floor=0.0748) ③=True → 頭打ち/ノイズ支配 signs=[-1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1, -1, -1, 1, -1]
+soft_recall    illustrious-xl-v2  n=16 d=-0.0172 CI=[-0.0275,-0.0069] ①=False ②=False (floor=0.0580) ③=True → 頭打ち/ノイズ支配 signs=[-1, -1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+soft_recall    noobai-xl          n=16 d=-0.0138 CI=[-0.0250,-0.0026] ①=False ②=False (floor=0.0511) ③=True → 頭打ち/ノイズ支配 signs=[-1, -1, -1, 1, -1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1]
+soft_recall    animagine-xl-4     n=16 d=-0.0135 CI=[-0.0187,-0.0082] ①=False ②=False (floor=0.0627) ③=True → 頭打ち/ノイズ支配 signs=[1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+worst_anatomy  illustrious-xl     n=16 d=-0.0138 CI=[-0.0331,+0.0055] ①=True ②=False (floor=0.0220) ③=False → 頭打ち/ノイズ支配 signs=[0, -1, 0, 0, -1, -1, -1, -1, -1, -1, 0, 0, -1, -1, -1, -1]
+worst_anatomy  illustrious-xl-v2  n=16 d=-0.0069 CI=[-0.0185,+0.0047] ①=True ②=False (floor=0.0136) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, 0, -1, -1, -1, -1, -1, -1, -1, 0, 0, -1, -1, 0, -1]
+worst_anatomy  noobai-xl          n=16 d=-0.0149 CI=[-0.0254,-0.0045] ①=True ②=True (floor=0.0104) ③=True → 有効レバー signs=[0, -1, 0, -1, -1, -1, -1, -1, -1, 0, -1, 0, -1, -1, -1, -1]
+worst_anatomy  animagine-xl-4     n=16 d=-0.0249 CI=[-0.0458,-0.0040] ①=True ②=False (floor=0.0384) ③=True → 頭打ち/ノイズ支配 signs=[-1, 0, 0, -1, -1, -1, -1, -1, -1, -1, -1, 0, -1, -1, -1, -1]
+== scaling: ref=0.18215 アームに替えた場合の ② (delta は符号反転のみ)
+recall         illustrious-xl     ②=False floor=0.0803 |d|=0.0062
+recall         illustrious-xl-v2  ②=False floor=0.0679 |d|=0.0187
+recall         noobai-xl          ②=False floor=0.0364 |d|=0.0000
+recall         animagine-xl-4     ②=False floor=0.0878 |d|=0.0000
+soft_recall    illustrious-xl     ②=False floor=0.0742 |d|=0.0119
+soft_recall    illustrious-xl-v2  ②=False floor=0.0516 |d|=0.0172
+soft_recall    noobai-xl          ②=False floor=0.0588 |d|=0.0138
+soft_recall    animagine-xl-4     ②=False floor=0.0631 |d|=0.0135
+worst_anatomy  illustrious-xl     ②=True floor=0.0011 |d|=0.0138
+worst_anatomy  illustrious-xl-v2  ②=True floor=0.0011 |d|=0.0069
+worst_anatomy  noobai-xl          ②=True floor=0.0014 |d|=0.0149
+worst_anatomy  animagine-xl-4     ②=True floor=0.0058 |d|=0.0249
+== preset: X − illustrious-xl (同 scaling 内・prompt×seed で paired・ref=illustrious-xl)
+013025 recall         illustrious-xl-v2  n=16 d=+0.0208 CI=[-0.0282,+0.0698] ①=False ②=False (floor=0.0716) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, -1, 1, 1, 0, 1, 1, 1, -1, 1, -1, 0, 0, 1, -1]
+013025 recall         noobai-xl          n=16 d=-0.0194 CI=[-0.0644,+0.0255] ①=False ②=False (floor=0.0716) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, 1, 1, 0, -1, 0, 0, -1, 0, 0, -1, 1, -1, 1, -1]
+013025 recall         animagine-xl-4     n=16 d=-0.0389 CI=[-0.0926,+0.0149] ①=False ②=False (floor=0.0716) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, 1, 0, 0, -1, 0, -1, -1, 0, 0, 0, 1, -1, 1, -1]
+013025 soft_recall    illustrious-xl-v2  n=16 d=-0.0006 CI=[-0.0502,+0.0490] ①=False ②=False (floor=0.0748) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, -1, -1, 1, 1, 1, 1, 1, -1, -1, -1, 1, -1, 1, -1]
+013025 soft_recall    noobai-xl          n=16 d=-0.0257 CI=[-0.0681,+0.0168] ①=False ②=False (floor=0.0748) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, 1, 1, 1, -1, 1, -1, -1, 1, -1, -1, 1, -1, 1, -1]
+013025 soft_recall    animagine-xl-4     n=16 d=-0.0457 CI=[-0.0914,+0.0000] ①=False ②=False (floor=0.0748) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, 1, -1, -1, -1, 1, -1, -1, -1, -1, -1, 1, -1, 1, -1]
+013025 worst_anatomy  illustrious-xl-v2  n=16 d=-0.0078 CI=[-0.0162,+0.0006] ①=False ②=False (floor=0.0220) ③=False → 頭打ち/ノイズ支配 signs=[1, 1, 0, 1, -1, -1, -1, -1, 1, 1, 0, 0, -1, -1, -1, -1]
+013025 worst_anatomy  noobai-xl          n=16 d=+0.0019 CI=[-0.0148,+0.0186] ①=False ②=False (floor=0.0220) ③=False → 頭打ち/ノイズ支配 signs=[0, 0, 0, 1, 1, -1, -1, 1, 1, -1, 1, 0, -1, 1, 1, 1]
+013025 worst_anatomy  animagine-xl-4     n=16 d=+0.0137 CI=[-0.0189,+0.0463] ①=False ②=False (floor=0.0220) ③=False → 頭打ち/ノイズ支配 signs=[1, -1, 0, 1, -1, -1, 1, 1, 1, 1, 1, 0, -1, 1, 1, -1]
+018215 recall         illustrious-xl-v2  n=16 d=+0.0083 CI=[-0.0505,+0.0671] ①=False ②=False (floor=0.0803) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, 0, 0, 1, 0, 1, 1, 0, -1, 1, -1, 1, 0, 1, -1]
+018215 recall         noobai-xl          n=16 d=-0.0132 CI=[-0.0637,+0.0373] ①=False ②=False (floor=0.0803) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, 1, 1, 0, -1, 0, 0, -1, 0, 0, -1, 1, -1, 1, -1]
+018215 recall         animagine-xl-4     n=16 d=-0.0326 CI=[-0.0969,+0.0316] ①=False ②=False (floor=0.0803) ③=False → 頭打ち/ノイズ支配 signs=[-1, 0, 1, 0, 0, -1, 0, -1, -1, 0, 0, 0, 1, -1, 1, -1]
+018215 soft_recall    illustrious-xl-v2  n=16 d=-0.0059 CI=[-0.0547,+0.0428] ①=False ②=False (floor=0.0742) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1, 1, -1, 1, -1]
+018215 soft_recall    noobai-xl          n=16 d=-0.0276 CI=[-0.0771,+0.0220] ①=False ②=False (floor=0.0742) ③=False → 頭打ち/ノイズ支配 signs=[-1, -1, 1, 1, -1, -1, 1, -1, -1, 1, -1, -1, 1, -1, 1, -1]
+018215 soft_recall    animagine-xl-4     n=16 d=-0.0473 CI=[-0.0913,-0.0032] ①=False ②=False (floor=0.0742) ③=True → 頭打ち/ノイズ支配 signs=[-1, -1, 1, -1, -1, -1, 1, -1, -1, -1, -1, -1, 1, -1, 1, -1]
+018215 worst_anatomy  illustrious-xl-v2  n=16 d=-0.0009 CI=[-0.0020,+0.0002] ①=False ②=False (floor=0.0011) ③=False → 頭打ち/ノイズ支配 signs=[1, 1, 0, 0, -1, -1, -1, -1, 1, 1, 0, 0, -1, 1, -1, -1]
+018215 worst_anatomy  noobai-xl          n=16 d=+0.0007 CI=[-0.0002,+0.0017] ①=False ②=False (floor=0.0011) ③=False → 頭打ち/ノイズ支配 signs=[0, 0, 0, 0, 1, 1, -1, 1, 1, 0, 1, 0, 1, 1, -1, 1]
+018215 worst_anatomy  animagine-xl-4     n=16 d=+0.0026 CI=[-0.0011,+0.0063] ①=False ②=True (floor=0.0011) ③=False → 頭打ち/ノイズ支配 signs=[1, 0, 0, 1, -1, 1, 1, -1, 1, 1, 1, 0, -1, 1, 1, -1]

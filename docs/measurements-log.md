@@ -575,6 +575,112 @@ test = `test_preset` (純 cpp・重み不要)。生ログ = `docs/logs/2-6d/` (R
 - 未検証: `--fast` の有無は CLI 生成モードがフラグをログしないため 4 log から確認できない (2-6d 残債 2 と同型)。ただし PNG が 2-6d と bit 一致なので、拡散条件は 2-6d 走行と同一であることまでは言える。
 - 生ログ: `docs/logs/2-6e/` (README + p1/p2/p3/p1_noprefix の png/log)。
 
+### E-4 再走 — VAE scaling 2 値 × SDXL 4 preset (image-quality-plan の E-4・研究機 2026-10-22・既定変更なし)
+
+台帳側の状態と DoD 充足は image-quality-plan「E-4」節「現況 (2026-10-22)」。本節は数値と走行条件の全文。書き手 = record-writer。
+★**本節はどちらの scaling が正しいかの結論も、既定 preset / 既定 scaling の変更推奨も含まない** (提示まで・E-4 DoD 5 / E-0 DoD 3)。
+
+**なぜ再走したか**: 旧 E-4 (`3d2de2c`・`docs/logs/e4-illustrious-v2/`) は illustrious-xl を `0.18215 (preset)`、
+illustrious-xl-v2 を `0.13025 (preset)` で走らせており (per-image log 32 本の `[gen] vae_scaling_factor=` 行)、
+v1 対 v2 の差が preset 差と VAE scaling 差の**交絡**で preset 比較に使えない。
+
+**走行条件**
+- 研究機・exe sha256 `cb0cea59eecf8066477ccf82a89e65879348b8d10a9bd9572082ad0ae1040f3d` (両 `run.log` の走行前後スナップショット・`integrity_ok=True`。旧 E-4 の `run.log` と同じ値)。
+  ハーネス `scripts/dollma_eval_image_grid.py` (研究機の現物 sha256 `e9bc6f35…` = 開発機の作業ツリーと一致・2026-10-22 確認)。
+- 起動スクリプト (研究機 `E:\Develop\dollama-runs\e4-rerun\launch_e4.ps1`・リポ外・2026-10-22 に SSH で読んだ): `DOLLAMA_VAE_SCALING_FACTOR` を
+  0.13025 → 0.18215 の順に env で与え、各回 `--presets illustrious-xl illustrious-xl-v2 noobai-xl animagine-xl-4 --prompts p1 p2 p3 p4 --seeds 4 --seed-base 1000 --steps 20`。
+  per-image log 128 本すべてで `[gen] vae_scaling_factor=<値> (env)` と `(resolved)` が当該値 (64/64 × 2)。
+- 出荷時 (env なし) の scaling は illustrious-xl 0.18215 / 他 3 preset 0.13025 (研究機の 4 `preset.json`・2026-10-22 SSH)。
+- 計画の「5 preset・160 枚」は計画の誤記 (列挙 4 つ・5 つ目は存在しない・PL へ訂正済 = 依頼者申告)。実走 4 preset・128 枚は範囲縮小ではない。
+- cfg: CSV の cfg 列は全行 `0.0` = CLI `--cfg 0.0` = backend 既定 7.5 へのフォールバック (ハーネス `build_grid` の docstring)。
+- **非 fast**: ハーネスの `run_one` は `--fast` を渡さない・起動スクリプトは `DOLLAMA_FAST` を設定しない・研究機の User/Machine 環境変数に `DOLLAMA_FAST` は無い (2026-10-22 SSH で確認)。
+  ★起動元のスケジュールタスクのプロセス環境そのものは記録していない。
+- 実行 checkout: 研究機の**メイン checkout** (`E:\Develop\Projects\dollama`)。指示は worktree だったが、worktree に build/models が無かったため逸脱した (依頼者申告)。
+  走行時の HEAD `3765a3e` も依頼者申告 (ログに HEAD は出ない)。`3765a3e`..`1b8a024` の `src/` 差分は 0 行。
+- 出力は研究機 `E:\Develop\dollama-runs\e4-rerun\` (リポ外) → scp → `docs/logs/e4-rerun/scale_{013025,018215}/` (grid_results.csv / grid_summary.csv / run.log / log/ 64 本 / contact_sheets/ 16 枚)。
+  原寸 PNG は回収していない (CSV の png 列は研究機側の相対パス)。研究機の作業ツリーは 2026-10-22 の確認時点で clean (`git status --short` 空・HEAD `1b8a024`)。
+- **起動のやり直し (依頼者申告・本 run.log には最終走行しか残っていない)**: 1 回目は 64 枚とも dollama.exe が即死 (出力なし) で無効。
+  2 回目はスケジュールタスク Priority=7 で ~2 分/枚と遅く、21:43 に Priority=4 で最初からやり直した。採用したのはこの最終走行。
+- 秒は characterization のみ (共通規律 6): 各回の 1 枚目 81.8s / 81.35s、以後の中央値 39.4s / 39.6s (範囲 36.7〜73.8s)。画質指標の比較条件には影響しない。
+- 健全性: 両 CSV とも 64/64 で `exit=0`・`log_ok=True`・`log_reason` 空。
+- ★**再現性**: 旧 E-4 の 32 行 (illustrious-xl@0.18215 / illustrious-xl-v2@0.13025) は、本走行の同 scaling 側の同キー行と
+  採点列 (recall / soft_recall 3 種 / worst_anatomy / axis_* 8 列) が **32/32 一致**。
+
+**集計の定義** (`docs/logs/e4-rerun/analyze_e4_rerun.py` → `analysis.txt`・record-writer が 2026-10-22 に実行)
+- 平均 = preset あたり 16 枚 (4 prompt × 4 seed)。**ノイズ床 = prompt ごとの seed 間標本 sd (n−1) を 4 prompt で平均** (image-quality-plan E-2.5 節と同じ定義)。
+  `grid_summary.csv` の std 列は母 sd (÷n) なので混ぜないこと。
+- 3 軸は `scripts/archives/dollma_e2_t2_analyze.py` の `compare_arms` を無改変で使用。① = 16 の prompt×seed 対で非ゼロ delta の符号が 1 種類 /
+  ② = |delta_mean| > 参照アームのノイズ床 / ③ = `delta_mean ± 1.96·SEM` (正規近似・n=16) が 0 を除外。
+  ★③ は Phase 4 の paired bootstrap ではなく、① も「各 seed」ではなく対単位 = E-2 T2 と同じ逸脱を引き継ぐ。
+- recall は量子化指標 (刻み 0.1 / 0.111)。`worst_anatomy` は 8 軸 max で、実質 Limbs 単軸 (他 7 軸は死軸・Limbs の妥当性は未検証・下記)。
+
+**preset 別の平均とノイズ床**
+
+| preset | recall 0.13025 (床) | recall 0.18215 (床) | soft_recall 0.13025 (床) | soft_recall 0.18215 (床) | worst_anatomy 0.13025 (床) | worst_anatomy 0.18215 (床) |
+|---|---|---|---|---|---|---|
+| illustrious-xl | 0.8542 (0.0716) | 0.8479 (0.0803) | 0.7563 (0.0748) | 0.7444 (0.0742) | 0.0156 (0.0220) | 0.0018 (0.0011) |
+| illustrious-xl-v2 | 0.8750 (0.0623) | 0.8563 (0.0679) | 0.7557 (0.0580) | 0.7385 (0.0516) | 0.0078 (0.0136) | 0.0009 (0.0011) |
+| noobai-xl | 0.8347 (0.0364) | 0.8347 (0.0364) | 0.7306 (0.0511) | 0.7168 (0.0588) | 0.0175 (0.0104) | 0.0025 (0.0014) |
+| animagine-xl-4 | 0.8153 (0.0851) | 0.8153 (0.0878) | 0.7106 (0.0627) | 0.6971 (0.0631) | 0.0293 (0.0384) | 0.0044 (0.0058) |
+
+**preset 差 (X − illustrious-xl・同 scaling 内・prompt×seed で paired・n=16)**
+
+| scaling | 指標 | illustrious-xl-v2 | noobai-xl | animagine-xl-4 | 参照ノイズ床 |
+|---|---|---|---|---|---|
+| 0.13025 | recall | +0.0208 [−0.0282, +0.0698] | −0.0194 [−0.0644, +0.0255] | −0.0389 [−0.0926, +0.0149] | 0.0716 |
+| 0.13025 | soft_recall | −0.0006 [−0.0502, +0.0490] | −0.0257 [−0.0681, +0.0168] | −0.0457 [−0.0914, +0.0000] | 0.0748 |
+| 0.18215 | recall | +0.0083 [−0.0505, +0.0671] | −0.0132 [−0.0637, +0.0373] | −0.0326 [−0.0969, +0.0316] | 0.0803 |
+| 0.18215 | soft_recall | −0.0059 [−0.0547, +0.0428] | −0.0276 [−0.0771, +0.0220] | −0.0473 [−0.0913, −0.0032] | 0.0742 |
+
+- 12 組すべてで ① と ② が False。③ が True なのは 0.18215 の animagine-xl-4 soft_recall の 1 組のみ (0.13025 側の同組は上端 +0.0000 で False)。
+  → **3 軸を通った preset 差は 0/12**。点推定の並び (recall・soft_recall とも illustrious-xl-v2 ≈ illustrious-xl > noobai-xl > animagine-xl-4) は
+  2-6d のユーザー目視順位と同じ向きだが、ノイズ床を超えた差としては観測されていない。
+
+**scaling 差 (0.18215 − 0.13025・同 preset 内・n=16・参照 = 0.13025 アーム)**
+
+| preset | recall | soft_recall | worst_anatomy (Limbs 単軸・妥当性未検証・参考) |
+|---|---|---|---|
+| illustrious-xl | −0.0062 [−0.0185, +0.0060] ①T ②F ③F | −0.0119 [−0.0194, −0.0044] ①F ②F ③T | −0.0138 [−0.0331, +0.0055] ①T ②F ③F |
+| illustrious-xl-v2 | −0.0187 [−0.0509, +0.0134] ①F ②F ③F | −0.0172 [−0.0275, −0.0069] ①F ②F ③T | −0.0069 [−0.0185, +0.0047] ①T ②F ③F |
+| noobai-xl | 0.0000 [0.0000, 0.0000] ①T (縮退) ②F ③F | −0.0138 [−0.0250, −0.0026] ①F ②F ③T | −0.0149 [−0.0254, −0.0045] ①T ②T ③T |
+| animagine-xl-4 | 0.0000 [−0.0179, +0.0179] ①F ②F ③F | −0.0135 [−0.0187, −0.0082] ①F ②F ③T | −0.0249 [−0.0458, −0.0040] ①T ②F ③T |
+
+- recall: 非ゼロ delta は 4 preset 合わせて 64 対中 7 対 (illustrious-xl 1・v2 4・animagine 2) で、noobai-xl は全対 0。
+- soft_recall: 4 preset とも平均は負・③ は 0 を除外。ただし 16 対中 1〜2 対が正 (① False)、|delta| はノイズ床の 1/6〜1/3 (② False)。
+- **`worst_anatomy` (Limbs 単軸)**: 4 preset とも 0.18215 側で約 1 桁低い。64 対の delta は負 48・正 0・ゼロ 16。
+  `compare_arms` で 3 軸すべて True (ツールの `verdict` は「有効レバー」) になるのは、参照 = 0.13025 では noobai-xl のみ、
+  参照 = 0.18215 では noobai-xl と animagine-xl-4 (② は参照を替えると床が 0.0011〜0.0058 になり 4 preset とも True)。
+  ★この指標は 8 軸 max (ハーネス `worst = max(axes)`) で、per-image で `worst_anatomy` = `axis_Limbs` が 63/64 (0.13025) / 59/64 (0.18215)。
+  Limbs の最大 0.1646 / 0.0267 (>0.05 は 8/64 / 0/64)・他 7 軸の最大は両側とも ≤0.0055 = 他 7 軸は死軸 (image-quality-plan E-1 節「2. ScorerNet (anatomy 8 軸) は 8 軸中 7 軸が死んでいる」)。
+  **Limbs の妥当性は未検証** (F-0a では worst 帯が多人数/背景/mecha 等のスコープ外題材と交絡・`ca92210` 本文)。
+  **この軸の差を scaling の優劣の根拠にしないこと**。また「値が低い = 画質が良い」とも読まない。
+- **疑い (因果未確定)**: F-0a の Limbs 生存 (`ca92210`・2026-07-02 = E-0 `272e854` 以前の 0.13025 ハードコード下) と E-2 T2 の
+  「実質的に死んでいる」(`docs/logs/e2-t2/` の `vae_scaling_factor=… (resolved)` 66/66 が 0.18215) の差を、本再走は scaling だけで再現している。
+  E-2 T2 の worst_anatomy の結論は VAE scaling 依存の可能性がある (F-0a / E-2 T2 は preset・プロンプトも違う)。
+
+**Anima (`docs/logs/e4-anima/`・旧 E-4 の走行・characterization のみ・判定なし)**
+
+| モデル | recall 平均 (床) | soft_recall 平均 (床) | worst_anatomy 平均 (床) |
+|---|---|---|---|
+| anima-base-v1.0 | 0.9313 (0.0269) | 0.8287 (0.0210) | 0.0032 (0.0032) |
+| anima-aesthetic-v1.1 | 0.9125 (0.0144) | 0.8241 (0.0149) | 0.0029 (0.0027) |
+
+- 実行系 diffusers_anima (PyTorch・bf16)・er_sde / simple・steps 30・cfg 4.0 (`run_meta.json`)、negative はモデルカード推奨 + E-1 の題材ガード語
+  (`scripts/dollma_probe_anima.py` `build_negative`)。SDXL 4 preset とは実行系・step・CFG・sampler・negative が全部違うため、上の SDXL 表と比較しない。
+- seed 間の床が SDXL 4 preset (soft_recall 0.051〜0.075) より小さい。多様性の低さを soft recall が高く評価している可能性があり、平均の高さを画質の優位と読まない。
+- 2026-10-22 のユーザー目視決裁で研究トラック採用 (出荷既定は SDXL のまま・`aa78d49`)。根拠は目視であり、この表ではない。
+
+**残債**
+1. ★どちらの scaling が正しいかは未確定のまま (E-0 の採用値はユーザー決裁・論証なし = 2-6d 残債① の追記と同じ)。
+2. `preset.json` に scaling の config 値と実使用値を 2 フィールドで記録する処置は未実施 (2-6d 残債① の処置案・image-quality-plan E-4 DoD 3)。
+3. 3 軸の ③ を Phase 4 の paired bootstrap に揃えていない (E-2 T2 からの継承)。
+4. 起動 1 回目・2 回目の失敗ログと、走行時 HEAD `3765a3e` は回収・保全していない (依頼者申告のみ)。
+
+**出典 (本節の一次証拠)**: `docs/logs/e4-rerun/scale_{013025,018215}/{grid_results.csv,run.log,log/*.log}` /
+`docs/logs/e4-illustrious-v2/{grid_results.csv,run.log,log/*.log}` / `docs/logs/e4-anima/{grid_results.csv,run_meta.json}` /
+`scripts/dollma_eval_image_grid.py` (`build_grid`・`run_one`) / `scripts/archives/dollma_e2_t2_analyze.py` / `scripts/dollma_probe_anima.py` /
+`git show 3d2de2c c882c22 aa78d49` / 研究機 `launch_e4.ps1`・`models/presets/{illustrious-xl,illustrious-xl-v2,noobai-xl,animagine-xl-4}/preset.json`・環境変数 (2026-10-22 SSH)。
+
 
 ## CLAUDE.md 計測表セルの全文退避 (2026-09-20・CLAUDE.md 肥大化是正)
 

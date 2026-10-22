@@ -95,7 +95,7 @@
 | E-2 | sampling ノブ (steps/CFG/**seed**) の露出 + スイープ。**HTTP `seed` を含む** | cpp-implementer → gpu-benchmarker | 実装=開発機可 / 実走=研究機 | E-1 完了後 | E-1 | **T1+T2 完了 = DoD 1-6 充足。main merge 済 (`4ad8f87` Merge branch 'feat/e2-sampling-knobs'・2026-09-27 22:39)** (旧記載「main 未 merge・未 push」は陳腐化。詳細は E-2 節「現況 (2026-09-27) — T2」) |
 | E-2.5 | 評価指標の連続値化 (WD14 生確信度の soft recall)。E-3 節「次のレバー候補」① の ② 方向 | (実装者の記録なし) | 実装=開発機可 / 再採点=OV+WD14 IR のある機械 | (台帳上未定義) | E-1 | **T1 実装 = 未 commit・レビュー記録なし**。E-1 の既存 16 枚を再採点 1 回・判定なし。詳細は E-2.5 節 (★2026-09-28 追記) |
 | E-3 | scheduler 拡張 (Karras / DPM++ 2M / v-pred) | cpp-implementer + model-converter → gpu-benchmarker | 実装=開発機可 / 画評価=研究機 | **条件発火**: E-2 が頭打ちを示したときのみ | E-1, E-2 | **発火条件は充足** (E-2 T2 で有効レバー 0/4)。**充足 = 着手決裁ではない**・E-3 が効く見込みは未裏付け。競合候補は E-3 節「次のレバー候補」 |
-| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) | 未着手 |
+| E-4 | 追加 checkpoint 候補の調査→変換→評価 | model-converter → gpu-benchmarker | 研究機 | **条件発火**: E-1 の物差しが立ってから | E-1 (v-pred 候補は E-3) | ~~未着手~~ → **(★2026-10-22) 評価走行まで実施・既定変更なし**。Illustrious XL v2.0 変換 + Anima probe (`3d2de2c`/`c882c22`・研究機での commit) → 旧 v1/v2 比較は VAE scaling 交絡で**無効** → scaling 2 値 × SDXL 4 preset 再走 (`docs/logs/e4-rerun/`)。DoD 1/2/5 充足・DoD 4 は実施 (3 軸の算出法は E-2 T2 と同じ逸脱つき)・**DoD 3 は文言どおりには未充足**・3 軸を通った preset 差は 0。Anima は characterization のみ。詳細は E-4 節「現況 (2026-10-22)」 |
 | E-5 | ランタイム LoRA (L-2) の実重み e2e 検証 | gpu-benchmarker | 研究機 | **E-2 の HTTP `seed` 完了後** (理由は E-5 節) | E-2 (HTTP seed)・E-1。重み入手/ライセンス = ユーザー決裁 | 未着手。発火条件は **main 基準でも充足** (E-2 が `4ad8f87` で main merge 済・main の `src/server/api.cpp` l.177 が `body.contains("seed")` を受理)。旧記載「main 基準では未」は陳腐化。★**充足 = 着手決裁ではない** |
 
 ※ **「発注済」の出典**: リポ内に対応する branch / commit / issue は**無い** (2026-09-20 時点で
@@ -999,6 +999,84 @@ E-4 が測り直すのは「再現率等の定量指標での順位」であっ�
 **発火条件**: **条件発火** — E-1 の物差しが立ってから。
 **依存**: E-1。**v-prediction 系の候補は E-3 (prediction_type 分岐) に依存**するため、
 E-3 未着手のあいだは epsilon 系候補に限る。
+
+### 現況 (2026-10-22) — 変換・probe・VAE scaling 2 値の再走 (record-writer)
+
+数値の全文と一次証拠は measurements-log「E-4 再走」節。ここは状態と DoD の充足だけを書く。
+
+**経緯**
+1. **WIP (研究機・2026-10-19)**: `3d2de2c` (Illustrious XL v2.0 を preset `illustrious-xl-v2` へ変換する
+   `scripts/dollma_export_sdxl_preset.py` の追加 / Anima probe `scripts/dollma_probe_anima.py` /
+   `docs/logs/e4-illustrious-v2/`・`docs/logs/e4-anima/`) と `c882c22` (比較ページ生成スクリプト)。
+   本文に「記録 (README/台帳) とレビューは未実施」と書かれている。
+   ★**研究機での commit (記録として残す)**: 2 本とも author が `KIK-WIN-RTX58\sdkik` = 研究機で commit された。
+   CLAUDE.md が研究機の commit 禁止を明文化した `8bf25a9` (2026-10-20) より前の commit である
+   (`docs/g10k-plan.md` §10 の同旨の規律は G-10k 台帳の規律)。履歴は書き換えない。**以後の回収経路 = 研究機の出力 → scp → 開発機で commit** (下記の再走はこの経路)。
+2. **旧 v1/v2 比較は無効**: `docs/logs/e4-illustrious-v2/log/` の per-image log では
+   illustrious-xl 16 本が `vae_scaling_factor=0.18215 (preset)`、illustrious-xl-v2 16 本が `0.13025 (preset)`。
+   preset と VAE scaling が同時に違うので、旧 CSV の v1 対 v2 の差は **preset 差と scaling 差の交絡**であり
+   preset 比較には使えない。
+3. **再走 (研究機・2026-10-22)**: `DOLLAMA_VAE_SCALING_FACTOR` を env で 0.13025 / 0.18215 に固定し、
+   SDXL 4 preset (illustrious-xl / illustrious-xl-v2 / noobai-xl / animagine-xl-4) × p1-p4 × seed 1000-1003 ×
+   steps 20 × cfg 既定 (CSV の cfg=0.0 = 既定 7.5 へのフォールバック) を各 64 枚。非 fast。
+   計 128 枚・無効 0・`integrity_ok=True`。走行条件・逸脱 (起動のやり直し・worktree ではなくメイン checkout で実行) は
+   measurements-log「E-4 再走」節。
+   各 preset の出荷時の scaling (env なしで preset.json が効く値) は illustrious-xl 0.18215 / illustrious-xl-v2・noobai-xl・animagine-xl-4 0.13025
+   (研究機の 4 `preset.json` を 2026-10-22 に SSH で読んだ)。再走は 4 preset とも両値に揃えた。
+   計画の「5 preset・160 枚」は計画側の誤記 (列挙は 4 つで 5 つ目は存在しない・メインセッションが 2026-10-22 に PL へ訂正済 = 依頼者申告) であり、
+   実走の 4 preset・128 枚は範囲の縮小ではない。
+   ★旧 E-4 の 32 行 (v1@0.18215 / v2@0.13025) は、再走の同 scaling 側と**採点列が 32/32 一致** (同じ exe sha256 `cb0cea59…`)。
+   旧走行の数値自体は再現しており、無効なのは**比較の組み方**である。
+
+**DoD の充足 (2026-10-22 時点)**
+
+| DoD | 状態 | 根拠 |
+|---|---|---|
+| 1 ライセンス確認 + NOTICES 記載 | **充足** | `aa78d49` で `THIRD_PARTY_NOTICES.md` に Illustrious XL v2.0 (CreativeML Open RAIL-M・**ライセンス採用可 = 2026-10-22 ユーザー決裁**・既定ではない) と Anima (CircleStone Labs NC v1.2 + NVIDIA Open Model License・**研究トラック採用 = 同日ユーザー決裁**) を記載 |
+| 2 4 ファイル構成 + 照合 | **充足 (illustrious-xl-v2)** | 研究機 `models/presets/illustrious-xl-v2/preset.json` (2026-10-22 に開発機から SSH で現物を読んだ): `key_shape_match_vs_base: true` / `tokenizer_match_vs_base: true` / TE 誤差 L 9.92e-5・G penultimate 3.43e-5・G pooled 2.38e-6 / `prediction_type: epsilon`。per-image log で `[preset] resolved:` 4 本 (unet/vae/enc_l/enc_g)。★照合法の差: `3d2de2c` は tokenizer 照合に **tokenizer.json の内容ハッシュ fallback** を足しており、v2 がこの分岐 (2-6d の vocab.json/merges.txt sha256 照合とは方式が違う) を通ったかは**変換ログが保全されておらず未確認**。`prediction_type` は config ではなく raw キー検査 + `--assume-epsilon` で確定した値 (同スクリプトのコメント)。Anima は SDXL ではないので本 DoD の対象外 |
+| 3 `preset.json` に scaling の config 値と実使用値の**両方** | **文言どおりには未充足** | v2 の `preset.json` は単一キー `vae_scaling_factor: 0.13025` のみ (export スクリプトが `pipe.vae.config.scaling_factor` を書く値。現行スクリプトは 0.13025 以外で `SystemExit(1)` する。ただし `converted_at` 2026-10-18T14:31Z は `3d2de2c` の commit より前で、**変換時点のスクリプト版は未確認**)。実使用値は**ログ側**にある (旧 E-4 = `0.13025 (preset)`/`(resolved)`・再走 = `(env)`/`(resolved)`)。「2 フィールドで両記録」は measurements-log 2-6d 残債① の処置案と同じく**未実施** |
+| 4 多 seed・3 軸・ノイズ床・既存 preset 同走行 | **実施 (3 軸を通った preset 差 0)** | 下記「結果」。既存 3 preset を同走行に含めた。★3 軸の算出法は E-2 T2 と同じ逸脱を引き継ぐ (① は 16 の prompt×seed 対で判定 / ③ は `delta_mean ± 1.96·SEM` の正規近似で Phase 4 の paired bootstrap ではない) |
+| 5 既定変更はユーザー決裁 | **充足 (変更なし)** | 既定 preset (`illustrious-xl`)・preset.json の scaling・サーバー既定定数はいずれも無改変。再走は env で上書きしただけ |
+
+**結果 (要旨・判定は共通規律 2 の 3 軸。数値の全文は measurements-log)**
+- **preset 差 (同 scaling 内・illustrious-xl を参照)**: recall / soft_recall とも 3 軸を通った組は **0/12** (2 scaling × 3 preset × 2 指標)。
+  点推定の平均は両 scaling とも illustrious-xl-v2 ≈ illustrious-xl > noobai-xl > animagine-xl-4
+  (recall 0.13025 側 0.875 / 0.854 / 0.835 / 0.815)。recall の差は最大 0.0389 (animagine-xl-4・0.13025 側) で、参照ノイズ床 (0.0716〜0.0803) の約半分。
+  → 2-6d のユーザー目視順位 (illustrious-xl > noobai-xl > animagine-xl-4) は、**定量指標の点推定では同じ並びに見えるが、
+  ノイズ床を超えた差としては見えていない**。目視決裁の追認・否認のどちらでもない。
+- **scaling 差 (0.18215 − 0.13025・同 preset 内)**: recall は 4 preset とも 3 軸不成立 (noobai-xl / animagine-xl-4 は平均 delta 0)。
+  soft_recall は 4 preset とも平均 delta が負 (−0.012〜−0.017) で ③ CI は 0 を除外するが、① 符号一致 (16 対中 1〜2 対が正) と
+  ② 分散帯超え (|delta| はノイズ床 0.051〜0.075 の 1/6〜1/3) が不成立。
+- **`worst_anatomy` は SDXL 4 preset とも 0.18215 側で約 1 桁低い** (例 illustrious-xl 0.0156 → 0.0018)。
+  64 対の delta は負 48・正 0・ゼロ 16。
+  ★この指標は 8 軸の max (ハーネス `worst = max(axes)`) で、値を動かしているのは **Limbs 単軸** (他 7 軸は死軸)。
+  per-image で `worst_anatomy` = `axis_Limbs` が 0.13025 側 63/64・0.18215 側 59/64。Limbs の最大は 0.1646 / 0.0267 (>0.05 は 8/64 / 0/64)、
+  他 7 軸の最大は両側とも ≤0.0055 (本台帳 E-1 節「2. ScorerNet (anatomy 8 軸) は 8 軸中 7 軸が死んでいる」と同じ構図)。
+  **Limbs の妥当性 (四肢崩れを測っているか) は未検証** — F-0a では worst 帯が多人数/背景/mecha 等のスコープ外題材と交絡していた (`ca92210` 本文)。
+  判定関数にかけると、参照 = 0.13025 アームでは noobai-xl だけが 3 軸すべて True、参照 = 0.18215 アームでは noobai-xl と animagine-xl-4 が 3 軸成立。
+  ② は参照アームの選び方で変わる (床: 0.13025 参照 0.0104〜0.0384 / 0.18215 参照 0.0011〜0.0058)。
+  **この軸の差を scaling の優劣の根拠にしないこと**。「低い = 良い」とも読まない。
+- **疑い (因果未確定)**: F-0a の「Limbs 生存」(`ca92210`・2026-07-02 = E-0 `272e854` 以前で scaling 0.13025 ハードコード下・2-6d の preset 導入前) と、
+  E-2 T2 の「実質的に死んでいる」(per-image log の `vae_scaling_factor=… (resolved)` が 66/66 で 0.18215) の差を、本再走は **scaling だけを変えて**再現している。
+  E-2 T2 の worst_anatomy に関する結論は VAE scaling に依存している可能性がある (F-0a と E-2 T2 は preset・プロンプトも違うので、因果は未確定)。
+- **どちらの scaling が正しいかの結論・既定変更の推奨は、本記録では書かない** (提示まで)。
+  E-0 の採用値 (illustrious-xl = preset.json 0.18215) はユーザー決裁であり、論証ではない (measurements-log 2-6d 残債① の追記)。
+  見比べ用のページ (依頼者提供・claude.ai Artifact・非公開・リポ外: https://claude.ai/artifact/EyUFKKJKbyGcza56tyFW8T)。
+  contact sheet は `docs/logs/e4-rerun/scale_{013025,018215}/contact_sheets/` (各 16 枚)。
+
+**Anima (characterization のみ・判定なし)**
+- `docs/logs/e4-anima/` (anima-base-v1.0 / anima-aesthetic-v1.1・各 16 枚)。実行系は diffusers_anima (PyTorch)・
+  er_sde / simple・steps 30・cfg 4.0・bf16 (`run_meta.json`)、negative もモデルカード推奨 + E-1 の題材ガード語
+  (`scripts/dollma_probe_anima.py` の `build_negative`)。**SDXL 系とは実行系・step・CFG・sampler・negative が全部違う**ので、
+  SDXL 4 preset と同じ表には並べない。
+- seed 間 sd (ノイズ床) が SDXL 系より小さい: soft_recall で anima-base-v1.0 0.0210 / anima-aesthetic-v1.1 0.0149 (SDXL 4 preset は 0.051〜0.075)。
+  多様性が低い出力を soft recall が高く評価している可能性があり、**平均の高さ (recall base 0.931 / aesthetic 0.913) を画質の優位と読まない**。
+- 2026-10-22 のユーザー目視決裁で Anima は**研究トラックとして採用** (出荷既定は SDXL のまま・`aa78d49`)。
+  採用の根拠は目視であって、上の定量値ではない。
+
+**残 (本節で閉じていないもの)**
+1. DoD 3 の 2 フィールド記録 (export スクリプトの改修 = measurements-log 2-6d 残債① の処置案)。
+2. 0.13025 / 0.18215 のどちらが正しいかは未確定のまま (E-0 DoD 5 の「未確定」と同じ扱い)。
 
 ---
 
