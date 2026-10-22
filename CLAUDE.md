@@ -170,13 +170,20 @@ CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10
 | 本番 txt2img (2-6b) / backend 枠 (2-6c) | dual encoder+CFG・NaN/Inf なし / `IDiffusionBackend` registry + `BackendImageGenerator` | test_txt2img / test_diffusion_backend |
 | アニメ特化 SDXL 3 preset (2-6d) | **既定 illustrious-xl**。照合済 (UNet 1680 キー名+shape/dtype・tokenizer sha256 base 一致・TE 誤差 1e-5 台)。12 枚比較 (seed 1234・N=1・**VAE scaling 0.13025 時代**) の目視順位 illustrious > noobai > animagine。2-6e prefix 自動付与 ✅。VAE scaling: E-0 (`272e854`・ユーザー決裁) で illustrious-xl の preset.json 値 0.18215 が効くようになり既定 preset の生成値が変わった (優先 env > preset.json > 既定)。**サーバーの既定定数は 0.13025 のまま** (`src/server/vae_scaling_default.hpp`)・どちらが正しいかの論証は無い・export ガードは 0.13025 固定のまま未是正 (`scripts/dollma_export_sdxl_preset.py` l.49 / 333-337)。詳細は measurements-log「2-6d」節 残債① | test_preset |
 
+**Anima 研究トラック (詳細・条件は `docs/anima-plan.md`)**
+
+| 指標 | 値 | test |
+|---|---|---|
+| A0 参照 golden (diffusers_anima・FP32・研究機) | ゲート 5 全 PASS・プロセス跨ぎ 166/166 tensor BIT-EXACT / 活性値 max: TE 7014 (token0)・adapter 63・VAE 7.8 = FP16 可・**DiT block12〜21 出力 最大 272,435 = FP16 不可** / VRAM used peak 11653MiB (FP32・hook 付き・GPU 全体 used で他プロセス約 526MiB 含む・見積りの分母にしない) | (dollma_dump_anima_golden) |
+| A1 Qwen3 0.6B TE → OV FP16 IR `[1,128]` | 中央値 (N=100・n=41) **NPU 56.2ms** / iGPU 62.6 / CPU 128.8ms・rel_max NPU 1.1% (cos_min 0.99987) / CPU 7.2e-5・tokenizer E-1 16 本一致・L=64 は未測定 (A5) | (dollma_convert_anima_text_encoder) |
+
 ## 次のタスク (現在地・2026-10-20)
 
 > 完了済みの段は `docs/roadmap.md` の各 Phase 節と上の計測表。状態の正本は各台帳。ただし `docs/image-quality-plan.md` 項目一覧の
 > E-2.5「未 commit」は陳腐化しており、下の記述 (2026-10-20 に git で確認) のほうが新しい (E-4 行は 2026-10-22 に台帳側を更新済)。
 
 - **Anima 研究トラック (2026-10-22 採用・開発機セッションの中心)**: A0 参照 golden → A1 TE を NPU → A2 DiT 部品カーネル → A3 DiT 全段+flow sampler →
-  A4 VAE decoder → A5 backend 結線 (明示選択時のみ・既定 SDXL 不変) → A6 記録。A0+A1 から着手する計画 (A2 以降は結果を見て再提示)・A0/A1 スクリプト `b605f2a`・**A0/A1 は 2026-10-22 23 時台に研究機で実走開始**・A2 以降未着手。台帳 `docs/anima-plan.md` は後日新設予定 (未作成)。
+  A4 VAE decoder → A5 backend 結線 (明示選択時のみ・既定 SDXL 不変) → A6 記録。**A0 完了・A1 は変換/ベンチ完了** (C++ グルー `qwen3_encoder.hpp`・test_anima_te は未着手) (スクリプト `b605f2a`・研究機ログ `30a7a61`)・**A2 計画 = 2026-10-23 ユーザー承認** (研究機未実走・結果なし)・**A3 以降は計画未承認** (A2-2 結果を見て再提示する想定)。台帳 `docs/anima-plan.md`。
 - **速度 — G-14k (attention FA2・`docs/g14k-plan.md`)**: S0 実施中・**S1〜S4 未着手** (2026-09-20 合流時点・以後 commit なし)。resnet ≤0.95s は未達。
 - **画質 — E 系 (`docs/image-quality-plan.md`)**: E-0 ✅ `2d442b3` / E-1 merge 済 (DoD 判定未実施) / E-2 ✅ `4ad8f87` / E-2.5 T1 merge 済 `2fa0c95` (レビュー記録なし・判定なし) /
   E-3・E-5 は発火条件充足 (**着手決裁ではない**) / **E-4 = 評価走行・記録済 (2026-10-22・既定変更なし)**: 旧 v1/v2 比較は VAE scaling 交絡で無効 → scaling 2 値 × SDXL 4 preset 再走。3 軸を通った preset 差 0・DoD 3 未充足・どちらの scaling が正しいかは未確定 (台帳 E-4 節「現況 (2026-10-22)」)。
@@ -187,7 +194,7 @@ CLIP-L/G は NPU なので VRAM を食わず、自作 LM 33M は ~66MB。probe10
 - バックログ: 部位構造化プロンプト (**未起票**)。
 
 台帳索引: `docs/roadmap.md` (全体) / `docs/fast-mode-plan.md` (G-0〜G-8k) / `docs/g10k-plan.md` (G-10k・陰性) / `docs/g14k-plan.md` (G-14k) /
-`docs/image-quality-plan.md` (E-0〜E-5) / `docs/f0b-reverification-plan.md` (Z-1〜Z-5) / `docs/q2-quality-branch-plan.md` (Q-2) / `docs/measurements-log.md` (計測全文)
+`docs/image-quality-plan.md` (E-0〜E-5) / `docs/f0b-reverification-plan.md` (Z-1〜Z-5) / `docs/q2-quality-branch-plan.md` (Q-2) / `docs/anima-plan.md` (Anima A0〜A6) / `docs/measurements-log.md` (計測全文)
 
 ## 実装作業のルール
 
