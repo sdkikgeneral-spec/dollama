@@ -1,0 +1,263 @@
+{
+ "convert": {
+  "seq_len": 128,
+  "mask_mode": "explicit",
+  "convert_sec": 4.16,
+  "inputs": [
+   {
+    "name": "input_ids",
+    "shape": [
+     1,
+     128
+    ],
+    "element_type": "i64"
+   },
+   {
+    "name": "attention_mask",
+    "shape": [
+     1,
+     128
+    ],
+    "element_type": "i64"
+   }
+  ],
+  "outputs": [
+   {
+    "index": 0,
+    "name": "last_hidden_state",
+    "shape": [
+     1,
+     128,
+     1024
+    ],
+    "element_type": "f32"
+   }
+  ],
+  "ir_xml": "E:\\Develop\\Projects\\dollama\\models\\anima-text-encoder\\model_ov.xml",
+  "ir_bin_mb": 1136.9,
+  "precision": "FP16 (compress_to_fp16)",
+  "pad_token_id": 151643,
+  "semantics": "last_hidden_state (final RMSNorm 後)。有効 token [0:n] のみ使用。右 pad・causal。"
+ },
+ "tokenizers": [
+  {
+   "label": "base-p1-pos",
+   "qwen_n": 42,
+   "t5_n": 41,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p1-neg",
+   "qwen_n": 37,
+   "t5_n": 42,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p2-pos",
+   "qwen_n": 41,
+   "t5_n": 40,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p2-neg",
+   "qwen_n": 37,
+   "t5_n": 42,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p3-pos",
+   "qwen_n": 39,
+   "t5_n": 38,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p3-neg",
+   "qwen_n": 37,
+   "t5_n": 42,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p4-pos",
+   "qwen_n": 42,
+   "t5_n": 42,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "base-p4-neg",
+   "qwen_n": 34,
+   "t5_n": 39,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p1-pos",
+   "qwen_n": 38,
+   "t5_n": 37,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p1-neg",
+   "qwen_n": 25,
+   "t5_n": 33,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p2-pos",
+   "qwen_n": 37,
+   "t5_n": 36,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p2-neg",
+   "qwen_n": 25,
+   "t5_n": 33,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p3-pos",
+   "qwen_n": 35,
+   "t5_n": 34,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p3-neg",
+   "qwen_n": 25,
+   "t5_n": 33,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p4-pos",
+   "qwen_n": 38,
+   "t5_n": 38,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "aest-p4-neg",
+   "qwen_n": 22,
+   "t5_n": 30,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": true
+  },
+  {
+   "label": "tags-sym",
+   "qwen_n": 17,
+   "t5_n": 17,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": false
+  },
+  {
+   "label": "japanese",
+   "qwen_n": 4,
+   "t5_n": 3,
+   "qwen_match": true,
+   "t5_match": true,
+   "gated": false
+  },
+  {
+   "label": "newline",
+   "qwen_n": 5,
+   "t5_n": 7,
+   "qwen_match": true,
+   "t5_match": false,
+   "gated": false
+  },
+  {
+   "label": "empty",
+   "qwen_n": 1,
+   "t5_n": 1,
+   "qwen_match": null,
+   "t5_match": null,
+   "gated": false
+  }
+ ],
+ "tokenizers_note": "qwen: input_ids/attention_mask [1,L] i64・pad=151643・特殊 token なし。t5: 可変長 (pad 無し)・eos(=1) は C++ で末尾に付加・T5 weights は全 1.0。空 prompt: Qwen は pad(151643) 1 個 (mask=1)、T5 は [eos=1] 1 個に置換 (pipeline の規則)。OV tokenizer は空文字で n=0 を返すので C++ 側で特殊処理が必要。",
+ "verify_fp16_ir_cpu_f32": [
+  {
+   "case": "real(n=41)",
+   "max_abs_err": 0.0041961669921875,
+   "mae": 9.58007937842804e-05,
+   "rel_max_err": 7.221885200912846e-05,
+   "ref_max_abs": 58.103485107421875,
+   "cos_min": 0.9999999959311977,
+   "cos_mean": 0.9999999991163647,
+   "token0_rel_err": 8.373331214119324e-06,
+   "rest_rel_err_max": 9.809230967884845e-05,
+   "token0_max_abs": 25.05673599243164,
+   "rest_max_abs": 58.103485107421875,
+   "nonfinite": false
+  },
+  {
+   "case": "full(n=128)",
+   "max_abs_err": 0.024654388427734375,
+   "mae": 0.0002569359312391507,
+   "rel_max_err": 0.00043120930558088123,
+   "ref_max_abs": 57.174991607666016,
+   "cos_min": 0.9999996185636323,
+   "cos_mean": 0.9999999818193035,
+   "token0_rel_err": 2.0482981923825034e-05,
+   "rest_rel_err_max": 0.001013866980118842,
+   "token0_max_abs": 16.85448455810547,
+   "rest_max_abs": 57.174991607666016,
+   "nonfinite": false
+  },
+  {
+   "case": "n=1(n=1)",
+   "max_abs_err": 0.00067901611328125,
+   "mae": 3.933109792342293e-05,
+   "rel_max_err": 1.6224083393976162e-05,
+   "ref_max_abs": 41.85235595703125,
+   "cos_min": 0.9999999999775793,
+   "cos_mean": 0.9999999999775793,
+   "token0_rel_err": 1.6224083393976162e-05,
+   "rest_rel_err_max": null,
+   "token0_max_abs": 41.85235595703125,
+   "rest_max_abs": null,
+   "nonfinite": false
+  },
+  {
+   "case": "half(n=64)",
+   "max_abs_err": 0.0065555572509765625,
+   "mae": 0.00014617716371115308,
+   "rel_max_err": 0.00010861423031601717,
+   "ref_max_abs": 60.35633850097656,
+   "cos_min": 0.9999999698780561,
+   "cos_mean": 0.9999999954851968,
+   "token0_rel_err": 1.3934945299875014e-05,
+   "rest_rel_err_max": 0.00021211199622210786,
+   "token0_max_abs": 20.94190788269043,
+   "rest_max_abs": 60.35633850097656,
+   "nonfinite": false
+  }
+ ]
+}

@@ -1,0 +1,58 @@
+Multiple distributions found for package optimum. Picked distribution: optimum
+[golden] ロード 10.5s device=cuda dtype=float32
+[golden] tokens: pos qwen=41 t5=40 / neg qwen=37 t5=42
+[golden] sigmas: diffusers_anima と自前 simple_sigmas の max差 = 0.00e+00
+[golden] denoised_step0: 手書き vs diffusers_anima max差 = 0.000e+00
+[golden] step 1/30 sigma=1.0000 23.5s |pred|max=7.581
+[golden] step 2/30 sigma=0.9888 1.6s |pred|max=5.608
+[golden] step 3/30 sigma=0.9770 1.6s |pred|max=5.681
+[golden] step 4/30 sigma=0.9643 1.6s |pred|max=5.577
+[golden] step 5/30 sigma=0.9514 1.6s |pred|max=5.491
+[golden] step 6/30 sigma=0.9378 1.6s |pred|max=5.409
+[golden] step 7/30 sigma=0.9231 1.6s |pred|max=5.490
+[golden] step 8/30 sigma=0.9081 1.6s |pred|max=5.385
+[golden] step 9/30 sigma=0.8922 1.6s |pred|max=5.376
+[golden] step 10/30 sigma=0.8750 1.6s |pred|max=5.303
+[golden] step 11/30 sigma=0.8573 1.6s |pred|max=5.309
+[golden] step 12/30 sigma=0.8386 1.6s |pred|max=5.389
+[golden] step 13/30 sigma=0.8182 1.6s |pred|max=5.267
+[golden] step 14/30 sigma=0.7971 1.6s |pred|max=5.250
+[golden] step 15/30 sigma=0.7747 1.6s |pred|max=5.261
+[golden] step 16/30 sigma=0.7500 1.6s |pred|max=5.261
+[golden] step 17/30 sigma=0.7244 1.6s |pred|max=5.268
+[golden] step 18/30 sigma=0.6970 1.6s |pred|max=5.266
+[golden] step 19/30 sigma=0.6667 1.6s |pred|max=5.266
+[golden] step 20/30 sigma=0.6349 1.6s |pred|max=5.268
+[golden] step 21/30 sigma=0.6007 1.6s |pred|max=5.271
+[golden] step 22/30 sigma=0.5625 1.6s |pred|max=5.280
+[golden] step 23/30 sigma=0.5222 1.6s |pred|max=5.290
+[golden] step 24/30 sigma=0.4782 1.6s |pred|max=5.291
+[golden] step 25/30 sigma=0.4286 1.6s |pred|max=5.287
+[golden] step 26/30 sigma=0.3756 1.6s |pred|max=5.282
+[golden] step 27/30 sigma=0.3170 1.6s |pred|max=5.285
+[golden] step 28/30 sigma=0.2500 1.6s |pred|max=5.283
+[golden] step 29/30 sigma=0.1772 1.6s |pred|max=5.285
+[golden] step 30/30 sigma=0.0955 20.6s |pred|max=5.317
+[golden] VAE check: max=0.000e+00 MAE=0.000e+00 u8不一致=0.00e+00 time_conv呼出=0
+[golden] GATE PASS sigma_selfcheck: 0.0 (limit 1e-06)
+[golden] GATE PASS vae_conv2d_max_diff: 0.0 (limit 0.0001)
+[golden] GATE PASS vae_time_conv_calls: 0 (limit 0)
+[golden] GATE PASS b0_ctx_equals_pos_adapter_out: True (limit True)
+[golden] GATE PASS denoised_step0_vs_diffusers_anima: 0.0 (limit 1e-05)
+
+======================================================================
+io     : models\anima\golden_b\anima_io.safetensors (613.8 MB) sha256=32158d80167126cd...
+meta   : models\anima\golden_b\anima_golden_meta.json
+FP16   : FP16 不可の段あり (BF16/FP32 中間が必要)
+   max|x|  2.724e+05  allsteps/dit/block16_out
+   max|x|  2.724e+05  allsteps/dit/block15_out
+   max|x|  2.722e+05  allsteps/dit/block14_out
+   max|x|  2.713e+05  allsteps/dit/block13_out
+   max|x|  2.681e+05  allsteps/dit/block17_out
+VAE    : conv3d->conv2d(T=1) max=0.000e+00 MAE=0.000e+00
+FP16[te]: 全段 FP16 余裕 4 倍以上
+FP16[adapter]: 全段 FP16 余裕 4 倍以上
+FP16[dit]: FP16 不可の段あり (BF16/FP32 中間が必要)
+FP16[vae]: 全段 FP16 余裕 4 倍以上
+GATES  : ALL PASS
+======================================================================

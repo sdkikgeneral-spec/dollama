@@ -1,0 +1,1 @@
+full3 vram_peak_used_MiB=11653 (baseline ~526 other)

@@ -1,0 +1,2 @@
+[compare] models\anima\golden\anima_io.safetensors vs models\anima\golden_b\anima_io.safetensors: 166 / 166 tensors
+[compare] BIT-EXACT (全 tensor 一致)

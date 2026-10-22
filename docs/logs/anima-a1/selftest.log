@@ -1,0 +1,33 @@
+`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+C:\Users\sdkik\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\transformers\integrations\sdpa_attention.py:77: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  is_causal = query.shape[2] > 1 and attention_mask is None and is_causal
+[selftest] PASS pad_ids 形状・dtype i64
+[selftest] PASS pad_ids 右 pad
+[selftest] PASS valid_len
+[selftest] PASS pad_ids 異常入力 len=0 は ValueError
+[selftest] PASS pad_ids 異常入力 len=9 は ValueError
+[selftest] PASS suggest_static_len
+[selftest] PASS explicit mask 形状
+[selftest] PASS explicit mask: causal
+[selftest] PASS explicit mask: pad key は禁止
+[selftest] PASS explicit mask: 有限・FP16 範囲内
+[selftest] PASS explicit mask: 全行に許可 key が 1 つ以上 (NaN 回避)
+[selftest] PASS compare_hidden 同一 → err 0・cos 1
+[selftest] PASS compare_hidden n で先頭のみ
+[selftest] PASS compare_hidden nonfinite 検出
+[selftest] PASS compare_hidden 有限なら nonfinite=False
+[selftest] PASS compare_hidden token0 / rest 分離
+[selftest] PASS latency_stats 中央値/p95
+[selftest] PASS strip_model_prefix
+[selftest] PASS pipeline_qwen_ids 空 → [pad]
+[selftest] PASS pipeline_t5_ids 空 → [eos]
+[selftest] PASS pipeline_t5_ids eos 付加
+[selftest] PASS pipeline_t5_ids eos 重複なし
+  入力:
+    name='input_ids' shape=[1, 16] element_type=i64
+    name='attention_mask' shape=[1, 16] element_type=i64
+  出力:
+    [0] name='last_hidden_state' shape=[1, 16, 64] element_type=f32
+    (極小変換 mask=explicit attn=sdpa: worst max_abs_err=7.75e-07)
+[selftest] PASS 極小 Qwen3: 変換 → CPU(f32) が torch と一致・mask が動的に効く
+[selftest] ALL PASS

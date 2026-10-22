@@ -1,0 +1,5 @@
+selftest exit=0 sec=5.9396
+lengths exit=0 sec=4.9422201
+all exit=0 sec=37.8320875
+bench exit=0 sec=68.4753149
+done

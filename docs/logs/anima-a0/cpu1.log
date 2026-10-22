@@ -1,0 +1,29 @@
+Multiple distributions found for package optimum. Picked distribution: optimum
+[golden] ロード 219.9s device=cpu dtype=float32
+[golden] tokens: pos qwen=41 t5=40 / neg qwen=37 t5=42
+[golden] sigmas: diffusers_anima と自前 simple_sigmas の max差 = 0.00e+00
+[golden] denoised_step0: 手書き vs diffusers_anima max差 = 0.000e+00
+[golden] step 1/1 sigma=1.0000 71.7s |pred|max=7.581
+[golden] VAE check: max=3.251e-05 MAE=9.218e-08 u8不一致=9.85e-06 time_conv呼出=0
+[golden] GATE PASS sigma_selfcheck: 0.0 (limit 1e-06)
+[golden] GATE PASS vae_conv2d_max_diff: 3.2510608434677124e-05 (limit 0.0001)
+[golden] GATE PASS vae_time_conv_calls: 0 (limit 0)
+[golden] GATE PASS b0_ctx_equals_pos_adapter_out: True (limit True)
+[golden] GATE PASS denoised_step0_vs_diffusers_anima: 0.0 (limit 1e-05)
+
+======================================================================
+io     : models\anima\golden_cpu1\anima_io.safetensors (568.2 MB) sha256=3b0a41d9234bcc51...
+meta   : models\anima\golden_cpu1\anima_golden_meta.json
+FP16   : FP16 不可の段あり (BF16/FP32 中間が必要)
+   max|x|  2.595e+05  step0_uncond/dit/block16_out
+   max|x|  2.595e+05  allsteps/dit/block16_out
+   max|x|  2.594e+05  step0_uncond/dit/block15_out
+   max|x|  2.594e+05  allsteps/dit/block15_out
+   max|x|  2.591e+05  step0_uncond/dit/block14_out
+VAE    : conv3d->conv2d(T=1) max=3.251e-05 MAE=9.218e-08
+FP16[te]: 全段 FP16 余裕 4 倍以上
+FP16[adapter]: 全段 FP16 余裕 4 倍以上
+FP16[dit]: FP16 不可の段あり (BF16/FP32 中間が必要)
+FP16[vae]: 全段 FP16 余裕 4 倍以上
+GATES  : ALL PASS
+======================================================================

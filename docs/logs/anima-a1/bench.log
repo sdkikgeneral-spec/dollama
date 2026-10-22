@@ -1,0 +1,22 @@
+
+============================================================
+デバイス別ベンチ (N=100・warmup 5)
+============================================================
+  available_devices: ['CPU', 'GPU.0', 'GPU.1', 'NPU']
+[A1] TE 重みロード 3.2s
+  [CPU] real(n=41)       max_abs=4.196e-03 MAE=9.580e-05 rel=7.22e-05 cos_min=1.00000000 (ref max|x|=58.1) | token0 rel=8.37e-06 rest rel(max)=9.81e-05
+  [CPU] full(n=128)      max_abs=2.465e-02 MAE=2.569e-04 rel=4.31e-04 cos_min=0.99999962 (ref max|x|=57.2) | token0 rel=2.05e-05 rest rel(max)=1.01e-03
+  [CPU] n=1(n=1)         max_abs=6.790e-04 MAE=3.933e-05 rel=1.62e-05 cos_min=1.00000000 (ref max|x|=41.9) | token0 rel=1.62e-05
+  [CPU] half(n=64)       max_abs=6.556e-03 MAE=1.462e-04 rel=1.09e-04 cos_min=0.99999997 (ref max|x|=60.4) | token0 rel=1.39e-05 rest rel(max)=2.12e-04
+  [CPU] compile 2.42s  median=128.79ms p95=158.81ms (N=100, real(n=41))
+  [GPU.0] real(n=41)       max_abs=7.089e-01 MAE=1.278e-02 rel=1.22e-02 cos_min=0.99986175 (ref max|x|=58.1) | token0 rel=2.83e-02 rest rel(max)=1.17e-02
+  [GPU.0] full(n=128)      max_abs=1.367e+00 MAE=1.170e-02 rel=2.39e-02 cos_min=0.99929699 (ref max|x|=57.2) | token0 rel=8.11e-02 rest rel(max)=1.18e-02
+  [GPU.0] n=1(n=1)         max_abs=1.554e+00 MAE=6.612e-02 rel=3.71e-02 cos_min=0.99982252 (ref max|x|=41.9) | token0 rel=3.71e-02
+  [GPU.0] half(n=64)       max_abs=7.143e-01 MAE=1.112e-02 rel=1.18e-02 cos_min=0.99963385 (ref max|x|=60.4) | token0 rel=3.41e-02 rest rel(max)=1.38e-02
+  [GPU.0] compile 5.28s  median=62.59ms p95=64.14ms (N=100, real(n=41))
+  [NPU] real(n=41)       max_abs=6.478e-01 MAE=5.277e-03 rel=1.11e-02 cos_min=0.99986813 (ref max|x|=58.1) | token0 rel=2.59e-02 rest rel(max)=4.14e-03
+  [NPU] full(n=128)      max_abs=5.978e-01 MAE=4.498e-03 rel=1.05e-02 cos_min=0.99988647 (ref max|x|=57.2) | token0 rel=3.55e-02 rest rel(max)=7.04e-03
+  [NPU] n=1(n=1)         max_abs=8.563e-01 MAE=3.701e-02 rel=2.05e-02 cos_min=0.99995674 (ref max|x|=41.9) | token0 rel=2.05e-02
+  [NPU] half(n=64)       max_abs=7.232e-01 MAE=4.750e-03 rel=1.20e-02 cos_min=0.99984027 (ref max|x|=60.4) | token0 rel=3.45e-02 rest rel(max)=5.10e-03
+  [NPU] compile 22.06s  median=56.24ms p95=57.11ms (N=100, real(n=41))
+  -> E:\Develop\Projects\dollama\models\anima-text-encoder\bench_L128.json

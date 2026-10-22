@@ -1,0 +1,40 @@
+E:\Develop\Projects\dollama\scripts\dollma_dump_anima_golden.py:585: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\torch\csrc\autograd\generated\python_variable_methods.cpp:837.)
+  e = float((ref - got).abs().max())
+[selftest] PASS act_stats max_abs
+[selftest] PASS act_stats pos0/rest 分離
+[selftest] PASS act_stats p999 <= max
+[selftest] PASS act_stats fp16_headroom
+[selftest] PASS act_stats fp16_overflow
+[selftest] PASS act_stats nonfinite
+[selftest] PASS p999 index
+[selftest] PASS crop 対象は _crop_f32
+[selftest] PASS crop meta に元 shape
+[selftest] PASS never_crop は full
+[selftest] PASS 左上クロップの値一致
+[selftest] PASS FP16 範囲外は f16 省略
+[selftest] PASS 整数は _i64 のみ
+[selftest] PASS sigmas 長さ 31・末尾 0
+[selftest] PASS sigmas[0]=1.0 (t=1 は shift 不変)
+[selftest] PASS sigmas 単調減少
+[selftest] PASS shift=1 は一様
+[selftest] PASS time_snr_shift 値
+[selftest] PASS euler_step = x - (s0-s1)*pred
+[selftest] PASS 最終 step は denoised
+[selftest] PASS cfg g=1 は cond
+[selftest] PASS cfg g=0 は uncond
+[selftest] PASS noise 同 seed bit 一致
+[selftest] PASS noise 別 seed 不一致
+[selftest] PASS denormalize: 0*std+mean
+[selftest] PASS causal conv3d(T=1) == conv2d 最終スライス (max err 0.00e+00)
+[selftest] PASS スライス index は 2*pad_t
+[selftest] PASS conv3d_to_conv2d_weight は最終スライス
+[selftest] PASS 核が小さすぎる時は ValueError
+[selftest] PASS T!=1 は ValueError
+[selftest] PASS bitwise_equal 同一
+[selftest] PASS bitwise_equal 1ulp 差を検出
+[selftest] PASS bitwise_equal NaN 同 bit は一致
+[selftest] PASS compare_tensor_dicts: 片側のみ検出
+[selftest] PASS fp16_summary: 余裕 4 倍未満を列挙
+[selftest] PASS fp16_summary: 超過を列挙
+[selftest] ALL PASS

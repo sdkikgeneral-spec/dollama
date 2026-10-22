@@ -1,0 +1,54 @@
+`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+C:\Users\sdkik\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\transformers\integrations\sdpa_attention.py:77: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  is_causal = query.shape[2] > 1 and attention_mask is None and is_causal
+
+============================================================
+Qwen3 0.6B TE を OV IR に変換 (L=128, mask=explicit, attn=sdpa)
+============================================================
+[A1] TE 重みロード 3.2s
+  入力:
+    name='input_ids' shape=[1, 128] element_type=i64
+    name='attention_mask' shape=[1, 128] element_type=i64
+  出力:
+    [0] name='last_hidden_state' shape=[1, 128, 1024] element_type=f32
+  [convert] in-memory FP32 グラフの忠実度:
+  [fp32-graph] real(n=41)       max_abs=2.728e-04 MAE=3.648e-06 rel=4.69e-06 cos_min=1.00000000 (ref max|x|=58.1) | token0 rel=1.09e-05 rest rel(max)=2.18e-06
+  [fp32-graph] full(n=128)      max_abs=3.586e-04 MAE=3.127e-06 rel=6.27e-06 cos_min=1.00000000 (ref max|x|=57.2) | token0 rel=2.13e-05 rest rel(max)=3.39e-06
+  [fp32-graph] n=1(n=1)         max_abs=5.760e-04 MAE=3.435e-05 rel=1.38e-05 cos_min=1.00000000 (ref max|x|=41.9) | token0 rel=1.38e-05
+  [fp32-graph] half(n=64)       max_abs=1.736e-04 MAE=2.656e-06 rel=2.88e-06 cos_min=1.00000000 (ref max|x|=60.4) | token0 rel=8.29e-06 rest rel(max)=4.35e-06
+  -> E:\Develop\Projects\dollama\models\anima-text-encoder\model_ov.xml  (bin 1136.9 MB, FP16, 2.6s)
+  -> E:\Develop\Projects\dollama\models\anima-text-encoder\model_ov_fp32.xml  (bin 2273.8 MB, FP32, 9.0s)
+
+============================================================
+Qwen3 / T5 OV tokenizer 変換 (Qwen は [1,128] 右 pad)
+============================================================
+  -> E:\Develop\Projects\dollama\models\anima-tokenizers\qwen\openvino_tokenizer.xml  (pad=151643 eos=151645)
+  -> E:\Develop\Projects\dollama\models\anima-tokenizers\t5\openvino_tokenizer.xml  (pad=0 eos=1)
+  [base-p1-pos] qwen n= 42 match=True  t5 n= 41 match=True
+  [base-p1-neg] qwen n= 37 match=True  t5 n= 42 match=True
+  [base-p2-pos] qwen n= 41 match=True  t5 n= 40 match=True
+  [base-p2-neg] qwen n= 37 match=True  t5 n= 42 match=True
+  [base-p3-pos] qwen n= 39 match=True  t5 n= 38 match=True
+  [base-p3-neg] qwen n= 37 match=True  t5 n= 42 match=True
+  [base-p4-pos] qwen n= 42 match=True  t5 n= 42 match=True
+  [base-p4-neg] qwen n= 34 match=True  t5 n= 39 match=True
+  [aest-p1-pos] qwen n= 38 match=True  t5 n= 37 match=True
+  [aest-p1-neg] qwen n= 25 match=True  t5 n= 33 match=True
+  [aest-p2-pos] qwen n= 37 match=True  t5 n= 36 match=True
+  [aest-p2-neg] qwen n= 25 match=True  t5 n= 33 match=True
+  [aest-p3-pos] qwen n= 35 match=True  t5 n= 34 match=True
+  [aest-p3-neg] qwen n= 25 match=True  t5 n= 33 match=True
+  [aest-p4-pos] qwen n= 38 match=True  t5 n= 38 match=True
+  [aest-p4-neg] qwen n= 22 match=True  t5 n= 30 match=True
+  [tags-sym  ] qwen n= 17 match=True  t5 n= 17 match=True
+  [japanese  ] qwen n=  4 match=True  t5 n=  3 match=True
+  [newline   ] qwen n=  5 match=True  t5 n=  7 match=False
+  [empty     ] qwen n=  1 match=None  t5 n=  1 match=None
+
+============================================================
+保存済み FP16 IR を CPU(f32 hint) で torch と突合
+============================================================
+  [fp16-ir/CPU-f32] real(n=41)       max_abs=4.196e-03 MAE=9.580e-05 rel=7.22e-05 cos_min=1.00000000 (ref max|x|=58.1) | token0 rel=8.37e-06 rest rel(max)=9.81e-05
+  [fp16-ir/CPU-f32] full(n=128)      max_abs=2.465e-02 MAE=2.569e-04 rel=4.31e-04 cos_min=0.99999962 (ref max|x|=57.2) | token0 rel=2.05e-05 rest rel(max)=1.01e-03
+  [fp16-ir/CPU-f32] n=1(n=1)         max_abs=6.790e-04 MAE=3.933e-05 rel=1.62e-05 cos_min=1.00000000 (ref max|x|=41.9) | token0 rel=1.62e-05
+  [fp16-ir/CPU-f32] half(n=64)       max_abs=6.556e-03 MAE=1.462e-04 rel=1.09e-04 cos_min=0.99999997 (ref max|x|=60.4) | token0 rel=1.39e-05 rest rel(max)=2.12e-04

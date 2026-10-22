@@ -1,0 +1,20 @@
+prompt              qwen3  t5(+eos)
+base-p1-pos            42        41
+base-p1-neg            37        42
+base-p2-pos            41        40
+base-p2-neg            37        42
+base-p3-pos            39        38
+base-p3-neg            37        42
+base-p4-pos            42        42
+base-p4-neg            34        39
+aest-p1-pos            38        37
+aest-p1-neg            25        33
+aest-p2-pos            37        36
+aest-p2-neg            25        33
+aest-p3-pos            35        34
+aest-p3-neg            25        33
+aest-p4-pos            38        38
+aest-p4-neg            22        30
+
+max: qwen3=42 t5=42
+L の目安 (max*1.25 を 16 の倍数へ): 64 (2 の冪の候補: 64 / 128 / 256。E-1 の 4 題材より長いユーザー prompt は L 超過で失敗させるか CPU/GPU 版へ退避)
