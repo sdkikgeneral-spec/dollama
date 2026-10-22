@@ -551,6 +551,14 @@ test = `test_preset` (純 cpp・重み不要)。生ログ = `docs/logs/2-6d/` (R
    **検証結果 (main thread 2026-09-17・record-writer 2026-09-18 再確認)**: `models/presets/illustrious-xl/preset.json` は `vae_scaling_factor=0.18215` だが、`vae_weights.safetensors` の sha256 は animagine-xl-4 (config 0.13025) と**完全一致** (`08778bbb4b48640a…`・98,995,758 B)。ただし scaling_factor は UNet 学習側の規約であって VAE 重みの属性ではないため、**同一バイトから HF config の誤記とは結論できない** (record-auditor 指摘で論理を撤回)。base `src/tests/data/vae_weights.safetensors` (sha256 `13b043eb…`) とはバイト不一致。
    dollama は `kScalingFactor 0.13025` で decode しており、illustrious-xl の 12 枚比較画像 (N=3) はその結果で**目視異常なし・定量未検証** → main thread 判断で「実害なし」と扱う (正しい scaling は未確定)。
    処置 (**未実施・後続**): `dollma_export_sdxl_preset.py` を「config ≠ 0.13025 でも VAE sha256 が既知 SDXL VAE と一致すれば警告付き続行・preset.json に config 値と使用値を両記録」へ改める。
+   ★**追記 (2026-10-20・record-writer・上の記述は当時のまま残す)**: **ランタイム側の「採用値が未確定」は image-quality-plan の E-0 で解消済み**。
+   `272e854` (実装・2026-09-20) / `2d442b3` (merge) が VAE scaling_factor を `DiffusionPipeline` のパラメータに昇格し、
+   illustrious-xl は preset.json の `vae_scaling_factor=0.18215` を使うため**既定生成が 0.13025→0.18215 に切り替わった**
+   (`272e854` 本文: 「ユーザー決裁済み・quality 軸で有利・目視も破綻なし」)。解決の優先順位は env `DOLLAMA_VAE_SCALING_FACTOR` > preset.json > 既定
+   (`src/server/cli_generate.hpp` l.264-269 のコメントと実装・2026-10-20 に現物で確認)。
+   ★**したがって本節の 12 枚比較と 2-6e の sha256 一致 3/3 は 0.13025 時代の走行**であり、現行の既定出力とはビットが違う (image-quality-plan E-2 節が 2-6e 突合を `766082a` へ差し替えた理由と同じ)。
+   ★**未解消のまま残るもの**: export スクリプト側のガードは現物でも 0.13025 固定 (`scripts/dollma_export_sdxl_preset.py` l.49 `EXPECTED_VAE_SCALING_FACTOR = 0.13025`・不一致で `SystemExit(1)`・2026-10-20 確認) = 上の「処置」は未実施のまま。
+   また E-0 は採用値をユーザー決裁で決めたものであり、0.13025 / 0.18215 のどちらが理論上正しいかを論証したものではない (image-quality-plan 末尾「未検証として明示したもの」に同項が残る)。
 2. `--fast` の有無は log / logs README に記録が無く**未検証** (CLI 生成モードは fast フラグをログしない)。SAC 状態も未確認 (logs README)。
 3. base 3 枚は既定変更前 (HEAD `f0b1d80`) の走行のため「preset 未指定 = base」。`d8a9678` 以降は `--preset base` 明示が要る (同一条件の再走時に注意)。
 4. 後続 (スコープ外): preset.json `prompt_prefix`/`negative_prefix` の C++ 自動付与 (→ ✅ 2-6e・下の小節) / HTTP API preset フィールド / UI preset 選択 (未着手)。
@@ -644,6 +652,148 @@ UNet forward・VAE decode・conv2d im2col の一時バッファをチャンク�
 - test 列: test_lora_runtime (+回帰ゲート: test_diffusion_batch2)
 
 kohya→diffusers 写像 (`load_lora_modules`) + 常駐重み apply-time マージ (`unet_apply_loras`: `launch_gemm_fp16` で delta=scale*(B@A) → `launch_add` in-place) / `unet_clear_loras` bit-exact 復元。**全ゲート PASS** (SAC OFF 実走): [1]host写像 modules/te_skip/incomplete/scale/throw OK・[2]parity max_abs**4.9e-4**/bad0・[3]revert 4/4 memcmp bit-exact・[4]stack max_abs**9.6e-4**/bad0+revert bit-exact。数値正典=L-1 offline merge (dollma_merge_lora.py) `W+strength*(alpha/rank)*(B@A)`。HTTP `loras:[{name,strength}]` 結線 (name は allowlist 検証で path traversal 封止)。**⚠ 後日判明した ODR 違反 (G-4k S3 期の C0 で修正)**: `src/infer/unet.cu` と `src/kernels/vae_decode.cu` が**同名・異レイアウトの `class DeviceWeights` を外部リンケージで**定義しており (元から ODR 違反)、L-2 で追加した `patched_` メンバが両者のレイアウトを決定的にずらして**顕在化** → VAE+UNet 両ハンドル同居時の `~DiffusionPipeline` で **0xC0000005**。C0 で両 TU の `DeviceWeights` を**匿名 namespace 化**して解消 (`test_diffusion_batch2` 90.80s 完走・exit 0・破棄後 VRAM free 14913MB)。**教訓: 単体ハンドルの test は、複数ハンドル同居時の破棄経路を検査しない** — `test_lora_runtime` は UNet ハンドルしか持たないため L-2 の地雷を素通しし、VAE+UNet 同居の `test_diffusion_batch2` で初めて露見した。同居破棄を通す test が既に回帰ゲートとして機能しているため C0 に専用 test は新設していない
+
+
+### 第 2 次スリム化 (2026-10-20) で CLAUDE.md から外した本文の逐語退避
+
+2026-10-20 の CLAUDE.md 改訂 (事実の是正 + スリム化・作業ツリー CRLF 36,726 B → 21,361 B / git blob LF 36,379 B → 21,144 B (2026-10-20 再監査是正後の実測)) で本文から外したブロックのうち、
+**他の正本に同等の記述が無いもの・または是正で書き換えたため旧記述を記録として残すもの**を、
+改訂直前 (HEAD `b95f0f4`) の CLAUDE.md から**一字一句そのまま**写す。ここに無い外したブロックは、
+正本に同等の記述があることを確認してからポインタに置き換えた (対応は各小節末尾ではなく CLAUDE.md 側のポインタで辿る)。
+改訂直前の CLAUDE.md 全文は `git show b95f0f4:CLAUDE.md` で引ける (計測表セルの旧全文もこれが逐語スナップショット)。
+
+★**以下は旧記述であり、誤りを含む** (是正の理由は各小節の冒頭注)。現行の記述は CLAUDE.md 側を読むこと。
+
+#### (a) HW 役割分担表・パイプライン図 (旧・是正で差し替え)
+
+冒頭注: 旧表・旧図は ① RTX5080 行の **3.80s を自作の値のように掲げていた** (実体は probe10 = PyTorch/diffusers・CFG・テキストエンコード込の参照値・`scripts/archives/dollma_probe10_sdxl.py`) 
+② 出荷経路で使っていない WD14 / VAE encode / LM 段を確定構成の図に入れていた (WD14 は `src/pipeline.hpp` の骨格のみ・`/v1/images/edits` は 501 で VAE encoder 未実装・LM 段は未結線) 
+③ 出荷経路の CLIP-G / matting / scorer を図に入れていなかった ④ NPU 行に不採用の「WD14 268ms」を載せていた — ため差し替えた。
+
+**HW 役割分担 (研究中・随時更新)**
+
+| HW | 役割 | 状態 |
+|---|---|---|
+| CPU | WD14 タグ抽出 105.3ms / **LM 段は未結線** (Qwen2 は Python probe 専用) | ⏳ 自作 LM の結線が残 |
+| NPU | **CLIP text encoder 7.85ms** / WD14 タグ抽出 268ms | ✅ CLIP が CPU の 2.5倍速 |
+| iGPU (Intel Xe) | VAE encode (img2img、79ms) + マッティング ISNet (99.96ms) | ✅ どちらも CPU より速い (matting_device=iGPU 確定 M-5) |
+| **RTX5080** | SDXL UNet + VAE decode | ✅ **3.80s/image** (1024×1024, 20steps, 5.3 it/s) |
+
+**パイプライン (確定構成)**
+
+txt2img:
+```
+GPU/CPU: 自作タグ生成 LM (bitnet.hpp 33M, GPU 主・CUDA カーネル流用 / CPU 可・NPU 不可) — ★未結線
+  自然文 → danbooru タグ列 (GPU seq8 2.43ms 実測) / 現状はこの段を通さず prompt 直入力
+    │
+    ▼
+NPU: CLIP-L text encoder (7.85ms)
+  テキスト → embedding [1, 77, 768]
+    │
+    ▼
+RTX5080: SDXL UNet × 20steps + VAE decode (3.80s / 1024×1024)
+    │
+    ├─ CPU: WD14 SwinV2 tagger (101ms) ← GPU 生成中に並列
+    │       → danbooru タグ → LLM フィードバックループ
+    └─ 出力画像
+```
+
+img2img (追加パス):
+```
+入力画像
+  ├─→ iGPU: VAE encode (79ms)  → latent ─┐
+  └─→ CPU:  LM 段 (未結線)      ──────────┤ (並列)
+                                          ▼
+                               NPU: CLIP (7.85ms)
+                                          ▼
+                               RTX5080: SDXL UNet + VAE decode (3.80s)
+```
+iGPU の VAE encode は CPU 側の LM 段と並列に走る設計のため待ち時間ゼロ (LM 結線後)。
+
+**デバイス選定根拠 (probe 実測)**
+- CLIP: NPU 7.85ms < iGPU 14ms < CPU 20ms → **NPU 採用**
+- WD14: CPU 101ms < iGPU 104ms < NPU 268ms → **CPU 採用** (Window Attention が NPU に不向き)
+- VAE decode: CPU 126ms << iGPU 995ms → **RTX5080 採用**
+- VAE encode: iGPU 79ms < CPU 117ms → **iGPU 採用** (img2img パスのみ)
+
+#### (b) VRAM 収支と多 HW の根拠 (旧・是正で差し替え)
+
+冒頭注: CLIP-L/G は NPU で走るので VRAM 計上は誤り・SDXL ピークは probe10 (PyTorch) の値で自作の peak ではない (自作は G-8k S4b の 13649MB / POOL=0 13269MB 等)。論考部分 (箇条書き) は他の正本に同等記述が無いため逐語で残す。
+
+**VRAM 収支と多 HW の根拠 (重要)**
+
+RTX5080 = **16GB**。常駐物の概算:
+
+| 常駐物 | VRAM |
+|---|---|
+| SDXL 20steps ピーク (probe10) | **10.49GB** (実質ここが全部食う) |
+| CLIP-L (123M FP16) | ~0.25GB |
+| CLIP-G (694M FP16) | ~1.4GB |
+| 自作タグ生成 LM (33M FP16) | ~0.066GB (誤差) |
+| 合計 | ~12.2GB < 16GB |
+
+- **LM に関して VRAM はボトルネックですらない** (33M=66MB)。GPU-only は 5080 で既に成立し、
+  大容量 VRAM カードは不要。VRAM が効くのは「大型モデルを大量同時常駐」する別世界の話。
+- **多 HW に逃がす理由は VRAM 不足の回避ではない**: ① 速度・並列 (CLIP は NPU 7.85ms で、
+  拡散で詰まる数秒の裏で走り GPU を空ける) ② 拡散中に遊休の NPU/CPU/iGPU を使い切る
+  ③ 研究そのもの (プロジェクトの芯)。
+- **CPU/NPU offload = 金をかけずに容量を増やす手**: CPU 側専門家はシステム RAM (安・大量)、
+  NPU はオンチップメモリを使う → VRAM を買い足さずモデルを足せる。「VRAM が高い」という
+  制約への回答が、この「小型専門モデル + 全 HW 協調」設計そのもの。
+- 関連: CPU+GPU マルチ LM / アンサンブル → roadmap バックログ「MoE × HW 分散配置」。
+
+#### (c) 「タスク5」採番注記 (旧・削除)
+
+> ★番号注意: この「タスク5」は**旧 CLAUDE.md Phase 1 表**の採番 (5 = CLIP・同採番は
+> `docs/measurements-log.md`「次のタスク」節 Phase 1 表に現存)。roadmap 「Phase 1」表は
+> 別採番 (**4** = CLIP / 5 = キャラ台帳) なので番号だけで辿らないこと。`src/infer/clip_encoder2.hpp`
+> の「タスク5 の既知事例」も旧採番。
+
+#### (d) パイプライン構造 (C++ 実装) のコード片 (旧・削除)
+
+冒頭注: 実物は `std::thread` ではなく `std::jthread` (`src/pipeline.hpp`)・tag スレッドを NPU と書いていた (WD14 は CPU・`src/pipeline.hpp` の `wd14_(wd14_xml, "CPU")`) ため削除し `src/pipeline.hpp` へのポインタにした。
+~~LM スレッドを CPU と書いていた (置き場は GPU 主 / CPU 代替 / NPU 不可)~~ ★**撤回 (2026-10-20 再監査)**: `src/pipeline.hpp` l.91-100 の llm スレッドは stub で P-core (CPU) にピン留めされており、骨格の記述としては正しい。誤りは上の 2 点だけ。
+(下の逐語は見出しが本節のアウトラインを壊さないよう 4 連バッククォートのフェンスで包んだ。中身は一字一句改変していない。)
+
+````markdown
+### パイプライン構造 (C++ 実装)
+
+```cpp
+// GIL なし真のマルチスレッド、STL + CUDA API のみ
+std::thread llm_thread([&]  { /* CPU: 自作タグ生成 LM (bitnet.hpp) */   });
+std::thread clip_thread([&] { /* NPU: 自作 CLIP 推論 */       });
+std::thread sdxl_thread([&] { /* GPU: 自作 UNet CUDA カーネル */ });
+std::thread tag_thread([&]  { /* NPU: 自作 WD14 推論 */       });
+
+// SPSC lock-free queue でゼロコピー受け渡し
+```
+````
+
+#### (e) 「次のタスク」節 (旧・全面差し替え)
+
+冒頭注: 「次の秒数レバーは未起票」は G-14k (`docs/g14k-plan.md`) の存在と矛盾・画質 E 系が載っていなかったため差し替えた。Phase 4 の完了済み箇条は roadmap Phase 4 と CLAUDE.md 計測表に同等の記述がある。また旧 Q-2 箇条の「reward std 0.0377→0.1038」は**中間値 0.0797 (weight 0.3) を省略した書き方**である (同じ 80 画像で 0.0377 (F-0a・anatomy のみ) → 0.0797 (quality 追加・weight 0.3) → 0.1038 (weight 0.4) と進めた同一系列・`scripts/archives/dollma_e2_quality_signal.py` l.29,96 / `docs/q2-quality-branch-plan.md` Package E)。同箇条の `data/rollouts/e2_quality_signal.json` は gitignore (研究機のみ)・生成スクリプト `dollma_e2_quality_signal.py` は `b95f0f4` で `scripts/archives/` へ移動済み。
+
+> 経緯・採否・詳細は `docs/roadmap.md`。完了済みの計測は上表＋ `docs/measurements-log.md`。
+
+**Phase 1 (パイプライン骨格) ✅ 全完了** — Meson+`src/` 構造 / Tensor・Allocator・SPSC キュー / CLIP NPU 7.82ms / キャラ台帳 / WD14 CPU 105.3ms / スレッド骨格+アフィニティ 9.13 fps。実装物とファイルの一覧は roadmap 「Phase 1」表
+
+**Phase 2-3 ✅ 完了** (各段の詳細・既知の制約は roadmap 「Phase 2」「Phase 3」節)
+- safetensors / VAE decode / SDXL UNet + Euler (全 golden 突合済) / cpp-httplib OpenAI 互換 HTTP (生成は `IImageGenerator` 越し) / **2-6a** フル C++ 拡散 84.07s→**11.30s** で一旦クローズ (律速 UNet attn 4.60s・★採取条件と陳腐化注記は**計測表の 2-6a 行**) / **2-6b** 本 txt2img (dual encoder+CFG) / **2-6c** backend プラグイン枠 `IDiffusionBackend` / **2-6d**+**2-6e** アニメ特化 SDXL 3 preset (既定 illustrious-xl・prefix 自動付与) / **2-6f** UI から複数サーバー切替 (2026-09-19)
+- **未着手 (2-6 の残件)**: HTTP API の preset フィールド / UI の preset 選択 (roadmap 「2-6f」節 残件)
+- 部位構造化プロンプト ([[project-part-structured-prompt]]) — §11 QA・案B embedding と一緒に設計 (未着手バックログ)
+- **G-10k (conv2d 真 batch2)** ✅ 陰性クローズ (2026-09-17・削減率 +3.38%/+1.87% = 秒中立・opt-in 降格 `c3ee3ca`)。resnet ≤0.95s ゲートは未達のまま・次の秒数レバーは未起票 (`docs/g10k-plan.md` §12)
+
+**Phase 4 (自作タグ生成 LM + Model B) — 進行中**
+- 自作 LM: tokenizer ✅ / 訓練 #1 (hard CE 6ep, 本線) ✅ / 推論 CPU・GPU・AVX2・INT8 ✅ / 同一性条件付き A (retention 0.975 頑健) ✅
+- 評価: recall@10 退役 → **diverse 生成 set-F1 が主指標** (4-C) ✅
+- 入力多様化 B: ~2,000 件で飽和・本線昇格決裁済 (出荷リトレイン `[B-merge-at-A]` で A と一括焼き) ✅
+- **正典化 `[B-merge-at-A]` 完了 (2026-07-03)**: 勝者 33M で B(b2000)∧A(a12k identity) を merged 1本にまとめ焼き・ゲート4指標全通過 (retention 0.9807/diverse_a F1 0.3332/diverse_b F1 0.3804/in-dist 0.4552 で各単体参照を全軸超) → 正典 `bitnet_dense{,_fp32}`/identity を merged と同一バイトへ差し替え・golden 再生成・test_bitnet_infer corr 1.0/meson 25/25 緑・legacy アンカーを #1→新本線へ (training-spec §17 / dataset-spec §19)。follow-up=研究機で test_bitnet_gpu GPU golden 再確認 ✅
+- 蒸留 D2/D4/D5/D6: 全不採用 (過学習抑制のみ・recall 非寄与) ✅
+- 容量増 D (33M→80M): **陰性クローズ・80M 不採用/勝者=33M** (4seed sweep で F1 は seed ノイズ・retention 3/4 床割れ・in-dist 微退行) ✅ — diverse-val F1 を頑健に押し上げたのは B(~2,000 飽和) のみで、A(retention 専)/D(陰性)/蒸留4路線(非寄与) は F1 非寄与と確定
+- Model B 品質スコアラ: QA ゲート Stage1 ✅ / ScorerNet 訓練・OV 変換・C++ 結線 (B-3b〜B-5) ✅ (採点はログのみ) / **Q-1 quality ラベル実採点 ✅** (waifu_scorer_v4 apache-2.0・quality=null は実行ギャップで解消・分布 0.0/med0.061/0.178 std0.0753・非退化だが [0,0.18] 圧縮 → Q-2 で head 凍結解除・raw_waifu から再正規化)
+- 品質 FB ループ F: **F-0a 計装 ✅ + 実走 80/80 ✅ → 信号ゲート判定 = 信号弱 (補強してから) ✅** = reward std0.038 / best−worst0.203 (両方 PL 閾値 std>0.1・>0.3 に未達)。argmax **Limbs 77/80**・他7軸ほぼ死 (ScorerNet の分解能が Limbs のみ生存)。worst 帯は多人数/背景/mecha/文字焼き込み等**スコープ外題材**への発火が主 (画像照合: 単独素直題材は解剖正常で reward≈0)。ただし **clean vs clutter prompt で |r| 4倍分離** (0.007 vs 0.0285) = 弱いが本物の prompt 品質勾配あり (flat noise ではない=飽和 -1 帯でもない)
+- **Q-2 quality 枝 ✅ 信号ゲート通過** (quality を CLIP-embed 枝へ分離・reward std 0.0377→**0.1038**/best−worst 0.3575・`data/rollouts/e2_quality_signal.json`・台帳 `docs/q2-quality-branch-plan.md`) → **F-0b RAFT-SFT ✅ クローズ (不採用・効果を検出できず。限定条件は計測表 F-0b 行)**
+- **残**: ① **F-0b 再検証 (Z-1〜Z-3 算出済・判定なし / Z-4 ✅ ② (射程限定・不採用不変) / Z-5 ✅ Z-4 に統合 (定義変更付き・シャッフル seed のみ)・`docs/f0b-reverification-plan.md`)** = 手続き不備 (anatomy 分解能・seed 未制御・プラセボ対照欠如) の是正・GPU 実走は σ_seed 算出済・未起票 (枚数未決定) ② **anatomy 死軸の分解能診断** (8 軸中 5 軸が非 argmax) ③ 次レバー = reward 設計 / 日本語条件付け改修 (空条件化) / SDXL seed 制御 / 残低帯域は A 実ペア増・D 容量増 / ternary GEMM は圧縮実験
 
 
 ## 次のタスク

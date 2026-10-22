@@ -71,6 +71,18 @@ PRESETS = {
                             "missing fingers, extra digit, fewer digits, cropped, "
                             "worst quality, low quality",
     },
+    "illustrious-xl-v2": {
+        # v2.0 (STABLE) は単一 .safetensors repo。prediction_type は --assume-epsilon が必要。
+        # ライセンス: HF model card `license: creativeml-openrail-m` (rev 69459c1f・2026-10-22 照合)。
+        # v0.1 (Fair AI) / v1.x (sdxl-license) とは版ごとに異なる。repo に LICENSE ファイルは無い。
+        "source": "OnomaAIResearch/Illustrious-XL-v2.0",
+        "hf_file": "Illustrious-XL-v2.0.safetensors",
+        "license": "CreativeML Open RAIL-M",
+        "prompt_prefix": "masterpiece, best quality",
+        "negative_prefix": "lowres, bad anatomy, bad hands, text, error, "
+                            "missing fingers, extra digit, fewer digits, cropped, "
+                            "worst quality, low quality",
+    },
     "noobai-xl": {
         # v-pred 版 (名前に vpred/v-pred を含む) は使わない。eps 版のみ。
         "source": "Laxhar/noobai-XL-1.1",
@@ -241,6 +253,9 @@ def verify_key_shape_match(preset_weights: dict, base_sig: dict):
     return ok, missing, extra, shape_mismatch
 
 
+_BASE_TOK_PATHS = {}
+
+
 def base_tokenizer_hashes():
     """base SDXL tokenizer/tokenizer_2 の vocab.json/merges.txt sha256。"""
     from huggingface_hub import hf_hub_download
@@ -249,6 +264,7 @@ def base_tokenizer_hashes():
         for fn in ("vocab.json", "merges.txt"):
             p = hf_hub_download(repo_id=BASE_ID, filename=f"{sub}/{fn}")
             out[f"{sub}/{fn}"] = sha256_file(Path(p))
+            _BASE_TOK_PATHS[f"{sub}/{fn}"] = p
     return out
 
 
@@ -267,7 +283,19 @@ def preset_tokenizer_hashes(pipe):
                     out[f"{sub}/{fn}"] = sha256_file(p)
                 else:
                     out[f"{sub}/{fn}"] = None
+            if out[f"{sub}/vocab.json"] is None and (td / sub / "tokenizer.json").is_file():
+                # 新しい transformers は tokenizer.json のみ保存する。内容 (vocab dict / merges) を
+                # 正規化して sha256 化し、base 側も同じ正規化で比較する (キー名に ":content" を付す)。
+                tj = json.loads((td / sub / "tokenizer.json").read_text(encoding="utf-8"))
+                m = tj["model"]
+                merges = [" ".join(x) if isinstance(x, list) else x for x in m["merges"]]
+                out[f"{sub}/content"] = content_hash(m["vocab"], merges)
     return out
+
+
+def content_hash(vocab: dict, merges: list) -> str:
+    blob = json.dumps([sorted(vocab.items()), merges], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def main():
@@ -315,9 +343,23 @@ def main():
     print("\ntokenizer (vocab.json/merges.txt) の base 一致を検査中...")
     base_tok_hashes = base_tokenizer_hashes()
     preset_tok_hashes = preset_tokenizer_hashes(pipe)
+    base_tok_paths = _BASE_TOK_PATHS
     tok_mismatch = {k: (base_tok_hashes.get(k), preset_tok_hashes.get(k))
                     for k in base_tok_hashes
-                    if base_tok_hashes.get(k) != preset_tok_hashes.get(k)}
+                    if preset_tok_hashes.get(k) is not None
+                    and base_tok_hashes.get(k) != preset_tok_hashes.get(k)}
+    # vocab.json/merges.txt が出なかった側は tokenizer.json の内容ハッシュで比較する
+    for sub in ("tokenizer", "tokenizer_2"):
+        if f"{sub}/content" in preset_tok_hashes:
+            bv = json.loads(Path(base_tok_paths[f"{sub}/vocab.json"]).read_text(encoding="utf-8"))
+            bm = [l for l in Path(base_tok_paths[f"{sub}/merges.txt"]).read_text(encoding="utf-8").splitlines()
+                  if l and not l.startswith("#version")]
+            bh = content_hash(bv, bm)
+            if bh != preset_tok_hashes[f"{sub}/content"]:
+                tok_mismatch[f"{sub}/content"] = (bh, preset_tok_hashes[f"{sub}/content"])
+    for k in base_tok_hashes:
+        if preset_tok_hashes.get(k) is None and k.split("/")[0] + "/content" not in preset_tok_hashes:
+            tok_mismatch[k] = (base_tok_hashes[k], None)
     tok_match = (len(tok_mismatch) == 0)
     if not tok_match:
         print(f"エラー: tokenizer が base と一致しない: {tok_mismatch}")

@@ -37,7 +37,7 @@ scripts/dollma_rollout_bestofn.py     best-of-N rollout 収集 (resume / chunk �
 scripts/dollma_collect_rollouts.py    rollout 収集 (採点結線済み)
 scripts/dollma_reward.py              reward 算出 (anatomy + quality)
 scripts/dollma_score_quality_v4.py    CLIP image + waifu MLP による quality 採点
-scripts/dollma_e2_quality_signal.py   quality 信号の分離実験
+scripts/archives/dollma_e2_quality_signal.py   quality 信号の分離実験
 scripts/dollma_g2b_reward_prepost.py  SFT 前後の reward 比較
 scripts/dollma_label_image.py         生成画像 → WD14 タグ (offline ラベル化の正規経路)
 scripts/dollma_gen_scorer_corpus.py   スコアラ用コーパス生成

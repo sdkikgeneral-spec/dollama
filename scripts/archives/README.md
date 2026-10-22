@@ -14,6 +14,11 @@
   - `dollma_c_seedsweep*` (施策C 完了)
   - `dollma_distill_pairs.py` (蒸留 D2/D4 不採用)
   - `dollma_d6_teacher_cache.py` + `test_dollma_d6_teacher_cache.py` (外部教師蒸留 D6 不採用)
+  - `dollma_a_seedsweep*` (施策A 完了) / `dollma_b2000_seedsweep*` / `dollma_b10k_seedsweep*` (施策B 完了・本線昇格済)
+  - `dollma_d_seedsweep*` + `test_dollma_d_seedsweep.py` (施策D 容量増 陰性クローズ)
+  - `dollma_e2_quality_signal.py` / `dollma_e2_t2_analyze.py` (Q-2 quality 枝 信号ゲート通過で完了)
+  - `dollma_g1_driver.sh` / `dollma_g2b_driver.sh` (F-0b 本走のチャンク駆動・研究機パス直書き)
+- **退避済み probe の出力**: `_matting_device_report.json` / `_quality_scorer_report.json`
 
 ## 注意
 
